@@ -55,6 +55,62 @@ export const WEAPONS = {
     spread: 0.09, scopedSpread: 0.0004, moveSpread: 0.12, airSpread: 0.3, spreadPerShot: 0, spreadRecover: 0.5,
     recoil: 0.08, recoilYaw: 0.01, moveSpeed: 0.8, scope: [40, 15], price: 4750, killReward: 100,
   },
+  viper: {
+    id: 'viper', name: 'Viper Machine Pistol', slot: 'secondary', type: 'pistol',
+    damage: 22, hsMult: 3.6, legMult: 0.75, armorPen: 0.45, rangeMod: 0.8,
+    fireRate: 0.065, auto: true, mag: 18, reserve: 72, reload: 2.0, draw: 0.55,
+    spread: 0.009, moveSpread: 0.02, airSpread: 0.1, spreadPerShot: 0.006, spreadRecover: 0.3,
+    recoil: 0.011, recoilYaw: 0.008, moveSpeed: 0.98, price: 500, killReward: 300,
+  },
+  tac45: {
+    id: 'tac45', name: 'Tac-45', slot: 'secondary', type: 'pistol',
+    damage: 34, hsMult: 3.8, legMult: 0.75, armorPen: 0.6, rangeMod: 0.84,
+    fireRate: 0.2, auto: false, mag: 10, reserve: 40, reload: 2.0, draw: 0.6,
+    spread: 0.0035, moveSpread: 0.035, airSpread: 0.13, spreadPerShot: 0.018, spreadRecover: 0.3,
+    recoil: 0.026, recoilYaw: 0.008, moveSpeed: 0.97, price: 400, killReward: 300,
+  },
+  kestrel: {
+    id: 'kestrel', name: 'Kestrel PDW', slot: 'primary', type: 'smg',
+    damage: 24, hsMult: 3, legMult: 0.75, armorPen: 0.65, rangeMod: 0.84,
+    fireRate: 0.06, auto: true, mag: 40, reserve: 120, reload: 2.4, draw: 0.6,
+    spread: 0.007, moveSpread: 0.012, airSpread: 0.09, spreadPerShot: 0.0035, spreadRecover: 0.28,
+    recoil: 0.008, recoilYaw: 0.006, moveSpeed: 0.96, price: 1500, killReward: 600,
+  },
+  reaper: {
+    id: 'reaper', name: 'Reaper Auto-12', slot: 'primary', type: 'shotgun',
+    damage: 17, pellets: 8, hsMult: 2, legMult: 0.75, armorPen: 0.7, rangeMod: 0.55,
+    fireRate: 0.26, auto: true, mag: 8, reserve: 32, reload: 3.2, draw: 0.85,
+    spread: 0.065, moveSpread: 0.01, airSpread: 0.05, spreadPerShot: 0.004, spreadRecover: 0.3,
+    recoil: 0.04, recoilYaw: 0.012, moveSpeed: 0.9, price: 2000, killReward: 900,
+  },
+  bulldog: {
+    id: 'bulldog', name: 'Bulldog LMG', slot: 'primary', type: 'lmg',
+    damage: 33, hsMult: 3.5, legMult: 0.75, armorPen: 0.75, rangeMod: 0.97,
+    fireRate: 0.085, auto: true, mag: 100, reserve: 100, reload: 5.0, draw: 1.1,
+    spread: 0.006, moveSpread: 0.09, airSpread: 0.2, spreadPerShot: 0.0035, spreadRecover: 0.45,
+    recoil: 0.012, recoilYaw: 0.011, moveSpeed: 0.8, price: 5000, killReward: 300,
+  },
+  trident: {
+    id: 'trident', name: 'Trident Burst', slot: 'primary', type: 'rifle',
+    damage: 34, hsMult: 4, legMult: 0.75, armorPen: 0.72, rangeMod: 0.97,
+    fireRate: 0.07, burst: 3, burstDelay: 0.32, auto: false, mag: 30, reserve: 90, reload: 2.7, draw: 0.9,
+    spread: 0.0022, moveSpread: 0.065, airSpread: 0.15, spreadPerShot: 0.003, spreadRecover: 0.32,
+    recoil: 0.013, recoilYaw: 0.005, moveSpeed: 0.88, price: 2500, killReward: 300,
+  },
+  falcon: {
+    id: 'falcon', name: 'Falcon DMR', slot: 'primary', type: 'rifle',
+    damage: 62, hsMult: 3.3, legMult: 0.75, armorPen: 0.82, rangeMod: 0.99,
+    fireRate: 0.3, auto: false, mag: 15, reserve: 45, reload: 2.9, draw: 1.0,
+    spread: 0.0015, moveSpread: 0.09, airSpread: 0.2, spreadPerShot: 0.012, spreadRecover: 0.4,
+    recoil: 0.035, recoilYaw: 0.006, moveSpeed: 0.86, scope: [55], scopedSpread: 0.0008, price: 3800, killReward: 300,
+  },
+  sparrow: {
+    id: 'sparrow', name: 'Sparrow Scout', slot: 'primary', type: 'sniper',
+    damage: 78, hsMult: 3.4, legMult: 0.75, armorPen: 0.85, rangeMod: 0.99,
+    fireRate: 1.2, auto: false, mag: 10, reserve: 30, reload: 2.8, draw: 0.9,
+    spread: 0.05, scopedSpread: 0.0004, moveSpread: 0.05, airSpread: 0.02, spreadPerShot: 0, spreadRecover: 0.4,
+    recoil: 0.05, recoilYaw: 0.008, moveSpeed: 0.95, scope: [40, 15], price: 1700, killReward: 300,
+  },
 };
 
 export const GRENADES = {
@@ -68,9 +124,9 @@ export const GEAR = {
 };
 
 export const BUY_MENU = [
-  { title: 'Pistols', items: ['p9', 'magnum'] },
-  { title: 'SMG & Heavy', items: ['vex', 'breacher'] },
-  { title: 'Rifles', items: ['ar7', 'm5', 'longshot'] },
+  { title: 'Pistols', items: ['p9', 'tac45', 'viper', 'magnum'] },
+  { title: 'SMG & Heavy', items: ['vex', 'kestrel', 'breacher', 'reaper', 'bulldog'] },
+  { title: 'Rifles', items: ['trident', 'ar7', 'm5', 'falcon', 'sparrow', 'longshot'] },
   { title: 'Gear', items: ['kevlar', 'helmet'] },
   { title: 'Grenades', items: ['he', 'smoke'] },
 ];
@@ -81,6 +137,9 @@ export const ECON = {
   lossBase: 1400, lossStep: 500, lossMax: 3400,
   plant: 300,
 };
+
+// Weapon order for Gun Game: every kill advances you one step; a knife kill on the last step wins.
+export const GUN_GAME_ORDER = ['bulldog', 'ar7', 'm5', 'trident', 'falcon', 'kestrel', 'vex', 'reaper', 'breacher', 'sparrow', 'longshot', 'magnum', 'tac45', 'viper', 'p9', 'knife'];
 
 export function itemInfo(id) {
   return WEAPONS[id] || GRENADES[id] || GEAR[id] || null;

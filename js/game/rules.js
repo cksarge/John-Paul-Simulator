@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CELL } from '../engine/world.js';
-import { ECON } from '../data/weapons.js';
+import { ECON, GUN_GAME_ORDER } from '../data/weapons.js';
+import { RESPAWN_KINDS } from '../data/modes.js';
 
 // Host-only match logic. Everything it decides is broadcast as events that every client applies.
 export class Rules {
@@ -33,10 +34,10 @@ export class Rules {
 
     if (s.phase === 'warmup') {
       if (g.waitingForPlayers() && s.time > -12) return;
-      if (s.time <= 0) this.mode.kind === 'ffa' ? this.startFFA() : this.startRound();
+      if (s.time <= 0) RESPAWN_KINDS.has(this.mode.kind) ? this.startFFA() : this.startRound();
       return;
     }
-    if (this.mode.kind === 'ffa') return this.updateFFA(dt);
+    if (RESPAWN_KINDS.has(this.mode.kind)) return this.updateFFA(dt);
     if (s.phase === 'buy' && s.time <= 0) {
       s.phase = 'live'; s.time = this.mode.roundTime;
       g.broadcast('phase', { phase: 'live', time: s.time });
@@ -192,14 +193,32 @@ export class Rules {
     this.g.broadcast('end', { winner, reason, scores: s.scores, stats: this.g.statsPayload() });
   }
 
-  // ───────────── free for all ─────────────
+  // ───────────── respawn modes: free for all, team deathmatch, gun game ─────────────
   startFFA() {
     const s = this.s, g = this.g;
-    s.phase = 'live'; s.time = this.mode.timeLimit; s.round = 1;
+    s.phase = 'live'; s.time = this.mode.timeLimit; s.round = 1; s.scores = [0, 0];
     s.bomb = { state: 'none' };
     const spawns = {};
-    for (const p of g.players.values()) spawns[p.id] = this.ffaSpawn(p);
-    g.broadcast('round', { round: 1, time: s.time, scores: [0, 0], spawns, resetKit: [...g.players.keys()], money: {}, bomb: s.bomb, teams: {}, freeArmor: true, phase: 'live' });
+    for (const p of g.players.values()) { p.gg = 0; spawns[p.id] = this.respawnPoint(p); }
+    g.broadcast('round', {
+      round: 1, time: s.time, scores: [0, 0], spawns, resetKit: [...g.players.keys()], money: {}, bomb: s.bomb,
+      teams: Object.fromEntries([...g.players.values()].map((p) => [p.id, p.team])), freeArmor: true, phase: 'live',
+    });
+  }
+
+  // Team modes spawn in the team's zone; solo modes pick the open cell furthest from everyone.
+  respawnPoint(p) {
+    if (this.mode.kind === 'tdm') {
+      const pts = this.spawnPoints(p.team, 6);
+      let best = pts[0], bestD = -1;
+      for (const pt of pts) {
+        let minD = 999;
+        for (const o of this.g.players.values()) if (o !== p && o.alive && o.team !== p.team) minD = Math.min(minD, Math.hypot(o.pos.x - pt[0], o.pos.z - pt[2]));
+        if (minD > bestD) { bestD = minD; best = pt; }
+      }
+      return best;
+    }
+    return this.ffaSpawn(p);
   }
 
   ffaSpawn(p) {
@@ -215,16 +234,34 @@ export class Rules {
     return best;
   }
 
-  onKill(killer, victim) {
-    if (this.mode.kind === 'ffa') {
-      this.respawnQueue.set(victim.id, 2.5);
-      if (killer && killer !== victim && killer.kills >= this.mode.killsToWin) this.finish(killer.id, 'kills');
+  onKill(killer, victim, weapon) {
+    const kind = this.mode.kind, s = this.s;
+    if (RESPAWN_KINDS.has(kind)) {
+      if (s.phase !== 'live') return;
+      this.respawnQueue.set(victim.id, kind === 'gungame' ? 1.5 : 2.5);
+      const valid = killer && killer !== victim;
+      if (kind === 'ffa' && valid && killer.kills >= this.mode.killsToWin) this.finish(killer.id, 'kills');
+      if (kind === 'tdm' && valid && killer.team !== victim.team) {
+        s.scores[killer.team]++;
+        this.g.broadcast('score', { scores: s.scores });
+        if (s.scores[killer.team] >= this.mode.killsToWin) this.finish(killer.team, 'kills');
+      }
+      if (kind === 'gungame') {
+        const last = GUN_GAME_ORDER.length - 1;
+        if (valid) {
+          if ((killer.gg || 0) >= last) return this.finish(killer.id, 'gungame');
+          this.g.broadcast('gg', { id: killer.id, level: (killer.gg || 0) + 1 });
+          if (weapon === 'knife' && (victim.gg || 0) > 0) this.g.broadcast('gg', { id: victim.id, level: victim.gg - 1, demoted: true });
+        } else if ((victim.gg || 0) > 0) {
+          this.g.broadcast('gg', { id: victim.id, level: victim.gg - 1, demoted: true });
+        }
+      }
       return;
     }
-    const b = this.s.bomb;
+    const b = s.bomb;
     if (b && b.state === 'carried' && b.carrier === victim.id) {
-      this.s.bomb = { state: 'dropped', pos: [victim.pos.x, victim.pos.y, victim.pos.z] };
-      this.g.broadcast('bomb', this.s.bomb);
+      s.bomb = { state: 'dropped', pos: [victim.pos.x, victim.pos.y, victim.pos.z] };
+      this.g.broadcast('bomb', s.bomb);
     }
   }
 
@@ -235,11 +272,14 @@ export class Rules {
       if (nt > 0) { this.respawnQueue.set(id, nt); continue; }
       this.respawnQueue.delete(id);
       const p = g.players.get(id);
-      if (p) g.broadcast('respawn', { id, at: this.ffaSpawn(p) });
+      if (p) g.broadcast('respawn', { id, at: this.respawnPoint(p) });
     }
     if (s.time <= 0) {
+      const kind = this.mode.kind;
+      if (kind === 'tdm') return this.finish(s.scores[0] === s.scores[1] ? -1 : s.scores[0] > s.scores[1] ? 0 : 1, 'time');
       let best = null;
-      for (const p of g.players.values()) if (!best || p.kills > best.kills) best = p;
+      const rank = (p) => (kind === 'gungame' ? (p.gg || 0) * 1000 + p.kills : p.kills);
+      for (const p of g.players.values()) if (!best || rank(p) > rank(best)) best = p;
       this.finish(best ? best.id : -1, 'time');
     }
   }

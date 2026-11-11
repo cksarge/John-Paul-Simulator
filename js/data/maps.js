@@ -118,4 +118,103 @@ export const MAPS = {
       fog: 0x8c7c78, fogDensity: 0.004, sun: 0xffb27a, sunIntensity: 3.2, hemi: [0x9fb6d8, 0x3a3430, 0.75], exposure: 0.6,
     },
   },
+  foundry: {
+    id: 'foundry', name: 'Foundry', size: 'small', w: 24, h: 16, mirror: true,
+    desc: 'Smelting floor at night. Tight lanes around a split centre.',
+    ops: [
+      ['.', 1, 1, 22, 14],
+      ['2', 19, 1, 22, 2], ['1', 19, 3, 22, 3],
+      ['X', 5, 1, 6, 4],
+      ['#', 10, 5, 13, 5],
+      ['M', 8, 8, 9, 9],
+      ['h', 11, 7, 12, 7],
+      ['c', 6, 12, 6, 12],
+      ['c', 15, 11, 15, 11],
+    ],
+    spawns: [[1, 6, 2, 9], [21, 6, 22, 9]],
+    theme: {
+      wall: 'metal', wall2: 'brick', half: 'concrete', floor: 'concrete', platform: 'metal',
+      sky: { elevation: 4, azimuth: 300, turbidity: 12, rayleigh: 3.5 },
+      fog: 0x3a3230, fogDensity: 0.01, sun: 0xff9a5a, sunIntensity: 2.6, hemi: [0x8090b0, 0x2a2420, 0.9], exposure: 0.75,
+    },
+  },
+  outpost: {
+    id: 'outpost', name: 'Outpost', size: 'small', w: 26, h: 18, mirror: true,
+    desc: 'Snowbound listening post. Long sightlines, a crate stack in the middle.',
+    ops: [
+      ['.', 1, 1, 24, 16],
+      ['#', 6, 3, 8, 6],
+      ['#', 6, 11, 7, 16],
+      ['h', 12, 4, 13, 4],
+      ['C', 12, 8, 13, 9],
+      ['c', 10, 13, 10, 13],
+      ['M', 3, 13, 4, 14],
+      ['1', 9, 1, 11, 1],
+    ],
+    spawns: [[1, 7, 3, 10], [22, 7, 24, 10]],
+    theme: {
+      wall: 'concrete', wall2: 'metal', half: 'concrete', floor: 'snow', platform: 'metal',
+      sky: { elevation: 22, azimuth: 200, turbidity: 3, rayleigh: 0.9 },
+      fog: 0xc8d4e0, fogDensity: 0.008, sun: 0xfff6ee, sunIntensity: 2.8, hemi: [0xdde8ff, 0x8a96a8, 0.8], exposure: 0.5,
+    },
+  },
+  canopy: {
+    id: 'canopy', name: 'Canopy', size: 'large', w: 48, h: 44,
+    desc: 'Overgrown jungle ruins. A temple splits mid; long flanks to each site.',
+    ops: [
+      ['.', 19, 1, 28, 6],          // defender spawn
+      ['.', 33, 2, 46, 14],         // A site
+      ['.', 1, 2, 14, 14],          // B site
+      ['.', 29, 3, 32, 6], ['.', 15, 3, 18, 6],
+      ['.', 17, 37, 30, 42],        // attacker spawn
+      ['.', 21, 7, 26, 36],         // mid
+      ['#', 22, 18, 25, 22],        // temple block
+      ['.', 38, 15, 44, 36],        // A main
+      ['.', 29, 33, 44, 36],
+      ['.', 3, 15, 8, 36],          // B main
+      ['.', 3, 33, 18, 36],
+      ['.', 27, 24, 37, 26],        // mid → A
+      ['.', 15, 10, 20, 12],        // mid → B
+      ['X', 38, 20, 40, 21], ['X', 6, 22, 8, 23],
+      ['C', 39, 7, 40, 8], ['c', 36, 11, 36, 11], ['c', 43, 5, 43, 5], ['h', 35, 13, 37, 13], ['2', 44, 2, 46, 3], ['1', 44, 4, 46, 4],
+      ['C', 6, 6, 7, 7], ['c', 10, 10, 10, 10], ['c', 3, 11, 3, 11], ['h', 9, 13, 11, 13], ['2', 1, 2, 3, 3], ['1', 1, 4, 3, 4],
+      ['c', 23, 10, 23, 10], ['c', 24, 30, 24, 30], ['h', 21, 27, 22, 27],
+      ['C', 42, 28, 42, 28], ['c', 4, 28, 4, 28], ['c', 30, 25, 30, 25], ['c', 20, 39, 20, 39], ['c', 27, 39, 27, 39],
+    ],
+    spawns: [[19, 38, 28, 41], [20, 2, 27, 4]],
+    sites: { A: [35, 4, 45, 12], B: [2, 4, 12, 12] },
+    theme: {
+      wall: 'stone', wall2: 'brick', half: 'stone', floor: 'grass', platform: 'wood',
+      sky: { elevation: 30, azimuth: 120, turbidity: 12, rayleigh: 1.8 },
+      fog: 0x6f8a6a, fogDensity: 0.005, sun: 0xfff0c8, sunIntensity: 3.2, hemi: [0xcfe8c8, 0x3a4a2a, 0.75], exposure: 0.55,
+    },
+  },
+  frostbite: {
+    id: 'frostbite', name: 'Frostbite', size: 'large', w: 46, h: 42,
+    desc: 'Arctic research depot. Container mazes on both sites, open mid.',
+    ops: [
+      ['.', 1, 15, 7, 26],          // attacker spawn
+      ['.', 38, 15, 44, 26],        // defender spawn
+      ['.', 16, 1, 30, 10],         // A site
+      ['.', 16, 31, 30, 40],        // B site
+      ['.', 8, 18, 37, 23],         // mid
+      ['.', 3, 3, 7, 14], ['.', 3, 3, 15, 6],
+      ['.', 3, 27, 7, 38], ['.', 3, 35, 15, 38],
+      ['.', 38, 3, 42, 14], ['.', 31, 3, 42, 6],
+      ['.', 38, 27, 42, 38], ['.', 31, 35, 42, 38],
+      ['.', 21, 11, 24, 17], ['.', 21, 24, 24, 30],
+      ['M', 12, 19, 14, 20], ['M', 30, 21, 32, 22], ['M', 20, 4, 22, 5], ['M', 25, 6, 26, 7],
+      ['M', 24, 35, 26, 36], ['M', 19, 33, 20, 34], ['M', 5, 9, 6, 10], ['M', 39, 31, 40, 32],
+      ['c', 17, 8, 17, 8], ['C', 29, 9, 29, 9], ['c', 28, 2, 28, 2], ['c', 17, 38, 17, 38], ['C', 29, 32, 29, 32],
+      ['c', 10, 21, 10, 21], ['c', 34, 19, 34, 19], ['h', 21, 11, 22, 11], ['h', 23, 30, 24, 30],
+      ['1', 16, 1, 19, 2], ['2', 16, 1, 17, 1], ['1', 27, 39, 30, 40],
+    ],
+    spawns: [[2, 17, 5, 24], [40, 17, 43, 24]],
+    sites: { A: [18, 2, 28, 8], B: [18, 33, 28, 39] },
+    theme: {
+      wall: 'concrete', wall2: 'metal', half: 'concrete', floor: 'snow', platform: 'metal',
+      sky: { elevation: 18, azimuth: 210, turbidity: 3, rayleigh: 1 },
+      fog: 0xc8d4e0, fogDensity: 0.006, sun: 0xfff6ee, sunIntensity: 3.0, hemi: [0xdde8ff, 0x8a96a8, 0.8], exposure: 0.5,
+    },
+  },
 };

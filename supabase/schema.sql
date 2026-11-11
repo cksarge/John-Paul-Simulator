@@ -23,6 +23,9 @@ create table if not exists public.profiles (
   last_seen     timestamptz not null default now()
 );
 
+-- Collected cosmetics (weapon finishes + outfits). Added after launch, so use IF NOT EXISTS.
+alter table public.profiles add column if not exists inventory jsonb not null default '{}'::jsonb;
+
 alter table public.profiles enable row level security;
 
 drop policy if exists "profiles are public" on public.profiles;
@@ -34,7 +37,7 @@ create policy "users update own profile" on public.profiles
 
 -- Players may only edit cosmetic columns directly; stats change through the functions below.
 revoke update on public.profiles from anon, authenticated;
-grant update (character, last_seen) on public.profiles to authenticated;
+grant update (character, last_seen, inventory) on public.profiles to authenticated;
 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = '' as $$

@@ -5,8 +5,8 @@ import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
 import { sfx, setListener, initAudio, setVolume } from '../engine/audio.js';
 import { MAPS } from '../data/maps.js';
-import { MODES } from '../data/modes.js';
-import { WEAPONS, GRENADES, GEAR, itemInfo } from '../data/weapons.js';
+import { MODES, RESPAWN_KINDS, SOLO_KINDS, goalText } from '../data/modes.js';
+import { WEAPONS, GRENADES, GEAR, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
 import { Player } from './player.js';
 import { Input } from './input.js';
 import { Rules } from './rules.js';
@@ -14,9 +14,12 @@ import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
 import {
   switchSlot, cycleSlot, startReload, tickWeapon, ready, spreadFor, applySpread, traceBullet, bulletDamage, bestSlot, hasSlot,
+  reloadTime, maxNades,
 } from './combat.js';
 
-const FFA_WEAPONS = ['ar7', 'm5', 'vex', 'longshot', 'breacher', 'ar7', 'm5'];
+const FFA_WEAPONS = ['ar7', 'm5', 'vex', 'longshot', 'breacher', 'trident', 'falcon', 'kestrel', 'reaper', 'bulldog', 'sparrow', 'ar7', 'm5'];
+const BOT_TDM_WEAPONS = ['ar7', 'm5', 'trident', 'kestrel', 'falcon', 'vex', 'reaper'];
+const loadoutKey = (kind) => 'jps_loadout_' + (kind === 'bomb' ? 'bomb' : 'free');
 
 // One match. Runs identically online and offline; when `net` is null this client is the host.
 export class Game {
@@ -49,6 +52,8 @@ export class Game {
     this.action = null;
     this.spectateIdx = 0;
     this.lastFrame = performance.now();
+    this.roundBuys = [];
+    try { this.savedBuys = JSON.parse(localStorage.getItem(loadoutKey(this.mode.kind)) || '[]'); } catch { this.savedBuys = []; }
   }
 
   get local() { return this.players.get(this.localId); }
@@ -104,11 +109,11 @@ export class Game {
     this.players.set(p.id, p);
     if (info.isBot && this.isHost) this.brains.set(p.id, new BotBrain(this, p, this.opts.botLevel || 'normal'));
     if (!p.isLocal) {
-      p.ensureModel(this.scene, this.mode.kind !== 'ffa');
+      p.ensureModel(this.scene, !SOLO_KINDS.has(this.mode.kind));
       p.model.root.visible = false;
       this.attachNameTag(p);
     } else {
-      p.ensureModel(this.scene, this.mode.kind !== 'ffa');
+      p.ensureModel(this.scene, !SOLO_KINDS.has(this.mode.kind));
       p.model.root.visible = false;
     }
     return p;
@@ -141,7 +146,7 @@ export class Game {
 
   canDamage(a, b) {
     if (!a || !b || a === b) return false;
-    if (this.mode.kind === 'ffa') return true;
+    if (SOLO_KINDS.has(this.mode.kind)) return true;
     return a.team !== b.team;
   }
 
@@ -195,7 +200,7 @@ export class Game {
       if (p.model) {
         if (p.alive && p.model.dead) p.model.revive();
         p.syncModel(dt, showModel && (p.alive || p.model.dead) && !(p.isLocal && !this.spectating()));
-        if (p.tag) p.tag.visible = p.alive && lp && !p.isLocal && this.mode.kind !== 'ffa' && p.team === lp.team;
+        if (p.tag) p.tag.visible = p.alive && lp && !p.isLocal && !SOLO_KINDS.has(this.mode.kind) && p.team === lp.team;
       }
     }
     this.updateNades(dt);
@@ -246,12 +251,12 @@ export class Game {
         acting = true;
         if (this.action?.type !== 'plant') this.action = { type: 'plant', t: 0 };
         this.action.t += dt;
-        if (this.action.t >= this.mode.plantTime) { this.request('plant', { pos: [p.pos.x, p.pos.y, p.pos.z] }); this.action = null; }
+        if (this.action.t >= this.actionTime('plant', p)) { this.request('plant', { pos: [p.pos.x, p.pos.y, p.pos.z] }); this.action = null; }
       } else if (b.state === 'planted' && p.team === 1 && Math.hypot(p.pos.x - b.pos[0], p.pos.z - b.pos[2]) < 2.2) {
         acting = true;
         if (this.action?.type !== 'defuse') this.action = { type: 'defuse', t: 0 };
         this.action.t += dt;
-        if (this.action.t >= this.mode.defuseTime) { this.request('defuse', {}); this.action = null; }
+        if (this.action.t >= this.actionTime('defuse', p)) { this.request('defuse', {}); this.action = null; }
       }
     }
     if (!acting) this.action = null;
@@ -285,13 +290,13 @@ export class Game {
     if (this.viewmodel.id !== p.weaponId) this.viewmodel.setWeapon(p.weaponId, p.char);
     const firing = !ui && !frozen && !acting && inp.mouse.left;
     if (tickWeapon(p, dt, firing)) { /* reload finished */ }
-    if (firing) this.tryFire(p, true);
-    else this.releaseTrigger(p);
+    if (firing || p.burstLeft > 0) this.tryFire(p, true);
+    if (!firing) this.releaseTrigger(p);
 
     this.handleUiKeys(p, ui);
     this.viewmodel.update(dt, {
       speed: Math.hypot(p.vel.x, p.vel.z), onGround: p.onGround, lookDX: this.lookDX, lookDY: this.lookDY,
-      reload: p.ws.reloadT >= 0 && w ? p.ws.reloadT / w.reload : -1, scoped: p.ws.scope > 0,
+      reload: p.ws.reloadT >= 0 && w ? p.ws.reloadT / reloadTime(p, w) : -1, scoped: p.ws.scope > 0,
       drawTime: w?.draw || 0.4,
     });
   }
@@ -300,6 +305,8 @@ export class Game {
     const inp = this.input;
     this.hud.setScoreboard(inp.keys.has('Tab') && !inp.typing);
     if (!ui && inp.pressed('KeyB')) this.hud.toggleBuy();
+    if (!ui && inp.pressed('KeyF') && this.canBuy()) this.rebuy(true);
+    if (!ui && inp.pressed('KeyK')) this.toggleKeepLoadout();
     if (!ui && this.online && (inp.pressed('Enter') || inp.pressed('KeyY') || inp.pressed('KeyT'))) this.hud.openChat();
   }
 
@@ -316,7 +323,8 @@ export class Game {
 
   canBuy(p = this.local) {
     if (!p || !p.alive) return false;
-    if (this.mode.kind === 'ffa') return false;
+    if (SOLO_KINDS.has(this.mode.kind)) return false;
+    if (this.mode.kind === 'tdm') return this.state.phase === 'live';
     if (this.state.phase === 'buy') return true;
     if (this.state.phase === 'live' && this.mode.kind === 'bomb' && this.state.time > this.mode.roundTime - 20) {
       const r = this.mapDef.spawns[p.team];
@@ -326,9 +334,44 @@ export class Game {
     return false;
   }
 
-  priceOf(item) {
+  priceOf(item, p = this.local) {
     if (this.mode.kind !== 'bomb') return 0;
-    return itemInfo(item)?.price ?? 0;
+    const price = itemInfo(item)?.price ?? 0;
+    return GRENADES[item] && p?.char?.perk === 'utility' ? Math.round(price / 2) : price;
+  }
+
+  actionTime(type, p) {
+    const t = type === 'plant' ? this.mode.plantTime : this.mode.defuseTime;
+    return t * (p?.char?.perk === 'quickhands' ? 0.7 : 1);
+  }
+
+  // ───────────────────────── saved loadouts ─────────────────────────
+  toggleKeepLoadout() {
+    this.settings.keepLoadout = !this.settings.keepLoadout;
+    try { localStorage.setItem('jps_settings', JSON.stringify(this.settings)); } catch { /* ignore */ }
+    this.hud.info(this.settings.keepLoadout ? 'Keep loadout ON — your last loadout is re-equipped automatically' : 'Keep loadout OFF', 2.5);
+    this.hud.refreshBuy();
+  }
+
+  // Re-requests every item from the last loadout the player bought (host validates money and limits).
+  rebuy(manual = false) {
+    const items = this.savedBuys || [];
+    if (!items.length) { if (manual) this.hud.info('No saved loadout yet — buy something first', 2); return; }
+    items.forEach((item, i) => setTimeout(() => { if (this.canBuy()) this.request('buy', { item }); }, i * 60));
+    if (manual) this.hud.info('Rebuying last loadout', 1.5);
+  }
+
+  // TDM has no rounds, so a loadout is saved shortly after the player stops buying.
+  commitRoundBuysSoon() {
+    clearTimeout(this.commitT);
+    this.commitT = setTimeout(() => this.commitRoundBuys(), 1500);
+  }
+
+  commitRoundBuys() {
+    if (!this.roundBuys.length) return;
+    this.savedBuys = this.roundBuys;
+    this.roundBuys = [];
+    try { localStorage.setItem(loadoutKey(this.mode.kind), JSON.stringify(this.savedBuys)); } catch { /* ignore */ }
   }
 
   buy(item) {
@@ -342,7 +385,7 @@ export class Game {
     p.walking = walk;
     p.crouch += ((crouch ? 1 : 0) - p.crouch) * Math.min(1, dt * 10);
     const w = p.weapon;
-    let max = 6.0 * (w?.moveSpeed || 1) * (p.ws.scope > 0 ? 0.5 : 1);
+    let max = 6.0 * (w?.moveSpeed || 1) * (p.ws.scope > 0 ? 0.5 : 1) * (p.char?.perk === 'fleet' ? 1.06 : 1);
     if (crouch) max *= 0.42; else if (walk) max *= 0.52;
     const v = p.vel;
     if (p.onGround) {
@@ -386,7 +429,7 @@ export class Game {
     if (w.type === 'knife') { if (ready(p)) this.knife(p, false); return; }
     if (p.slot === 'bomb') return;
     if (!ready(p)) return;
-    if (!w.auto && p.triggerHeld) return;
+    if (!w.auto && p.triggerHeld && !(w.burst && p.burstLeft > 0)) return;
     const a = p.ammo[w.id];
     if (!a) return;
     if (a.mag <= 0) {
@@ -396,7 +439,14 @@ export class Game {
       return;
     }
     a.mag--;
-    p.ws.cooldown = w.fireRate;
+    const breath = p.char?.perk === 'breath' && (w.type === 'sniper' || w.id === 'falcon') ? 0.8 : 1;
+    p.ws.cooldown = w.fireRate * breath;
+    if (w.burst) {
+      // Burst rifles fire `burst` rounds per trigger pull, then wait burstDelay.
+      if (!(p.burstLeft > 0)) p.burstLeft = w.burst;
+      p.burstLeft--;
+      if (p.burstLeft <= 0 || a.mag === 0) { p.ws.cooldown = w.burstDelay; p.burstLeft = 0; }
+    }
     p.triggerHeld = true;
     p.firingT = 0.12;
     const origin = p.eye();
@@ -430,7 +480,8 @@ export class Game {
     }
     p.ws.spray++;
     // Recoil
-    const kick = w.recoil * (1 + Math.min(p.ws.spray, 10) * 0.1);
+    const steady = p.char?.perk === 'steady' && (w.type === 'rifle' || w.type === 'lmg') ? 0.75 : 1;
+    const kick = w.recoil * steady * (1 + Math.min(p.ws.spray, 10) * 0.1);
     const yawKick = (Math.random() - 0.5) * 2 * w.recoilYaw * (p.ws.spray > 6 ? 1.6 : 1);
     if (isLocal) {
       this.punch += kick * 0.45;
@@ -633,6 +684,7 @@ export class Game {
     if (!victim.alive || (this.state.phase !== 'live' && this.state.phase !== 'post')) return;
     if (attacker && attacker !== victim && !this.canDamage(attacker, victim)) return;
     const w = WEAPONS[weapon];
+    if ((weapon === 'he' || weapon === 'bomb') && victim.char?.perk === 'blastsuit') raw *= 0.6;
     let dmg = raw, armorLoss = 0;
     const armored = part === 'head' ? victim.helmet : part !== 'legs' && victim.armor > 0;
     if (armored && victim.armor > 0) {
@@ -649,7 +701,7 @@ export class Game {
       const killReward = this.mode.kind === 'bomb' && attacker && attacker !== victim ? (w?.killReward ?? 300) : 0;
       if (attacker && killReward) attacker.money = Math.min(16000, attacker.money + killReward);
       this.broadcast('kill', { killer: attacker?.id ?? null, victim: victim.id, w: weapon, hs: part === 'head', money: attacker ? attacker.money : 0 });
-      this.rules.onKill(attacker, victim);
+      this.rules.onKill(attacker, victim, weapon);
     }
   }
 
@@ -657,10 +709,13 @@ export class Game {
     if (!this.canBuy(p) && !(p.isBot && this.state.phase === 'buy')) return;
     const info = itemInfo(item);
     if (!info) return;
-    const price = this.priceOf(item);
+    const price = this.priceOf(item, p);
     if (p.money < price) return;
     if (WEAPONS[item]) { if (p.inv[WEAPONS[item].slot] === item) return; }
-    else if (GRENADES[item]) { if (p.inv.nades.includes(item) || p.inv.nades.length >= 2) return; }
+    else if (GRENADES[item]) {
+      const dupes = p.inv.nades.filter((n) => n === item).length;
+      if (p.inv.nades.length >= maxNades(p) || dupes >= (p.char?.perk === 'utility' ? 2 : 1)) return;
+    }
     else if (item === 'kevlar') { if (p.armor >= 100) return; }
     else if (item === 'helmet') { if (p.armor >= 100 && p.helmet) return; }
     p.money -= price;
@@ -671,16 +726,16 @@ export class Game {
     for (const p of this.players.values()) {
       if (!p.isBot || !p.alive) continue;
       if (this.mode.kind !== 'bomb') {
-        const pick = ['ar7', 'm5', 'ar7', 'vex', 'longshot', 'breacher'][Math.floor(Math.random() * 6)];
+        const pick = FFA_WEAPONS[Math.floor(Math.random() * FFA_WEAPONS.length)];
         this.hostBuy(p, pick);
         if (Math.random() < 0.4) this.hostBuy(p, 'magnum');
         continue;
       }
-      const rifle = p.team === 0 ? 'ar7' : 'm5';
+      const rifle = p.team === 0 ? (Math.random() < 0.7 ? 'ar7' : 'trident') : (Math.random() < 0.7 ? 'm5' : 'falcon');
       if (!p.inv.primary) {
         if (p.money >= 5800 && Math.random() < 0.15) this.hostBuy(p, 'longshot');
         else if (p.money >= 3700) this.hostBuy(p, rifle);
-        else if (p.money >= 2200) this.hostBuy(p, Math.random() < 0.6 ? 'vex' : 'breacher');
+        else if (p.money >= 2200) this.hostBuy(p, ['vex', 'kestrel', 'breacher', 'sparrow'][Math.floor(Math.random() * 4)]);
       }
       if (p.money >= 1000 && (p.armor < 100 || !p.helmet)) this.hostBuy(p, p.money >= 1600 ? 'helmet' : 'kevlar');
       if (p.money >= 300 && Math.random() < 0.5) this.hostBuy(p, Math.random() < 0.5 ? 'he' : 'smoke');
@@ -696,7 +751,7 @@ export class Game {
   }
 
   statsPayload() {
-    return [...this.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, k: p.kills, d: p.deaths, hs: p.hs, dmg: Math.round(p.damage), bot: p.isBot }));
+    return [...this.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, k: p.kills, d: p.deaths, hs: p.hs, dmg: Math.round(p.damage), bot: p.isBot, gg: p.gg || 0 }));
   }
 
   // ───────────────────────── events (all clients) ─────────────────────────
@@ -710,7 +765,7 @@ export class Game {
     switch (type) {
       case 'phase':
         s.phase = d.phase; s.time = d.time;
-        if (d.phase === 'live' && this.mode.kind !== 'ffa') { this.hud.center('GO', '', 1.2); sfx.roundStart(); }
+        if (d.phase === 'live' && !RESPAWN_KINDS.has(this.mode.kind)) { this.hud.center('GO', '', 1.2); sfx.roundStart(); }
         break;
       case 'round': this.applyRound(d); break;
       case 'roundEnd': {
@@ -774,7 +829,20 @@ export class Game {
         const p = this.players.get(d.id);
         if (!p) break;
         this.spawnPlayer(p, d.at, true, true);
-        this.giveFFALoadout(p, d.at);
+        this.giveSpawnLoadout(p, d.at);
+        break;
+      }
+      case 'score': s.scores = d.scores; break;
+      case 'gg': {
+        const p = this.players.get(d.id);
+        if (!p) break;
+        p.gg = d.level;
+        if (p.alive) this.setGunGameWeapon(p);
+        if (p.isLocal) {
+          const next = WEAPONS[GUN_GAME_ORDER[d.level]]?.name || 'Knife';
+          this.hud.info(d.demoted ? `Knifed! Back to ${next}` : `Level ${d.level + 1}/${GUN_GAME_ORDER.length} — ${next}`, 2.5);
+          if (!d.demoted) sfx.buy();
+        }
         break;
       }
       case 'bomb': {
@@ -829,10 +897,33 @@ export class Game {
     p.alive = true; p.hp = 100;
     if (resetKit) { p.resetKit(); p.armor = 0; p.helmet = false; }
     if (freeArmor) { p.armor = 100; p.helmet = true; }
+    if (p.char?.perk === 'fortified' && p.armor < 100) p.armor = 100;
     p.model?.revive();
     p.ws.cooldown = 0; p.ws.reloadT = -1; p.ws.drawT = 0; p.ws.scope = 0; p.ws.spray = 0;
     this.brains.get(p.id)?.reset();
     if (p.isLocal) { this.punch = 0; this.viewmodel.setWeapon(p.weaponId, p.char); }
+  }
+
+  // Loadout given on spawn in respawn modes.
+  giveSpawnLoadout(p, at) {
+    const kind = this.mode.kind;
+    if (kind === 'gungame') return this.setGunGameWeapon(p);
+    if (kind === 'ffa') return this.giveFFALoadout(p, at);
+    if (kind === 'tdm' && p.owner === this.localId) {
+      if (p.isLocal && this.savedBuys.length) setTimeout(() => this.rebuy(), 120);
+      else if (p.isLocal) setTimeout(() => this.request('buy', { item: 'ar7' }), 120);
+      else setTimeout(() => { this.hostBuy(p, BOT_TDM_WEAPONS[Math.floor(Math.random() * BOT_TDM_WEAPONS.length)]); }, 120);
+    }
+  }
+
+  setGunGameWeapon(p) {
+    const id = GUN_GAME_ORDER[Math.min(p.gg || 0, GUN_GAME_ORDER.length - 1)];
+    p.inv = { primary: null, secondary: null, melee: 'knife', nades: [] };
+    const w = WEAPONS[id];
+    if (w.slot !== 'melee') { p.inv[w.slot] = id; p.giveAmmo(id); }
+    p.slot = '';
+    switchSlot(p, w.slot);
+    if (p.isLocal) this.viewmodel.setWeapon(p.weaponId, p.char);
   }
 
   giveFFALoadout(p, seedArr) {
@@ -857,7 +948,7 @@ export class Game {
       const at = d.spawns[p.id];
       if (!at) { p.alive = false; continue; }
       this.spawnPlayer(p, at, reset.has(p.id), d.freeArmor);
-      if (this.mode.kind === 'ffa') this.giveFFALoadout(p, at);
+      if (RESPAWN_KINDS.has(this.mode.kind)) this.giveSpawnLoadout(p, at);
     }
     this.refreshBombCarrier();
     this.action = null;
@@ -867,11 +958,14 @@ export class Game {
       setTimeout(() => this.botBuys(), 400);
     }
     const lp = this.local;
-    if (this.mode.kind === 'ffa') this.hud.center('FREE FOR ALL', `First to ${this.mode.killsToWin} kills`, 3);
+    this.commitRoundBuys();
+    if (RESPAWN_KINDS.has(this.mode.kind)) this.hud.center(this.mode.name.toUpperCase(), goalText(this.mode), 3);
     else {
       const side = this.mode.kind === 'bomb' && lp ? (lp.team === 0 ? 'Attack — plant the charge at A or B' : 'Defend — stop the plant') : 'Press B to choose your loadout';
       this.hud.center(`ROUND ${d.round}`, side, 2.5);
-      if (lp && lp.alive && this.mode.kind !== 'bomb' && reset.has(lp.id)) this.hud.openBuy();
+      const keep = this.settings.keepLoadout && this.savedBuys.length;
+      if (lp && lp.alive && keep) setTimeout(() => this.rebuy(), 350);
+      else if (lp && lp.alive && this.mode.kind !== 'bomb' && reset.has(lp.id)) this.hud.openBuy();
     }
     if (lp?.hasBomb) this.hud.info('You have the charge — hold E inside a bomb site to plant', 5);
   }
@@ -889,13 +983,17 @@ export class Game {
     } else if (GRENADES[it]) p.inv.nades.push(it);
     else if (it === 'kevlar') p.armor = 100;
     else if (it === 'helmet') { p.armor = 100; p.helmet = true; }
-    if (p.isLocal) { sfx.buy(); this.viewmodel.setWeapon(p.weaponId, p.char); this.hud.refreshBuy(); }
+    if (p.isLocal) {
+      sfx.buy(); this.viewmodel.setWeapon(p.weaponId, p.char); this.hud.refreshBuy();
+      if (!this.roundBuys.includes(it)) this.roundBuys.push(it);
+      if (this.mode.kind === 'tdm') this.commitRoundBuysSoon();
+    }
   }
 
   // ───────────────────────── networking ─────────────────────────
   bindNet() {
     const n = this.net;
-    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end'];
+    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg'];
     for (const e of evs) n.on(e, (d) => this.onEvent(e, d));
     n.on('S', (d) => this.onStates(d));
     n.on('req', (d) => { if (this.isHost) this.handleRequest(d.type, d.data, d.from); });
@@ -987,7 +1085,7 @@ export class Game {
       if (lp.ws.scope > 0 && w?.scope) fov = w.scope[lp.ws.scope - 1];
       this.spectateTarget = null;
     } else {
-      const alive = [...this.players.values()].filter((p) => p.alive && (this.mode.kind === 'ffa' || !lp || p.team === lp.team));
+      const alive = [...this.players.values()].filter((p) => p.alive && (SOLO_KINDS.has(this.mode.kind) || !lp || p.team === lp.team));
       const pool = alive.length ? alive : [...this.players.values()].filter((p) => p.alive);
       const t = pool.length ? pool[this.spectateIdx % pool.length] : null;
       this.spectateTarget = t;
@@ -1016,15 +1114,18 @@ export class Game {
     this.input.unlock();
     const lp = this.local;
     let result = 'draw';
-    if (this.mode.kind === 'ffa') {
+    if (SOLO_KINDS.has(this.mode.kind)) {
       result = d.winner === this.localId ? 'win' : 'loss';
     } else if (d.winner >= 0 && lp) result = d.winner === lp.team ? 'win' : 'loss';
     if (d.reason === 'host-left' && d.winner === -2) result = 'draw';
     const myStats = lp ? { k: lp.kills, d: lp.deaths, hs: lp.hs } : { k: 0, d: 0, hs: 0 };
     let eloChange = 0;
-    const score = this.mode.kind === 'ffa' ? `${myStats.k} kills` : `${d.scores[lp?.team ?? 0]}-${d.scores[1 - (lp?.team ?? 0)]}`;
+    const score = this.mode.kind === 'ffa' ? `${myStats.k} kills`
+      : this.mode.kind === 'gungame' ? `Weapon ${Math.min((lp?.gg || 0) + 1, GUN_GAME_ORDER.length)}/${GUN_GAME_ORDER.length}`
+        : `${d.scores[lp?.team ?? 0]}-${d.scores[1 - (lp?.team ?? 0)]}`;
     (result === 'win' ? sfx.win : result === 'loss' ? sfx.lose : sfx.roundStart)();
     this.hud.showResults({ result, reason: d.reason, scores: d.scores, stats: d.stats || this.statsPayload(), eloChange: null, score });
+    if (d.reason !== 'host-left') this.app.awardDrop?.(result, this.online).then((item) => this.hud.showDrop(item)).catch((e) => console.warn('Drop failed', e));
     const api = this.app.api;
     if (api && this.app.user) {
       try {

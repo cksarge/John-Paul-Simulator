@@ -1,4 +1,4 @@
-import { MODES } from '../data/modes.js';
+import { MODES, SOLO_KINDS, nextMap } from '../data/modes.js';
 import { botName } from '../game/bot.js';
 import { randomChar } from '../data/characters.js';
 
@@ -77,7 +77,7 @@ export function newId(n = 10) {
 export function buildMatch({ mode, map, humans, hostId, fillBots = true, botLevel = 'normal' }) {
   const m = MODES[mode];
   const players = [];
-  if (m.kind === 'ffa') {
+  if (SOLO_KINDS.has(m.kind)) {
     humans.forEach((h) => players.push({ ...h, team: 0, isBot: false }));
     const target = fillBots ? Math.max(humans.length, 6) : humans.length;
     for (let i = players.length; i < target; i++) players.push({ id: 'bot-' + i, name: botName(i), team: 0, isBot: true, char: randomChar(), elo: 1000 });
@@ -96,6 +96,5 @@ export function buildMatch({ mode, map, humans, hostId, fillBots = true, botLeve
       for (const team of [0, 1]) while (counts[team] < m.teamSize) { counts[team]++; players.push({ id: 'bot-' + i, name: botName(i + team * 7), team, isBot: true, char: randomChar(), elo: 1000 }); i++; }
     }
   }
-  const pool = m.maps;
-  return { matchId: newId(14), mode, map: map && pool.includes(map) ? map : map || pool[Math.floor(Math.random() * pool.length)], hostId, players, botLevel };
+  return { matchId: newId(14), mode, map: map || nextMap(mode), hostId, players, botLevel };
 }

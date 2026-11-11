@@ -6,7 +6,11 @@ const OFFSETS = {
   vex: [0.19, -0.19, -0.5], breacher: [0.2, -0.22, -0.5], ar7: [0.2, -0.21, -0.52],
   m5: [0.2, -0.21, -0.52], longshot: [0.2, -0.22, -0.5], he: [0.2, -0.2, -0.46],
   smoke: [0.2, -0.2, -0.46], bomb: [0.1, -0.28, -0.52],
+  viper: [0.17, -0.17, -0.5], tac45: [0.17, -0.17, -0.5], kestrel: [0.19, -0.19, -0.5],
+  reaper: [0.2, -0.22, -0.5], bulldog: [0.21, -0.23, -0.52], trident: [0.19, -0.2, -0.48],
+  falcon: [0.2, -0.21, -0.52], sparrow: [0.2, -0.21, -0.5],
 };
+const PISTOLS = new Set(['p9', 'magnum', 'viper', 'tac45']);
 const ONE_HAND = new Set(['knife', 'he', 'smoke']);
 
 function sleeve(len, mat, glove) {
@@ -42,8 +46,9 @@ export class Viewmodel {
   setWeapon(id, char) {
     this.root.clear();
     this.id = id;
+    this.skin = char?.skins?.[id] || null;
     if (!id) return;
-    const gun = buildGun(id);
+    const gun = buildGun(id, char?.skins?.[id]);
     gun.traverse((o) => { if (o.isMesh) o.castShadow = false; });
     const sleeveM = new THREE.MeshStandardMaterial({ color: char?.top || '#3a4658', roughness: 0.85 });
     const gloveM = new THREE.MeshStandardMaterial({ color: char?.gloves || '#1d1d1f', roughness: 0.7 });
@@ -53,7 +58,7 @@ export class Viewmodel {
     gun.add(right);
     if (!ONE_HAND.has(id)) {
       const left = sleeve(0.55, sleeveM, gloveM);
-      const pistol = id === 'p9' || id === 'magnum';
+      const pistol = PISTOLS.has(id);
       left.position.set(pistol ? -0.025 : -0.03, pistol ? -0.06 : -0.02, pistol ? 0.02 : -0.3);
       left.rotation.set(pistol ? 0.5 : 0.35, pistol ? -0.35 : -0.55, 0);
       gun.add(left);

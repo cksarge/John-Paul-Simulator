@@ -4,6 +4,7 @@ import { Game } from './game/game.js';
 import { OPERATORS, sanitizeChar } from './data/characters.js';
 import { Room, buildMatch } from './net/realtime.js';
 import { initAudio } from './engine/audio.js';
+import { normalizeInventory, rollDrop, addToInventory } from './data/skins.js';
 
 const boot = document.getElementById('boot');
 const bootBar = boot.querySelector('.boot-bar div');
@@ -34,6 +35,7 @@ class App {
       this.api = null;
     }
     this.char = this.loadChar();
+    this.inventory = this.loadLocalInventory();
     this.ui = new UI(this);
     addEventListener('pointerdown', () => initAudio(), { once: true });
     step(80, 'Checking session');
@@ -60,6 +62,28 @@ class App {
     return { ...OPERATORS[0].char, preset: OPERATORS[0].id };
   }
 
+  loadLocalInventory() {
+    try { return normalizeInventory(JSON.parse(localStorage.getItem('jps_inventory') || 'null')); }
+    catch { return normalizeInventory(null); }
+  }
+
+  // Signed-in collections live on the profile; browser storage only holds what a guest earned.
+  async saveInventory() {
+    if (this.user) return this.api.saveInventory(this.user.id, this.inventory);
+    try { localStorage.setItem('jps_inventory', JSON.stringify(this.inventory)); } catch { /* ignore */ }
+  }
+
+  // Post-match reward: wins always drop an item, other results drop half the time (less offline).
+  async awardDrop(result, online) {
+    let chance = result === 'win' ? 1 : 0.5;
+    if (!online) chance *= 0.6;
+    if (Math.random() >= chance) return null;
+    const item = rollDrop(this.inventory);
+    addToInventory(this.inventory, item);
+    await this.saveInventory().catch((e) => console.warn('Inventory sync failed', e));
+    return item;
+  }
+
   me() {
     if (this.user && this.profile) return { id: this.user.id, name: this.profile.username, elo: this.profile.elo, char: this.char };
     if (!this.guestId) this.guestId = 'guest-' + Math.random().toString(36).slice(2, 8);
@@ -77,6 +101,14 @@ class App {
     }
     if (!profile) throw new Error('Profile not found. Make sure supabase/schema.sql has been run.');
     this.profile = profile;
+    // Merge anything collected as a guest on this device into the account.
+    const local = this.loadLocalInventory();
+    this.inventory = normalizeInventory(profile.inventory);
+    const before = this.inventory.finishes.length + this.inventory.outfits.length;
+    for (const f of local.finishes) addToInventory(this.inventory, { kind: 'finish', id: f });
+    for (const o of local.outfits) addToInventory(this.inventory, { kind: 'outfit', id: o });
+    if (this.inventory.finishes.length + this.inventory.outfits.length > before) this.saveInventory().catch(() => null);
+    try { localStorage.removeItem('jps_inventory'); } catch { /* ignore */ }
     if (profile.character) this.char = { ...sanitizeChar(profile.character), preset: profile.character.preset || 'custom' };
     else this.api.saveCharacter(this.user.id, this.char).catch(() => null);
     localStorage.setItem('jps_char', JSON.stringify(this.char));
@@ -86,6 +118,7 @@ class App {
 
   loginGuest() {
     this.user = null; this.profile = null;
+    this.inventory = this.loadLocalInventory();
     this.ui.showMenu('play');
   }
 
@@ -93,6 +126,7 @@ class App {
     this.presence?.leave(); this.presence = null;
     await this.api?.signOut();
     this.user = null; this.profile = null;
+    this.inventory = this.loadLocalInventory();
     this.ui.showAuth();
   }
 

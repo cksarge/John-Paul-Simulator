@@ -140,6 +140,8 @@ input.otp { font-family: var(--mono); font-size: 28px; letter-spacing: 14px; tex
 .mode-card .mc-desc { color: var(--muted); font-size: 13px; line-height: 1.45; }
 .mode-card .mc-tag { position: absolute; top: 12px; right: 12px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 7px; border-radius: 3px; background: rgba(255,255,255,.08); }
 .mode-card .mc-tag.ranked { background: var(--accent); color: #17110a; font-weight: 700; }
+.mode-card .mc-goal { margin-top: auto; font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--accent); }
+.map-card.disabled { opacity: .3; }
 .mode-card .mc-big { position: absolute; right: -6px; bottom: -22px; font-family: var(--display); font-weight: 700; font-size: 86px; color: rgba(255,255,255,.04); }
 
 .map-card { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--panel); }
@@ -190,7 +192,18 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .op-item.selected { border-color: var(--accent); background: rgba(242,163,58,.06); }
 .op-item b { font-family: var(--display); font-size: 17px; letter-spacing: 1px; display: block; }
 .op-item span { font-size: 12px; color: var(--muted); }
+.op-item .perk { display: block; margin-top: 5px; color: var(--accent2); font-size: 12px; }
+.perk-box { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid rgba(242,163,58,.4); border-radius: 4px; background: rgba(242,163,58,.06); }
 .op-item .eq { float: right; font-size: 10px; color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
+.item-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.item-card { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 8px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; background: rgba(255,255,255,.02); font-size: 12px; }
+.item-card:hover { border-color: var(--rc); }
+.item-card.equipped { border-color: var(--rc); box-shadow: inset 0 0 0 1px var(--rc); }
+.item-card.locked { opacity: .4; }
+.item-card .sw { height: 30px; border-radius: 3px; border: 1px solid var(--line2); margin-bottom: 4px; }
+.item-card b { font-size: 12px; }
+.item-card span { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+.item-card .lock { position: absolute; top: 6px; right: 6px; font-style: normal; font-size: 11px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .swatch { width: 26px; height: 26px; border-radius: 4px; cursor: pointer; border: 2px solid transparent; }
 .swatch.sel { border-color: #fff; }
@@ -266,6 +279,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .topscore .timer { min-width: 96px; text-align: center; font-size: 26px; padding: 4px 14px; background: rgba(10,12,16,.85); }
 .topscore .timer.bomb { color: var(--bad); }
 .topscore .timer small { display: block; font-size: 10px; letter-spacing: 2px; color: var(--muted); line-height: 1; margin-top: 2px; }
+.goal-pill { position: absolute; top: 88px; left: 50%; transform: translateX(-50%); font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 12px; border-radius: 3px; background: rgba(10,12,16,.62); color: #e7ebef; white-space: nowrap; }
+.drop-card { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 22px; border: 1px solid var(--rc); border-radius: 6px; background: rgba(255,255,255,.03); box-shadow: 0 0 24px -8px var(--rc); animation: toastIn .3s; }
+.drop-swatch { width: 120px; height: 44px; border-radius: 4px; border: 1px solid var(--line2); }
+.goal-tag { font-family: var(--display); font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
 .alive-row { position: absolute; top: 66px; left: 50%; transform: translateX(-50%); display: flex; gap: 160px; }
 .alive-row div { display: flex; gap: 3px; }
 .alive-row i { width: 8px; height: 14px; background: currentColor; display: block; }

@@ -167,8 +167,8 @@ export class BotBrain {
     }
     if (frozen) { wish.set(0, 0, 0); fire = false; }
     g.movePlayer(p, wish, dt, { walk, crouch, jump: false });
-    if (fire) g.tryFire(p, false);
-    else g.releaseTrigger(p);
+    if (fire || p.burstLeft > 0) g.tryFire(p, false);
+    if (!fire) g.releaseTrigger(p);
   }
 
   think() {
@@ -237,11 +237,11 @@ export class BotBrain {
     const b = g.state.bomb || {};
     if (this.action === 'plant') {
       if (b.state !== 'carried' || b.carrier !== p.id) { this.action = null; return; }
-      p.plantProgress = this.actionT / g.mode.plantTime;
-      if (this.actionT >= g.mode.plantTime) { g.request('plant', { pos: [p.pos.x, p.pos.y, p.pos.z] }, p); this.action = null; p.plantProgress = 0; }
+      p.plantProgress = this.actionT / g.actionTime('plant', p);
+      if (this.actionT >= g.actionTime('plant', p)) { g.request('plant', { pos: [p.pos.x, p.pos.y, p.pos.z] }, p); this.action = null; p.plantProgress = 0; }
     } else if (this.action === 'defuse') {
       if (b.state !== 'planted') { this.action = null; return; }
-      if (this.actionT >= g.mode.defuseTime) { g.request('defuse', {}, p); this.action = null; }
+      if (this.actionT >= g.actionTime('defuse', p)) { g.request('defuse', {}, p); this.action = null; }
     }
   }
 }

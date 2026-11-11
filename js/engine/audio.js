@@ -81,6 +81,14 @@ const GUN = {
   ar7: { body: 1100, len: 0.26, thump: 110, gain: 0.85 },
   m5: { body: 1500, len: 0.22, thump: 130, gain: 0.75 },
   longshot: { body: 700, len: 0.7, thump: 60, gain: 1.1 },
+  viper: { body: 1900, len: 0.12, thump: 170, gain: 0.55 },
+  tac45: { body: 1100, len: 0.22, thump: 120, gain: 0.8 },
+  kestrel: { body: 2000, len: 0.13, thump: 180, gain: 0.55 },
+  reaper: { body: 800, len: 0.38, thump: 80, gain: 0.95 },
+  bulldog: { body: 950, len: 0.3, thump: 95, gain: 0.9 },
+  trident: { body: 1300, len: 0.2, thump: 125, gain: 0.75 },
+  falcon: { body: 850, len: 0.45, thump: 85, gain: 1 },
+  sparrow: { body: 1000, len: 0.5, thump: 90, gain: 0.95 },
 };
 
 export const sfx = {

@@ -21,6 +21,7 @@ export function switchSlot(p, slot) {
   p.ws.drawT = 0;
   p.ws.scope = 0;
   p.ws.spray = 0;
+  p.burstLeft = 0;
   p.ws.cooldown = Math.max(p.ws.cooldown, 0);
   return true;
 }
@@ -38,6 +39,10 @@ export function bestSlot(p) {
   for (const s of ['primary', 'secondary', 'melee']) if (hasSlot(p, s)) return s;
   return 'melee';
 }
+
+// Perk-adjusted timings.
+export function reloadTime(p, w) { return w.reload * (p.char?.perk === 'speedloader' ? 0.8 : 1); }
+export function maxNades(p) { return p.char?.perk === 'utility' ? 3 : 2; }
 
 export function startReload(p) {
   const w = p.weapon;
@@ -57,7 +62,7 @@ export function tickWeapon(p, dt, firing) {
   if (!firing && ws.cooldown < -0.05) ws.spray = Math.max(0, ws.spray - dt * (w?.spreadRecover ? 3 / w.spreadRecover : 8));
   if (ws.reloadT >= 0 && w?.mag) {
     ws.reloadT += dt;
-    if (ws.reloadT >= w.reload) {
+    if (ws.reloadT >= reloadTime(p, w)) {
       const a = p.ammo[w.id];
       const take = Math.min(w.mag - a.mag, a.reserve);
       a.mag += take; a.reserve -= take;

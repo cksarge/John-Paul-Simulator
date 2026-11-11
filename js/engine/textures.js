@@ -153,6 +153,24 @@ const GEN = {
       return { color: [92 * k, 94 * k, 98 * k], h: 0.5 + g * 0.3 - crack * 0.5 };
     };
   },
+  snow(L) {
+    return (u, v) => {
+      const n = fbm(L, u, v, 6, 6), g = vnoise(L, u * 256, v * 256, 256);
+      const drift = fbm(L, u * 0.5 + 0.3, v, 3, 3);
+      const sparkle = g > 0.93 ? 0.12 : 0;
+      const k = 0.86 + n * 0.12 + sparkle - drift * 0.06;
+      return { color: [222 * k, 230 * k, 240 * k], h: n * 0.5 + drift * 0.4 };
+    };
+  },
+  grass(L) {
+    return (u, v) => {
+      const n = fbm(L, u, v, 8, 5), blade = vnoise(L, u * 180, v * 60, 256), dirt = fbm(L, u + 0.4, v + 0.2, 4, 4);
+      const bare = dirt > 0.66 ? (dirt - 0.66) * 3 : 0;
+      const k = 0.7 + n * 0.3 + blade * 0.18;
+      const r = (58 + bare * 60) * k, g = (92 - bare * 20) * k, b = (40 + bare * 10) * k;
+      return { color: [r, g, b], h: blade * 0.6 + n * 0.3 };
+    };
+  },
   wood(L) {
     return (u, v) => {
       const frame = u < 0.09 || u > 0.91 || v < 0.09 || v > 0.91;
@@ -189,6 +207,8 @@ const SETTINGS = {
   cobble: { rough: 0.85, normal: 2.2, tile: 4 },
   asphalt: { rough: 0.95, normal: 0.9, tile: 6 },
   wood: { rough: 0.85, normal: 1.4, tile: 2 },
+  snow: { rough: 0.8, normal: 0.8, tile: 6 },
+  grass: { rough: 0.95, normal: 1.4, tile: 5 },
   container: { rough: 0.6, metal: 0.3, normal: 1.5, tile: 3 },
 };
 

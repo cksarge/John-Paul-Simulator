@@ -115,6 +115,11 @@ export class Api {
     if (error) throw friendly(error);
   }
 
+  async saveInventory(id, inventory) {
+    const { error } = await this.sb.from('profiles').update({ inventory }).eq('id', id);
+    if (error) throw friendly(error);
+  }
+
   async leaderboard(kind = 'elo', limit = 100) {
     const col = { elo: 'elo', kills: 'kills', wins: 'wins', xp: 'xp' }[kind] || 'elo';
     let q = this.sb.from('profiles').select('id,username,elo,peak_elo,ranked_wins,ranked_losses,wins,losses,matches,kills,deaths,headshots,xp').order(col, { ascending: false }).limit(limit);

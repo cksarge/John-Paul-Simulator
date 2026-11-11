@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { WEAPONS, GRENADES, BUY_MENU, itemInfo } from '../data/weapons.js';
-import { TEAM_CLASS } from '../data/modes.js';
+import { WEAPONS, GRENADES, BUY_MENU, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
+import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText } from '../data/modes.js';
+import { RARITIES, finishSwatch, outfitSwatch } from '../data/skins.js';
 import { spreadFor } from './combat.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -24,6 +25,7 @@ export class Hud {
       <div class="radar"><canvas width="200" height="200"></canvas></div>
       <div class="fps hidden"></div>
       <div class="topscore"></div>
+      <div class="goal-pill"></div>
       <div class="alive-row"></div>
       <div class="killfeed"></div>
       <div class="crosshair"></div>
@@ -52,7 +54,7 @@ export class Hud {
     this.el = {
       radar: q('.radar canvas'), fps: q('.fps'), top: q('.topscore'), alive: q('.alive-row'), kf: q('.killfeed'),
       ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), scope: q('.scope'),
-      center: q('.center-msg'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
+      center: q('.center-msg'), goal: q('.goal-pill'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
       money: q('.money'), hp: q('.hp'), ar: q('.ar'), slots: q('.slots'), wname: q('.weapon-name'), ammo: q('.ammo .hud-num'),
       chat: q('.chat'), ovl: q('.ovl'),
     };
@@ -96,7 +98,8 @@ export class Hud {
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel pause" style="text-align:center">
       <h3>${esc(m.name)} · ${esc(map.name)}</h3>
       <h1 style="margin:0">Ready up</h1>
-      <p class="muted small">WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy · E plant/defuse · Tab scores · 1-5 weapons</p>
+      <p class="muted small">WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy · F rebuy · K keep loadout · E plant/defuse · Tab scores · 1-5 weapons</p>
+      <p class="goal-tag" style="margin:0">${esc(goalText(m))}</p>
       <button class="btn primary big" data-a="go">Click to play</button>
     </div></div>`;
     this.el.ovl.querySelector('[data-a=go]').onclick = () => this.closeOverlay(true);
@@ -128,7 +131,7 @@ export class Hud {
   }
 
   openBuy() {
-    if (!this.g.canBuy()) { this.info(this.g.mode.kind === 'ffa' ? 'No buying in Free For All' : 'You can only buy during the buy phase', 2); return; }
+    if (!this.g.canBuy()) { this.info(SOLO_KINDS.has(this.g.mode.kind) ? `No buying in ${this.g.mode.name}` : 'You can only buy during the buy phase', 2); return; }
     this.overlay = 'buy';
     this.g.input.unlock();
     this.refreshBuy();
@@ -146,13 +149,23 @@ export class Hud {
     this.el.ovl.innerHTML = `<div class="overlay" data-close><div class="buy-menu">
       <div class="row"><h2 style="margin:0">${free ? 'Choose loadout' : 'Buy menu'}</h2><span class="spacer"></span>
       ${free ? '' : `<span class="hud-num" style="font-size:28px;color:var(--good)">$${p.money}</span>`}
+      <button class="btn small" data-a="rebuy" ${g.savedBuys.length ? '' : 'disabled'}>Rebuy last (F)</button>
+      <button class="btn small ${g.settings.keepLoadout ? 'primary' : ''}" data-a="keep">Keep loadout: ${g.settings.keepLoadout ? 'ON' : 'OFF'} (K)</button>
       <button class="btn small" data-a="close">Done (B)</button></div>
+      <p class="muted small" style="margin:8px 0 0">${g.savedBuys.length ? 'Saved loadout: ' + g.savedBuys.map((i) => esc(itemInfo(i)?.name || i)).join(' · ') : 'Your purchases are saved as your loadout.'} With <b>Keep loadout</b> on, it's re-equipped automatically every round${g.mode.kind === 'tdm' ? ' and respawn' : ''}.</p>
       <div class="buy-cats" style="margin-top:14px">${cats}</div></div></div>`;
     this.el.ovl.querySelectorAll('.buy-item').forEach((e) => { e.onclick = () => g.buy(e.dataset.id); });
     this.el.ovl.querySelector('[data-a=close]').onclick = () => this.closeOverlay(true);
+    this.el.ovl.querySelector('[data-a=rebuy]').onclick = () => g.rebuy(true);
+    this.el.ovl.querySelector('[data-a=keep]').onclick = () => g.toggleKeepLoadout();
     this.el.ovl.querySelector('[data-close]').onclick = (e) => { if (e.target.dataset.close !== undefined) this.closeOverlay(true); };
     if (!this.buyKey) {
-      this.buyKey = (e) => { if (this.overlay === 'buy' && (e.code === 'KeyB' || e.code === 'Escape')) { e.preventDefault(); this.closeOverlay(e.code === 'KeyB'); } };
+      this.buyKey = (e) => {
+        if (this.overlay !== 'buy') return;
+        if (e.code === 'KeyB' || e.code === 'Escape') { e.preventDefault(); this.closeOverlay(e.code === 'KeyB'); }
+        if (e.code === 'KeyF') this.g.rebuy(true);
+        if (e.code === 'KeyK') this.g.toggleKeepLoadout();
+      };
       addEventListener('keydown', this.buyKey);
     }
   }
@@ -177,10 +190,10 @@ export class Hud {
   renderScoreboard() {
     const g = this.g, all = [...g.players.values()];
     let body;
-    if (g.mode.kind === 'ffa') body = `<div class="sb-team">${this.scoreTable(all, false)}</div>`;
+    if (SOLO_KINDS.has(g.mode.kind)) body = `<div class="sb-team">${this.scoreTable(all, false)}</div>`;
     else body = [0, 1].map((t) => `<div class="sb-team"><div class="sb-head ${TEAM_CLASS[t]}"><span>${g.teamName(t)}</span><span>${g.state.scores[t]}</span></div>${this.scoreTable(all.filter((p) => p.team === t), g.mode.kind === 'bomb')}</div>`).join('');
     this.el.ovl.innerHTML = `<div class="overlay" style="pointer-events:none;background:none"><div class="scoreboard">
-      <div class="row"><h2 style="margin:0">${esc(g.mode.name)}</h2><span class="muted">${esc(g.mapDef.name)} · Round ${g.state.round}</span></div>${body}</div></div>`;
+      <div class="row"><h2 style="margin:0">${esc(g.mode.name)}</h2><span class="muted">${esc(g.mapDef.name)}${RESPAWN_KINDS.has(g.mode.kind) ? '' : ' · Round ' + g.state.round}</span><span class="spacer"></span><span class="goal-tag">${esc(goalText(g.mode))}</span></div>${body}</div></div>`;
   }
 
   // ───────────── chat ─────────────
@@ -239,7 +252,7 @@ export class Hud {
   }
 
   killfeed(k, v, w, hs) {
-    const cls = (p) => (this.g.mode.kind === 'ffa' ? 'ffa' : TEAM_CLASS[p.team]);
+    const cls = (p) => (SOLO_KINDS.has(this.g.mode.kind) ? 'ffa' : TEAM_CLASS[p.team]);
     const e = document.createElement('div');
     const lp = this.g.local;
     e.className = 'kf' + ((k && k === lp) || v === lp ? ' mine' : '');
@@ -255,17 +268,27 @@ export class Hud {
     this.overlay = 'results';
     const g = this.g, title = { win: 'VICTORY', loss: 'DEFEAT', draw: 'DRAW' }[result];
     const color = result === 'win' ? 'var(--good)' : result === 'loss' ? 'var(--bad)' : 'var(--muted)';
-    const reasonText = { forfeit: 'Opponent forfeited', 'host-left': 'The host left the match', kills: 'Kill limit reached', time: 'Time limit reached', score: '' }[reason] || '';
-    const rows = [...stats].sort((a, b) => b.k - a.k).map((s) => `<tr class="${s.id === g.localId ? 'me' : ''}"><td>${esc(s.name)}</td>${g.mode.kind !== 'ffa' ? `<td style="color:var(--${TEAM_CLASS[s.team]})">${g.mode.kind === 'bomb' ? (s.team === 0 ? 'ATK' : 'DEF') : 'T' + (s.team + 1)}</td>` : ''}<td class="num">${s.k}</td><td class="num">${s.d}</td><td class="num">${s.hs}</td><td class="num">${s.dmg}</td></tr>`).join('');
+    const reasonText = { forfeit: 'Opponent forfeited', 'host-left': 'The host left the match', kills: 'Kill limit reached', time: 'Time limit reached', gungame: 'Got a kill with every weapon', score: '' }[reason] || '';
+    const rows = [...stats].sort((a, b) => b.k - a.k).map((s) => `<tr class="${s.id === g.localId ? 'me' : ''}"><td>${esc(s.name)}</td>${!SOLO_KINDS.has(g.mode.kind) ? `<td style="color:var(--${TEAM_CLASS[s.team]})">${g.mode.kind === 'bomb' ? (s.team === 0 ? 'ATK' : 'DEF') : 'T' + (s.team + 1)}</td>` : ''}<td class="num">${s.k}</td><td class="num">${s.d}</td><td class="num">${s.hs}</td><td class="num">${s.dmg}</td></tr>`).join('');
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel" style="width:min(720px,94vw)">
       <div style="text-align:center"><div class="hud-num" style="font-size:64px;color:${color}">${title}</div>
       <div class="muted">${esc(g.mode.name)} · ${esc(g.mapDef.name)} · ${esc(score)}</div>
       ${reasonText ? `<div class="muted small">${esc(reasonText)}</div>` : ''}
-      <div class="elo" style="margin:10px 0;font-family:var(--display);font-size:22px">${g.mode.ranked && g.app.user ? 'Updating rating…' : ''}</div></div>
-      <table class="tbl"><tr><th>Player</th>${g.mode.kind !== 'ffa' ? '<th>Team</th>' : ''}<th class="num">K</th><th class="num">D</th><th class="num">HS</th><th class="num">DMG</th></tr>${rows}</table>
+      <div class="elo" style="margin:10px 0;font-family:var(--display);font-size:22px">${g.mode.ranked && g.app.user ? 'Updating rating…' : ''}</div>
+      <div class="drop"></div></div>
+      <table class="tbl"><tr><th>Player</th>${!SOLO_KINDS.has(g.mode.kind) ? '<th>Team</th>' : ''}<th class="num">K</th><th class="num">D</th><th class="num">HS</th><th class="num">DMG</th></tr>${rows}</table>
       <div class="row" style="justify-content:center;margin-top:16px"><button class="btn primary" data-a="menu">Back to menu</button></div>
     </div></div>`;
     this.el.ovl.querySelector('[data-a=menu]').onclick = () => this.g.leave();
+  }
+
+  showDrop(item) {
+    const e = this.el.ovl.querySelector('.drop');
+    if (!e || !item) return;
+    const r = RARITIES[item.rarity];
+    e.innerHTML = `<div class="drop-card" style="--rc:${r.color}"><span class="small muted">${item.duplicate ? 'Duplicate drop' : 'New item unlocked'}</span>
+      <div class="drop-swatch" style="background:${item.kind === 'finish' ? finishSwatch(item.id) : outfitSwatch(item.id)}"></div>
+      <b>${esc(item.name)}</b><span style="color:${r.color}">${r.name} ${item.kind === 'finish' ? 'weapon finish' : 'outfit'}</span></div>`;
   }
 
   setEloChange(delta, error) {
@@ -294,7 +317,7 @@ export class Hud {
 
     // Plant/defuse progress
     if (g.action && p.alive) {
-      const total = g.action.type === 'plant' ? g.mode.plantTime : g.mode.defuseTime;
+      const total = g.actionTime(g.action.type, p);
       el.prog.classList.remove('hidden');
       el.prog.querySelector('.lbl').textContent = g.action.type === 'plant' ? 'Planting charge…' : 'Defusing…';
       el.prog.querySelector('.bar div').style.width = Math.min(100, (g.action.t / total) * 100) + '%';
@@ -313,14 +336,27 @@ export class Hud {
     const planted = bomb.state === 'planted';
     const timer = planted ? bomb.time : s.time;
     const phaseLabel = { warmup: g.waitingForPlayers() ? 'WAITING' : 'WARMUP', buy: 'BUY', live: planted ? 'CHARGE' : '', post: '', over: 'FINAL' }[s.phase] ?? '';
-    if (g.mode.kind === 'ffa') {
+    const kind = g.mode.kind;
+    let goal = goalText(g.mode);
+    if (kind === 'rounds' || kind === 'bomb') goal += ` · Round ${Math.max(1, s.round)}`;
+    if (kind === 'ffa') {
       const lead = [...g.players.values()].sort((a, b) => b.kills - a.kills)[0];
-      el.top.innerHTML = `<div class="ts ct">${p.kills}</div><div class="timer">${fmtTime(timer)}<small>${lead ? esc(lead.name) + ' ' + lead.kills : ''}</small></div><div class="ts t">${g.mode.killsToWin}</div>`;
+      el.top.innerHTML = `<div class="ts ct" title="Your kills">${p.kills}</div><div class="timer">${fmtTime(timer)}<small>${lead ? 'LEAD ' + esc(lead.name) + ' ' + lead.kills : ''}</small></div><div class="ts t" title="Kills to win">${g.mode.killsToWin}</div>`;
+      goal += ` · you have ${p.kills}`;
+    } else if (kind === 'gungame') {
+      const N = GUN_GAME_ORDER.length, lvl = Math.min((p.gg || 0) + 1, N);
+      const lead = [...g.players.values()].sort((a, b) => (b.gg || 0) - (a.gg || 0) || b.kills - a.kills)[0];
+      el.top.innerHTML = `<div class="ts ct" title="Your weapon level">${lvl}</div><div class="timer">${fmtTime(timer)}<small>${lead ? 'LEAD ' + esc(lead.name) + ' ' + Math.min((lead.gg || 0) + 1, N) : ''}</small></div><div class="ts t" title="Weapons">${N}</div>`;
+      const next = GUN_GAME_ORDER[(p.gg || 0) + 1];
+      goal += ` · weapon ${lvl}/${N}${next ? ' · next: ' + (WEAPONS[next]?.name || next) : ' · knife kill wins'}`;
     } else {
       el.top.innerHTML = `<div class="ts t">${s.scores[0]}</div><div class="timer ${planted ? 'bomb' : ''}">${fmtTime(timer)}<small>${phaseLabel}</small></div><div class="ts ct">${s.scores[1]}</div>`;
+      if (kind === 'tdm') el.top.querySelector('.timer small').textContent = `TO ${g.mode.killsToWin}`;
       const pills = (t) => [...g.players.values()].filter((q) => q.team === t).map((q) => `<i class="${q.alive ? '' : 'dead'}"></i>`).join('');
       el.alive.innerHTML = `<div class="t">${pills(0)}</div><div class="ct">${pills(1)}</div>`;
     }
+
+    el.goal.textContent = goal;
 
     // Vitals
     el.hp.querySelector('.hud-num').textContent = Math.max(0, p.hp);
@@ -375,8 +411,8 @@ export class Hud {
     const eye = p.eye();
     for (const o of g.players.values()) {
       if (!o.alive || o === center) continue;
-      const friendly = g.mode.kind !== 'ffa' && o.team === p.team;
-      let visible = friendly;
+      const friendly = !SOLO_KINDS.has(g.mode.kind) && o.team === p.team;
+      let visible = friendly || (p.alive && p.char?.perk === 'sixth' && o.pos.distanceTo(p.pos) < 14);
       if (!visible && p.alive) {
         o._radarT = (o._radarT || 0) - 1 / 30;
         if (o.firingT > 0 && o.pos.distanceTo(p.pos) < 30) o._radarT = 1.5;

@@ -1,32 +1,73 @@
-// Game modes. `teamSize` is players per team (ffa uses `maxPlayers`).
+import { GUN_GAME_ORDER } from './weapons.js';
+
+const SMALL = ['vault', 'courtyard', 'foundry', 'outpost'];
+const LARGE = ['dustline', 'harbor', 'canopy', 'frostbite'];
+const ALL = [...SMALL, ...LARGE];
+
+// Game modes. `teamSize` is players per team (ffa-style modes use `maxPlayers`).
+// kind: 'rounds' | 'bomb' (round based) · 'ffa' | 'tdm' | 'gungame' (respawn based)
 export const MODES = {
   duel: {
     id: 'duel', name: '1v1 Duel', short: '1V1', teamSize: 1, kind: 'rounds',
     desc: 'Head-to-head rounds on a compact map. Free loadout every round. First to 7.',
-    roundsToWin: 7, roundTime: 75, buyTime: 7, maps: ['vault', 'courtyard'],
+    roundsToWin: 7, roundTime: 75, buyTime: 7, maps: SMALL,
   },
   ranked: {
     id: 'ranked', name: 'Ranked 1v1', short: '1V1', teamSize: 1, kind: 'rounds', ranked: true,
     desc: 'Competitive 1v1 that moves your ELO. First to 7 rounds. Leaving counts as a loss.',
-    roundsToWin: 7, roundTime: 75, buyTime: 7, maps: ['vault', 'courtyard'],
+    roundsToWin: 7, roundTime: 75, buyTime: 7, maps: SMALL,
   },
   duo: {
     id: 'duo', name: '2v2 Wingman', short: '2V2', teamSize: 2, kind: 'rounds',
     desc: 'Two-player squads, free loadouts, fast rounds. First to 7.',
-    roundsToWin: 7, roundTime: 90, buyTime: 8, maps: ['courtyard', 'vault'],
+    roundsToWin: 7, roundTime: 90, buyTime: 8, maps: SMALL,
   },
   bomb: {
     id: 'bomb', name: '5v5 Bomb Defusal', short: '5V5', teamSize: 5, kind: 'bomb',
     desc: 'Attackers plant the charge at site A or B, defenders stop them. Full economy. First to 9.',
     roundsToWin: 9, halftime: 8, roundTime: 115, buyTime: 15, bombTime: 40, plantTime: 3.2, defuseTime: 7,
-    maps: ['dustline', 'harbor'],
+    maps: LARGE,
+  },
+  tdm: {
+    id: 'tdm', name: 'Team Deathmatch', short: 'TDM', teamSize: 5, kind: 'tdm',
+    desc: 'Five-a-side with instant respawns and free loadouts. First team to 60 kills or 8 minutes.',
+    killsToWin: 60, timeLimit: 480, maps: ALL,
+  },
+  gungame: {
+    id: 'gungame', name: 'Gun Game', short: 'GUN', maxPlayers: 8, kind: 'gungame',
+    desc: `Every kill swaps you to the next weapon. Get a kill with all ${GUN_GAME_ORDER.length}, ending on the knife. Knife kills set victims back.`,
+    timeLimit: 600, maps: ALL,
   },
   ffa: {
     id: 'ffa', name: 'Free For All', short: 'FFA', maxPlayers: 8, kind: 'ffa',
     desc: 'Everyone for themselves. Instant respawns. First to 25 kills or 6 minutes.',
-    killsToWin: 25, timeLimit: 360, maps: ['courtyard', 'dustline', 'harbor', 'vault'],
+    killsToWin: 25, timeLimit: 360, maps: ALL,
   },
 };
+
+export const RESPAWN_KINDS = new Set(['ffa', 'tdm', 'gungame']);
+export const SOLO_KINDS = new Set(['ffa', 'gungame']);
+
+// Short, always-visible description of how a match is won.
+export function goalText(mode) {
+  switch (mode.kind) {
+    case 'rounds': return `First to ${mode.roundsToWin} rounds`;
+    case 'bomb': return `First to ${mode.roundsToWin} rounds · sides swap after ${mode.halftime}`;
+    case 'ffa': return `First to ${mode.killsToWin} kills`;
+    case 'tdm': return `First team to ${mode.killsToWin} kills`;
+    case 'gungame': return `First through all ${GUN_GAME_ORDER.length} weapons`;
+    default: return '';
+  }
+}
+
+// Cycles each mode through its whole map pool instead of picking at random.
+export function nextMap(modeId) {
+  const pool = MODES[modeId].maps;
+  let i = 0;
+  try { i = (Number(localStorage.getItem('jps_rot_' + modeId)) || 0) % pool.length; localStorage.setItem('jps_rot_' + modeId, String(i + 1)); }
+  catch { i = Math.floor(Math.random() * pool.length); }
+  return pool[i];
+}
 
 export const TEAM_NAMES = ['Attackers', 'Defenders'];
 export const TEAM_CLASS = ['t', 'ct'];

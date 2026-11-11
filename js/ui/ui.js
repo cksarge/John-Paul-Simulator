@@ -1,4 +1,7 @@
-import { MODES, rankBadge, rankFor, levelFor, RANKS } from '../data/modes.js';
+import { MODES, rankBadge, rankFor, levelFor, RANKS, SOLO_KINDS, goalText } from '../data/modes.js';
+import { PERKS } from '../data/characters.js';
+import { WEAPONS } from '../data/weapons.js';
+import { WEAPON_SKINS, OUTFITS, RARITIES, finishSwatch, outfitSwatch } from '../data/skins.js';
 import { MAPS } from '../data/maps.js';
 import { OPERATORS, CHAR_OPTIONS, sanitizeChar } from '../data/characters.js';
 import { PRESETS, saveSettings } from '../engine/engine.js';
@@ -13,7 +16,8 @@ import { mountTurnstile } from './turnstile.js';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; };
-const MODE_ORDER = ['ranked', 'duel', 'duo', 'bomb', 'ffa'];
+const MODE_ORDER = ['ranked', 'duel', 'duo', 'bomb', 'tdm', 'gungame', 'ffa'];
+const OFFLINE_MODES = ['duel', 'duo', 'bomb', 'tdm', 'gungame', 'ffa'];
 const RESEND_COOLDOWN = 60; // seconds between auth emails (matches Supabase's default per-user limit)
 const COOLDOWN_KEY = 'jps_email_sent_at';
 
@@ -253,7 +257,7 @@ export class UI {
     this.cleanup();
     this.tab = tab;
     const app = this.app, p = app.profile;
-    const tabs = [['play', 'Play'], ['operators', 'Operators'], ['leaderboard', 'Leaderboard'], ['profile', 'Profile'], ['settings', 'Settings']];
+    const tabs = [['play', 'Play'], ['operators', 'Operators'], ['armory', 'Armory'], ['leaderboard', 'Leaderboard'], ['profile', 'Profile'], ['settings', 'Settings']];
     const lvl = levelFor(p?.xp || 0);
     this.root.innerHTML = `<div class="screen"><div class="menu-bg"></div>
       <div class="topbar">
@@ -268,7 +272,7 @@ export class UI {
     this.root.querySelectorAll('.nav button').forEach((b) => { b.onclick = () => this.showMenu(b.dataset.t); });
     this.root.querySelector('#chip').onclick = () => (p ? this.showMenu('profile') : this.showAuth());
     const el = this.root.querySelector('#tab');
-    ({ play: () => this.renderPlay(el), operators: () => this.renderOperators(el), leaderboard: () => this.renderLeaderboard(el), profile: () => this.renderProfile(el), settings: () => this.renderSettings(el) })[tab]();
+    ({ play: () => this.renderPlay(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el), leaderboard: () => this.renderLeaderboard(el), profile: () => this.renderProfile(el), settings: () => this.renderSettings(el) })[tab]();
   }
 
   // ───────────────────────── play ─────────────────────────
@@ -279,14 +283,14 @@ export class UI {
       const m = MODES[id];
       return `<div class="mode-card ${extra}" data-mode="${id}">
         ${m.ranked ? '<span class="mc-tag ranked">Ranked</span>' : `<span class="mc-tag">${m.short}</span>`}
-        <div class="mc-title">${m.name}</div><div class="mc-desc">${m.desc}</div><div class="mc-big">${m.short}</div></div>`;
+        <div class="mc-title">${m.name}</div><div class="mc-desc">${m.desc}</div><div class="mc-goal">${goalText(m)} · ${m.maps.length} maps</div><div class="mc-big">${m.short}</div></div>`;
     };
     el.innerHTML = `
       <div class="grid" style="grid-template-columns: minmax(0,1fr) 300px; gap: 22px">
         <div class="col" style="gap:26px">
           <section>
             <div class="row"><h2>Online</h2><span class="muted small">${online ? 'Quick match finds players in the queue; bots fill empty slots after 20s (except ranked).' : 'Sign in to play online, ranked and save stats.'}</span></div>
-            <div class="grid c3" id="online-modes" style="${online ? '' : 'opacity:.45;pointer-events:none'}">${MODE_ORDER.map((id) => modeCard(id)).join('')}
+            <div class="grid c4" id="online-modes" style="${online ? '' : 'opacity:.45;pointer-events:none'}">${MODE_ORDER.map((id) => modeCard(id)).join('')}
               <div class="mode-card" data-custom="1"><span class="mc-tag">Private</span><div class="mc-title">Custom Lobby</div><div class="mc-desc">Create a lobby with a code for friends, pick map and mode, fill with bots.</div><div class="mc-big">LOBBY</div></div>
             </div>
             ${online ? `<div class="row" style="margin-top:12px"><input type="text" id="join-code" maxlength="5" placeholder="LOBBY CODE" style="width:150px;text-transform:uppercase;letter-spacing:3px">
@@ -296,9 +300,9 @@ export class UI {
           <section>
             <div class="row"><h2>Offline · vs Bots</h2></div>
             <div class="panel">
-              <div class="grid c4" id="off-modes">${['duel', 'duo', 'bomb', 'ffa'].map((id) => `<div class="mode-card ${o.mode === id ? 'selected' : ''}" data-omode="${id}" style="min-height:96px"><span class="mc-tag">${MODES[id].short}</span><div class="mc-title" style="font-size:19px">${MODES[id].name}</div></div>`).join('')}</div>
+              <div class="grid c3" id="off-modes">${OFFLINE_MODES.map((id) => `<div class="mode-card ${o.mode === id ? 'selected' : ''}" data-omode="${id}" style="min-height:96px"><span class="mc-tag">${MODES[id].short}</span><div class="mc-title" style="font-size:19px">${MODES[id].name}</div><div class="mc-goal">${goalText(MODES[id])}</div></div>`).join('')}</div>
               <h3 style="margin-top:18px">Map</h3>
-              <div class="grid c4" id="off-maps">${Object.values(MAPS).map((m) => `<div class="map-card ${o.map === m.id ? 'selected' : ''}" data-map="${m.id}"><img src="${mapPreview(m.id)}" style="width:100%;aspect-ratio:16/11;object-fit:cover;display:block;image-rendering:pixelated;background:#000"><div class="mc-info"><b>${m.name}</b><span class="muted small">${m.size}</span></div></div>`).join('')}</div>
+              <div class="grid c4" id="off-maps">${Object.values(MAPS).map((m) => `<div class="map-card ${o.map === m.id ? 'selected' : ''} ${o.mode === 'bomb' && !m.sites ? 'disabled' : ''}" data-map="${m.id}" title="${esc(m.desc)}"><img src="${mapPreview(m.id)}" style="width:100%;aspect-ratio:16/11;object-fit:cover;display:block;image-rendering:pixelated;background:#000"><div class="mc-info"><b>${m.name}</b><span class="muted small">${m.size}</span></div></div>`).join('')}</div>
               <div class="row" style="margin-top:16px">
                 <span class="muted small">Bot difficulty</span>
                 <div class="seg" id="off-diff">${Object.keys(BOT_LEVELS).map((k) => `<button data-d="${k}" class="${o.botLevel === k ? 'sel' : ''}">${k}</button>`).join('')}</div>
@@ -316,6 +320,7 @@ export class UI {
             <span>Move / Jump</span><span><kbd>WASD</kbd> <kbd>Space</kbd></span><span>Crouch / Walk</span><span><kbd>Ctrl</kbd> <kbd>Shift</kbd></span>
             <span>Fire / Scope</span><span><kbd>LMB</kbd> <kbd>RMB</kbd></span><span>Reload</span><span><kbd>R</kbd></span>
             <span>Weapons</span><span><kbd>1-5</kbd> <kbd>Q</kbd></span><span>Buy menu</span><span><kbd>B</kbd></span>
+            <span>Rebuy last loadout</span><span><kbd>F</kbd></span><span>Keep loadout on/off</span><span><kbd>K</kbd></span>
             <span>Plant / Defuse</span><span><kbd>E</kbd> hold</span><span>Scoreboard</span><span><kbd>Tab</kbd></span>
             <span>Chat</span><span><kbd>Y</kbd></span></div></div>
         </aside>
@@ -330,17 +335,16 @@ export class UI {
     const note = () => {
       const m = MODES[o.mode];
       const map = MAPS[o.map];
-      const n = m.kind === 'ffa' ? 5 : m.teamSize * 2 - 1;
-      $('#off-note').textContent = `${m.name} on ${map.name} with ${n} bot${n > 1 ? 's' : ''}.${m.kind === 'bomb' && map.size !== 'large' ? ' Tip: bomb defusal plays best on large maps.' : ''}${m.kind !== 'bomb' && map.size === 'large' && m.kind !== 'ffa' ? ' Tip: duels play best on small maps.' : ''}`;
+      const n = SOLO_KINDS.has(m.kind) ? 5 : m.teamSize * 2 - 1;
+      $('#off-note').textContent = `${m.name} on ${map.name} with ${n} bot${n > 1 ? 's' : ''} — ${goalText(m)}. ${map.desc}${m.kind === 'rounds' && map.size === 'large' ? ' Tip: duels play best on small maps.' : ''}`;
     };
     el.querySelectorAll('[data-omode]').forEach((c) => { c.onclick = () => {
       o.mode = c.dataset.omode;
       if (!MAPS[o.map].sites && o.mode === 'bomb') o.map = 'dustline';
-      if (!MODES[o.mode].maps.includes(o.map) && o.mode !== 'ffa') o.map = MODES[o.mode].maps[0];
       this.renderPlay(el);
     }; });
     el.querySelectorAll('[data-map]').forEach((c) => { c.onclick = () => {
-      if (o.mode === 'bomb' && !MAPS[c.dataset.map].sites) { this.toast('Bomb defusal needs a map with bomb sites (Dustline or Harbor).', 'bad'); return; }
+      if (o.mode === 'bomb' && !MAPS[c.dataset.map].sites) { this.toast('Bomb defusal needs a large map with bomb sites.', 'bad'); return; }
       o.map = c.dataset.map; this.renderPlay(el);
     }; });
     el.querySelectorAll('#off-diff button').forEach((b) => { b.onclick = () => { o.botLevel = b.dataset.d; el.querySelectorAll('#off-diff button').forEach((x) => x.classList.toggle('sel', x === b)); }; });
@@ -424,7 +428,7 @@ export class UI {
     const host = lobby.isHost;
     const row = (x) => `<div class="player-row"><span>${esc(x.name)}</span>${x.host ? '<span class="host">HOST</span>' : ''}<span class="spacer"></span>${rankBadge(x.elo)}${host && x.id !== me.id ? ` <button class="btn small" data-kick="${x.id}">✕</button>` : ''}</div>`;
     let teams;
-    if (m.kind === 'ffa') teams = `<div class="team-col"><h3>Players <span>${members.length}</span></h3>${members.map(row).join('')}</div><div></div>`;
+    if (SOLO_KINDS.has(m.kind)) teams = `<div class="team-col"><h3>Players <span>${members.length}</span></h3>${members.map(row).join('')}</div><div></div>`;
     else {
       const col = (t, label) => `<div class="team-col ${t === 0 ? 't' : 'ct'}"><h3>${label} <button class="btn small" data-team="${t}">Join</button></h3>${members.filter((x) => x.team === t).map(row).join('')}</div>`;
       const auto = members.filter((x) => x.team !== 0 && x.team !== 1);
@@ -441,7 +445,7 @@ export class UI {
         <div class="grid" style="grid-template-columns: minmax(0,1fr) 320px; gap:20px">
           <div class="lobby-teams">${teams}</div>
           <div class="panel col">
-            <label class="field"><span>Mode</span><select id="lb-mode" ${host ? '' : 'disabled'}>${['duel', 'duo', 'bomb', 'ffa'].map((k) => opt(k, cfg.mode, MODES[k].name)).join('')}</select></label>
+            <label class="field"><span>Mode</span><select id="lb-mode" ${host ? '' : 'disabled'}>${OFFLINE_MODES.map((k) => opt(k, cfg.mode, MODES[k].name)).join('')}</select></label>
             <label class="field"><span>Map</span><select id="lb-map" ${host ? '' : 'disabled'}>${maps.map((x) => opt(x.id, cfg.map, `${x.name} (${x.size})`)).join('')}</select></label>
             <label class="field"><span>Bot difficulty</span><select id="lb-diff" ${host ? '' : 'disabled'}>${Object.keys(BOT_LEVELS).map((k) => opt(k, cfg.botLevel, k)).join('')}</select></label>
             <label class="row"><input type="checkbox" id="lb-fill" ${cfg.fillBots ? 'checked' : ''} ${host ? '' : 'disabled'}> <span>Fill empty slots with bots</span></label>
@@ -466,9 +470,8 @@ export class UI {
       $('#lb-fill').onchange = (e) => lobby.setCfg({ fillBots: e.target.checked });
       $('#lb-start').onclick = () => {
         const humans = lobby.members().length;
-        const need = m.kind === 'ffa' ? 2 : 2;
-        if (!cfg.fillBots && humans < need) { this.toast('Need at least 2 players, or enable bot fill.', 'bad'); return; }
-        if (m.kind !== 'ffa' && humans > m.teamSize * 2) { this.toast(`Too many players for ${m.name}.`, 'bad'); return; }
+        if (!cfg.fillBots && humans < 2) { this.toast('Need at least 2 players, or enable bot fill.', 'bad'); return; }
+        if (!SOLO_KINDS.has(m.kind) && humans > m.teamSize * 2) { this.toast(`Too many players for ${m.name}.`, 'bad'); return; }
         lobby.start();
       };
     }
@@ -492,8 +495,8 @@ export class UI {
     el.innerHTML = `<div class="creator">
       <div class="col" style="min-height:0">
         <h2>Operators</h2>
-        <div class="op-list">${OPERATORS.map((o) => `<div class="op-item ${c.preset === o.id ? 'selected' : ''}" data-op="${o.id}">${equippedId === o.id ? '<span class="eq">Equipped</span>' : ''}<b>${esc(o.name)}</b><span>${esc(o.role)} — ${esc(o.bio)}</span></div>`).join('')}
-          <div class="op-item ${c.preset === 'custom' ? 'selected' : ''}" data-op="custom">${equippedId === 'custom' ? '<span class="eq">Equipped</span>' : ''}<b>Custom Operator</b><span>Your own creation. Tweak anything on the right.</span></div>
+        <div class="op-list">${OPERATORS.map((o) => `<div class="op-item ${c.preset === o.id ? 'selected' : ''}" data-op="${o.id}">${equippedId === o.id ? '<span class="eq">Equipped</span>' : ''}<b>${esc(o.name)}</b><span>${esc(o.role)} — ${esc(o.bio)}</span><span class="perk">★ ${PERKS[o.char.perk].name}: ${PERKS[o.char.perk].desc}</span></div>`).join('')}
+          <div class="op-item ${c.preset === 'custom' ? 'selected' : ''}" data-op="custom">${equippedId === 'custom' ? '<span class="eq">Equipped</span>' : ''}<b>Custom Operator</b><span>Your own creation. Tweak anything on the right and pick any perk.</span></div>
         </div>
       </div>
       <div class="preview"><canvas id="pv"></canvas><div class="hint">Drag to rotate</div></div>
@@ -503,7 +506,8 @@ export class UI {
     this.preview.setCharacter(c);
     el.querySelectorAll('[data-op]').forEach((d) => { d.onclick = () => {
       const op = OPERATORS.find((o) => o.id === d.dataset.op);
-      this.editChar = op ? { ...op.char, preset: op.id } : { ...this.editChar, preset: 'custom' };
+      const cosmetics = { outfit: this.editChar.outfit, skins: this.editChar.skins };
+      this.editChar = op ? { ...op.char, ...cosmetics, preset: op.id } : { ...this.editChar, preset: 'custom' };
       this.preview.dispose();
       this.renderOperators(el);
     }; });
@@ -514,8 +518,13 @@ export class UI {
     const c = this.editChar;
     const chips = (key, list) => `<div class="field"><span>${key.replace(/([A-Z])/g, ' $1')}</span><div class="chips">${list.map((v) => `<div class="chip ${c[key] === v ? 'sel' : ''}" data-k="${key}" data-v="${v}">${v}</div>`).join('')}</div></div>`;
     const swatches = (key, list, label) => `<div class="field"><span>${label}</span><div class="swatches">${list.map((v) => `<div class="swatch ${c[key] === v ? 'sel' : ''}" style="background:${v}" data-k="${key}" data-v="${v}"></div>`).join('')}<input type="color" value="${c[key]}" data-color="${key}"></div></div>`;
+    const perk = PERKS[c.perk] || PERKS.speedloader;
+    const perkBlock = c.preset === 'custom' || !c.preset
+      ? `<div class="field"><span>Perk</span><div class="chips">${Object.entries(PERKS).map(([k, pk]) => `<div class="chip ${c.perk === k ? 'sel' : ''}" data-perk="${k}" title="${esc(pk.desc)}">${pk.name}</div>`).join('')}</div><span class="small muted" id="cc-perk-desc">${esc(perk.desc)}</span></div>`
+      : `<div class="field"><span>Perk</span><div class="perk-box"><b>★ ${perk.name}</b><span class="small muted">${esc(perk.desc)}</span></div><span class="small muted">Switch to Custom Operator to choose a different perk.</span></div>`;
     cc.innerHTML = `
       <label class="field"><span>Callsign</span><input type="text" id="cc-name" maxlength="18" value="${esc(c.name)}"></label>
+      ${perkBlock}
       ${swatches('skin', CHAR_OPTIONS.skin, 'Skin tone')}
       ${chips('hair', CHAR_OPTIONS.hair)}
       ${swatches('hairColor', CHAR_OPTIONS.hairColor, 'Hair colour')}
@@ -538,6 +547,11 @@ export class UI {
       cc.querySelectorAll(`[data-k="${e.dataset.k}"]`).forEach((x) => x.classList.toggle('sel', x === e));
       update();
     }; });
+    cc.querySelectorAll('[data-perk]').forEach((e) => { e.onclick = () => {
+      c.perk = e.dataset.perk; c.preset = 'custom';
+      cc.querySelectorAll('[data-perk]').forEach((x) => x.classList.toggle('sel', x === e));
+      cc.querySelector('#cc-perk-desc').textContent = PERKS[c.perk].desc;
+    }; });
     cc.querySelectorAll('[data-color]').forEach((e) => { e.oninput = () => { c[e.dataset.color] = e.value; c.preset = 'custom'; update(); }; });
     cc.querySelector('#cc-h').oninput = (e) => { c.height = +e.target.value; c.preset = 'custom'; update(); };
     cc.querySelector('#cc-name').oninput = (e) => { c.name = e.target.value; };
@@ -558,6 +572,55 @@ export class UI {
       this.preview.dispose();
       this.showMenu('operators');
     };
+  }
+
+  // ───────────────────────── armory (collection) ─────────────────────────
+  renderArmory(el) {
+    const app = this.app, inv = app.inventory, c = { ...app.char, skins: { ...(app.char.skins || {}) } };
+    const guns = Object.values(WEAPONS);
+    if (!this.armoryWeapon || !WEAPONS[this.armoryWeapon]) this.armoryWeapon = 'ar7';
+    const wid = this.armoryWeapon;
+    const curFinish = c.skins[wid] || 'factory';
+    const total = Object.keys(WEAPON_SKINS).length + Object.keys(OUTFITS).length;
+    const owned = inv.finishes.length + inv.outfits.length;
+    const card = (kind, id, def, equipped) => {
+      const have = (kind === 'finish' ? inv.finishes : inv.outfits).includes(id);
+      const r = RARITIES[def.rarity];
+      return `<div class="item-card ${equipped ? 'equipped' : ''} ${have ? '' : 'locked'}" data-${kind}="${id}" style="--rc:${r.color}" title="${have ? 'Click to equip' : 'Locked — earn it as a post-match drop'}">
+        <div class="sw" style="background:${kind === 'finish' ? finishSwatch(id) : outfitSwatch(id)}"></div>
+        <b>${esc(def.name)}</b><span style="color:${r.color}">${r.name}</span>${have ? '' : '<i class="lock">🔒</i>'}</div>`;
+    };
+    el.innerHTML = `<div class="row"><h2>Armory</h2><span class="muted small">${owned} / ${total} collected · Wins always drop an item; other matches drop one half the time.</span></div>
+      <div class="creator" style="grid-template-columns: 220px 1fr 420px">
+        <div class="op-list">${guns.map((w) => `<div class="op-item ${w.id === wid ? 'selected' : ''}" data-gun="${w.id}"><b style="font-size:15px">${esc(w.name)}</b><span>${esc(WEAPON_SKINS[c.skins[w.id] || 'factory'].name)}</span></div>`).join('')}</div>
+        <div class="preview"><canvas id="pv"></canvas><div class="hint">Drag to rotate</div></div>
+        <div class="controls">
+          <div class="field"><span>Weapon finish · ${esc(WEAPONS[wid].name)}</span><div class="item-grid">${Object.entries(WEAPON_SKINS).map(([id, d]) => card('finish', id, d, id === curFinish)).join('')}</div>
+            <button class="btn small" id="apply-all" style="align-self:flex-start;margin-top:6px">Apply ${esc(WEAPON_SKINS[curFinish].name)} to every weapon</button></div>
+          <div class="field"><span>Outfit (works on every operator)</span><div class="item-grid">${Object.entries(OUTFITS).map(([id, d]) => card('outfit', id, d, id === (c.outfit || 'standard'))).join('')}</div></div>
+        </div>
+      </div>`;
+    this.preview = new CharacterPreview(el.querySelector('#pv'));
+    this.preview.setCharacter(c, wid);
+    const save = async (next) => { await app.saveChar({ ...next, preset: app.char.preset }); this.preview.dispose(); this.renderArmory(el); };
+    el.querySelectorAll('[data-gun]').forEach((d) => { d.onclick = () => { this.armoryWeapon = d.dataset.gun; this.preview.dispose(); this.renderArmory(el); }; });
+    el.querySelectorAll('[data-finish]').forEach((d) => { d.onclick = () => {
+      const id = d.dataset.finish;
+      if (!inv.finishes.includes(id)) return this.toast('Locked — earn it as a post-match drop', 'bad');
+      if (id === 'factory') delete c.skins[wid]; else c.skins[wid] = id;
+      save(c);
+    }; });
+    el.querySelector('#apply-all').onclick = () => {
+      for (const w of guns) { if (curFinish === 'factory') delete c.skins[w.id]; else c.skins[w.id] = curFinish; }
+      save(c);
+      this.toast(`${WEAPON_SKINS[curFinish].name} applied to every weapon`, 'good');
+    };
+    el.querySelectorAll('[data-outfit]').forEach((d) => { d.onclick = () => {
+      const id = d.dataset.outfit;
+      if (!inv.outfits.includes(id)) return this.toast('Locked — earn it as a post-match drop', 'bad');
+      c.outfit = id;
+      save(c);
+    }; });
   }
 
   // ───────────────────────── leaderboard ─────────────────────────

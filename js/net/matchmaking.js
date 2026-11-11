@@ -1,11 +1,11 @@
 import { Room, buildMatch, newId } from './realtime.js';
-import { MODES } from '../data/modes.js';
+import { MODES, SOLO_KINDS } from '../data/modes.js';
 
 const FILL_AFTER = 20; // seconds before a non-ranked queue starts with bots filling gaps
 
 function needFor(mode) {
   const m = MODES[mode];
-  return m.kind === 'ffa' ? m.maxPlayers : m.teamSize * 2;
+  return SOLO_KINDS.has(m.kind) ? m.maxPlayers : m.teamSize * 2;
 }
 
 // Presence-based queue: the longest-waiting player forms the match and hosts it.
