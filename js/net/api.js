@@ -1,0 +1,132 @@
+import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+
+const SCHEMA_HINT = 'Database tables are missing. Run supabase/schema.sql in the Supabase SQL editor.';
+
+function friendly(error) {
+  const msg = error?.message || String(error);
+  if (/schema cache|does not exist|PGRST205|PGRST202/i.test(msg)) return new Error(SCHEMA_HINT);
+  if (/Email not confirmed/i.test(msg)) return new Error('Email not confirmed yet. Click the link in your confirmation email.');
+  if (/Database error saving new user/i.test(msg)) return new Error('That username is taken or invalid.');
+  if (/rate limit|only request this after/i.test(msg)) return new Error('Too many emails requested. Wait a minute and try again.');
+  if (/New password should be different/i.test(msg)) return new Error('Your new password must be different from the old one.');
+  return new Error(msg);
+}
+
+// Absolute URL of a page next to index.html (works on localhost and on a GitHub Pages sub-path).
+export function siteUrl(page = '') {
+  return new URL(page, new URL('./', location.href)).href;
+}
+
+// Reads Supabase auth errors returned in the URL after following an email link.
+export function authErrorFromUrl() {
+  const params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+  const code = params.get('error_code'), desc = params.get('error_description');
+  if (!code && !desc) return null;
+  if (code === 'otp_expired') return 'That email link has expired or was already used. Request a new one.';
+  return (desc || code).replace(/\+/g, ' ');
+}
+
+// Thin wrapper over Supabase for auth, profiles, leaderboards and match results.
+export class Api {
+  constructor() {
+    this.sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true },
+      realtime: { params: { eventsPerSecond: 120 } },
+    });
+  }
+
+  async session() {
+    const { data } = await this.sb.auth.getSession();
+    return data.session;
+  }
+
+  onAuth(cb) { return this.sb.auth.onAuthStateChange((_e, session) => cb(session)); }
+
+  async signUp(email, password, username) {
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) throw new Error('Username must be 3-16 letters, numbers or _.');
+    const { data: taken, error: e1 } = await this.sb.from('profiles').select('id').ilike('username', username).limit(1);
+    if (e1) throw friendly(e1);
+    if (taken?.length) throw new Error('That username is taken.');
+    const { data, error } = await this.sb.auth.signUp({
+      email, password, options: { data: { username }, emailRedirectTo: siteUrl('index.html?confirmed=1') },
+    });
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async resendConfirmation(email) {
+    const { error } = await this.sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: siteUrl('index.html?confirmed=1') } });
+    if (error) throw friendly(error);
+  }
+
+  async requestPasswordReset(email) {
+    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl('reset-password.html') });
+    if (error) throw friendly(error);
+  }
+
+  async updatePassword(password) {
+    const { error } = await this.sb.auth.updateUser({ password });
+    if (error) throw friendly(error);
+  }
+
+  async signIn(email, password) {
+    const { data, error } = await this.sb.auth.signInWithPassword({ email, password });
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async signOut() { await this.sb.auth.signOut(); }
+
+  async profile(id) {
+    const { data, error } = await this.sb.from('profiles').select('*').eq('id', id).maybeSingle();
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async profileByName(name) {
+    const { data, error } = await this.sb.from('profiles').select('*').ilike('username', name).maybeSingle();
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async saveCharacter(id, character) {
+    const { error } = await this.sb.from('profiles').update({ character, last_seen: new Date().toISOString() }).eq('id', id);
+    if (error) throw friendly(error);
+  }
+
+  async leaderboard(kind = 'elo', limit = 100) {
+    const col = { elo: 'elo', kills: 'kills', wins: 'wins', xp: 'xp' }[kind] || 'elo';
+    let q = this.sb.from('profiles').select('id,username,elo,peak_elo,ranked_wins,ranked_losses,wins,losses,matches,kills,deaths,headshots,xp').order(col, { ascending: false }).limit(limit);
+    if (kind === 'elo') q = q.gt('ranked_wins', -1);
+    const { data, error } = await q;
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async history(userId, limit = 15) {
+    const { data, error } = await this.sb.from('match_history').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(limit);
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async searchPlayers(q) {
+    const { data, error } = await this.sb.from('profiles').select('id,username,elo,xp,matches').ilike('username', `%${q.replace(/[%_]/g, '')}%`).order('elo', { ascending: false }).limit(20);
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async reportRanked(matchId, winner, loser) {
+    const { data, error } = await this.sb.rpc('report_ranked', { p_match_id: matchId, p_winner: winner, p_loser: loser });
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async recordMatch(o) {
+    const { error } = await this.sb.rpc('record_match', {
+      p_match_id: o.matchId, p_mode: o.mode, p_map: o.map, p_ranked: o.ranked, p_online: o.online,
+      p_result: o.result, p_kills: o.kills, p_deaths: o.deaths, p_headshots: o.headshots, p_score: o.score, p_elo_change: o.eloChange || 0,
+    });
+    if (error) throw friendly(error);
+  }
+}

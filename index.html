@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>John-Paul Simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    if (/type=recovery/.test(location.hash)) location.replace('reset-password.html' + location.hash);
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+      "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/+esm"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="game"></div>
+  <div id="hud" class="hidden"></div>
+  <div id="ui"></div>
+  <div id="toast-stack"></div>
+  <div id="boot">
+    <div class="boot-logo">JOHN-PAUL <span>SIMULATOR</span></div>
+    <div class="boot-bar"><div></div></div>
+    <div class="boot-msg">Loading…</div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
