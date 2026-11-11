@@ -33,6 +33,21 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 | Confirm signup | `Confirm your John-Paul Simulator account` | paste `supabase/email-templates/confirm-signup.html` |
 | Reset password | `Reset your John-Paul Simulator password` | paste `supabase/email-templates/reset-password.html` |
 
+Each email contains both a button link and a 6-digit code (Email OTP length = 6). Players can click the link or type the code into the game.
+
+**5. Password policy:** Authentication → Sign In / Providers → Email (or Policies)
+- Minimum password length **8**
+- Password requirements: **lowercase, uppercase letters and digits**
+
+The game enforces the same rules (`js/data/auth.js`), with a live checklist on sign-up and reset.
+
+**6. Cloudflare Turnstile:**
+- Cloudflare dashboard → Turnstile → your widget → **Hostnames**: add `cksarge.github.io` and `localhost`.
+- Supabase → Authentication → Attack Protection → **Enable CAPTCHA protection** → provider **Turnstile** → paste the Turnstile **secret key**.
+- The public site key is already in `js/config.js`.
+
+Sign in, sign up, forgot password and resend-email all send a Turnstile token. Typing in a 6-digit code doesn't need one.
+
 Confirmation links bring players back to the game already signed in. Reset links open `reset-password.html`, where they choose a new password. If a link has expired, both pages offer to send a new one.
 
 The project URL and publishable key are in `js/config.js`.

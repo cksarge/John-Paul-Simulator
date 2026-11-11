@@ -1,5 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { assertPassword } from '../data/auth.js';
+
+export { PASSWORD_RULES, OTP_LENGTH, passwordProblems, assertPassword } from '../data/auth.js';
 
 const SCHEMA_HINT = 'Database tables are missing. Run supabase/schema.sql in the Supabase SQL editor.';
 
@@ -8,7 +11,10 @@ function friendly(error) {
   if (/schema cache|does not exist|PGRST205|PGRST202/i.test(msg)) return new Error(SCHEMA_HINT);
   if (/Email not confirmed/i.test(msg)) return new Error('Email not confirmed yet. Click the link in your confirmation email.');
   if (/Database error saving new user/i.test(msg)) return new Error('That username is taken or invalid.');
+  if (/captcha/i.test(msg)) return new Error('Security check failed or expired. Complete it again and retry.');
   if (/rate limit|only request this after/i.test(msg)) return new Error('Too many emails requested. Wait a minute and try again.');
+  if (/Token has expired or is invalid|otp_expired|invalid.*otp/i.test(msg)) return new Error('That code is wrong or has expired. Request a new one.');
+  if (/Password should|weak_password|Password is known/i.test(msg)) return new Error('Password must be at least 8 characters and include a lowercase letter, an uppercase letter and a number.');
   if (/New password should be different/i.test(msg)) return new Error('Your new password must be different from the old one.');
   return new Error(msg);
 }
@@ -43,35 +49,49 @@ export class Api {
 
   onAuth(cb) { return this.sb.auth.onAuthStateChange((_e, session) => cb(session)); }
 
-  async signUp(email, password, username) {
+  async signUp(email, password, username, captchaToken) {
     if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) throw new Error('Username must be 3-16 letters, numbers or _.');
+    assertPassword(password);
     const { data: taken, error: e1 } = await this.sb.from('profiles').select('id').ilike('username', username).limit(1);
     if (e1) throw friendly(e1);
     if (taken?.length) throw new Error('That username is taken.');
     const { data, error } = await this.sb.auth.signUp({
-      email, password, options: { data: { username }, emailRedirectTo: siteUrl('index.html?confirmed=1') },
+      email, password, options: { data: { username }, emailRedirectTo: siteUrl('index.html?confirmed=1'), captchaToken },
     });
     if (error) throw friendly(error);
     return data;
   }
 
-  async resendConfirmation(email) {
-    const { error } = await this.sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: siteUrl('index.html?confirmed=1') } });
+  async resendConfirmation(email, captchaToken) {
+    const { error } = await this.sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: siteUrl('index.html?confirmed=1'), captchaToken } });
     if (error) throw friendly(error);
   }
 
-  async requestPasswordReset(email) {
-    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl('reset-password.html') });
+  async requestPasswordReset(email, captchaToken) {
+    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl('reset-password.html'), captchaToken });
     if (error) throw friendly(error);
+  }
+
+  async verifyEmailCode(email, code) {
+    const { data, error } = await this.sb.auth.verifyOtp({ email, token: code, type: 'signup' });
+    if (error) throw friendly(error);
+    return data;
+  }
+
+  async verifyResetCode(email, code) {
+    const { data, error } = await this.sb.auth.verifyOtp({ email, token: code, type: 'recovery' });
+    if (error) throw friendly(error);
+    return data;
   }
 
   async updatePassword(password) {
+    assertPassword(password);
     const { error } = await this.sb.auth.updateUser({ password });
     if (error) throw friendly(error);
   }
 
-  async signIn(email, password) {
-    const { data, error } = await this.sb.auth.signInWithPassword({ email, password });
+  async signIn(email, password, captchaToken) {
+    const { data, error } = await this.sb.auth.signInWithPassword({ email, password, options: { captchaToken } });
     if (error) throw friendly(error);
     return data;
   }

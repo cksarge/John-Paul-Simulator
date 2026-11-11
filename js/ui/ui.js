@@ -7,6 +7,8 @@ import { CharacterPreview } from './creator.js';
 import { Matchmaker, Lobby, listLobbies } from '../net/matchmaking.js';
 import { sfx, setVolume, initAudio } from '../engine/audio.js';
 import { BOT_LEVELS } from '../game/bot.js';
+import { PASSWORD_RULES, OTP_LENGTH, assertPassword } from '../data/auth.js';
+import { mountTurnstile } from './turnstile.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
@@ -40,6 +42,7 @@ export class UI {
   hide() { this.cleanup(); this.root.innerHTML = ''; }
 
   cleanup() {
+    this.captcha?.remove(); this.captcha = null;
     this.preview?.dispose(); this.preview = null;
     clearInterval(this.onlineTimer);
   }
@@ -48,23 +51,59 @@ export class UI {
   showAuth(mode = 'login', notice = null) {
     this.cleanup();
     const hasApi = !!this.app.api;
-    const forgot = mode === 'forgot';
-    const body = forgot ? `
-          <h2 style="margin:0">Reset password</h2>
-          <p class="muted small" style="margin:0">Enter your account email and we'll send you a link to choose a new password.</p>
-          <label class="field"><span>Email</span><input type="email" id="a-email" autocomplete="email" value="${esc(this.lastEmail || '')}"></label>
-          <div class="err" id="a-err"></div>
-          <button class="btn primary" id="a-go" ${hasApi ? '' : 'disabled'}>Send reset link</button>
-          <button class="btn ghost" id="a-back">Back to sign in</button>` : `
-          <div class="tabs"><button data-m="login" class="${mode === 'login' ? 'active' : ''}">Sign in</button><button data-m="signup" class="${mode === 'signup' ? 'active' : ''}">Create account</button></div>
-          ${mode === 'signup' ? `<label class="field"><span>Username</span><input type="text" id="a-user" maxlength="16" autocomplete="username" placeholder="3-16 letters, numbers, _"></label>` : ''}
-          <label class="field"><span>Email</span><input type="email" id="a-email" autocomplete="email" value="${esc(this.lastEmail || '')}"></label>
-          <label class="field"><span>Password</span><input type="password" id="a-pass" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}"></label>
-          ${mode === 'login' ? '<a href="#" class="small muted" id="a-forgot" style="align-self:flex-end;margin-top:-6px">Forgot password?</a>' : ''}
+    const email = esc(this.lastEmail || '');
+    const emailField = `<label class="field"><span>Email</span><input type="email" id="a-email" autocomplete="email" value="${email}"></label>`;
+    const codeField = `<label class="field"><span>${OTP_LENGTH}-digit code</span><input type="text" id="a-code" class="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="${OTP_LENGTH}" placeholder="${'•'.repeat(OTP_LENGTH)}"></label>`;
+    const rules = `<ul class="pw-rules" id="a-rules">${PASSWORD_RULES.map((r) => `<li data-r="${r.id}">${r.label}</li>`).join('')}</ul>`;
+    const views = {
+      login: `
+          ${emailField}
+          <label class="field"><span>Password</span><input type="password" id="a-pass" autocomplete="current-password"></label>
+          <a href="#" class="small muted" id="a-forgot" style="align-self:flex-end;margin-top:-6px">Forgot password?</a>
+          <div class="cf-ts" id="a-ts"></div>
           <div class="err" id="a-err">${hasApi ? '' : 'Online services unavailable — you can still play offline.'}</div>
-          <button class="btn primary" id="a-go" ${hasApi ? '' : 'disabled'}>${mode === 'signup' ? 'Create account' : 'Sign in'}</button>
-          <button class="btn small hidden" id="a-resend">Resend confirmation email</button>
-          <button class="btn ghost" id="a-guest">Play offline as guest</button>`;
+          <button class="btn primary" id="a-go" ${hasApi ? '' : 'disabled'}>Sign in</button>
+          <div class="row hidden" id="a-unconfirmed"><button class="btn small" id="a-tocode">Enter code</button><button class="btn small" id="a-resend">Resend email</button></div>
+          <button class="btn ghost" id="a-guest">Play offline as guest</button>`,
+      signup: `
+          <label class="field"><span>Username</span><input type="text" id="a-user" maxlength="16" autocomplete="username" placeholder="3-16 letters, numbers, _"></label>
+          ${emailField}
+          <label class="field"><span>Password</span><input type="password" id="a-pass" autocomplete="new-password"></label>
+          ${rules}
+          <div class="cf-ts" id="a-ts"></div>
+          <div class="err" id="a-err">${hasApi ? '' : 'Online services unavailable — you can still play offline.'}</div>
+          <button class="btn primary" id="a-go" ${hasApi ? '' : 'disabled'}>Create account</button>
+          <button class="btn ghost" id="a-guest">Play offline as guest</button>`,
+      verify: `
+          <h2 style="margin:0">Check your email</h2>
+          <p class="muted small" style="margin:0">We sent a ${OTP_LENGTH}-digit code to <b>${email}</b>. Enter it below, or just click the link in the email.</p>
+          ${codeField}
+          <div class="cf-ts" id="a-ts"></div>
+          <div class="err" id="a-err"></div>
+          <button class="btn primary" id="a-go">Verify &amp; sign in</button>
+          <div class="row"><button class="btn small" id="a-resend">Resend email</button><span class="spacer"></span><a href="#" class="small muted" id="a-back">Back to sign in</a></div>`,
+      forgot: `
+          <h2 style="margin:0">Reset password</h2>
+          <p class="muted small" style="margin:0">Enter your account email and we'll send you a ${OTP_LENGTH}-digit code and a reset link.</p>
+          ${emailField}
+          <div class="cf-ts" id="a-ts"></div>
+          <div class="err" id="a-err"></div>
+          <button class="btn primary" id="a-go" ${hasApi ? '' : 'disabled'}>Send reset email</button>
+          <a href="#" class="small muted" id="a-back" style="align-self:center">Back to sign in</a>`,
+      reset: `
+          <h2 style="margin:0">Choose a new password</h2>
+          <p class="muted small" style="margin:0">Enter the ${OTP_LENGTH}-digit code sent to <b>${email}</b> (or click the link in the email instead).</p>
+          ${codeField}
+          <label class="field"><span>New password</span><input type="password" id="a-pass" autocomplete="new-password"></label>
+          ${rules}
+          <label class="field"><span>Confirm password</span><input type="password" id="a-pass2" autocomplete="new-password"></label>
+          <div class="cf-ts" id="a-ts"></div>
+          <div class="err" id="a-err"></div>
+          <button class="btn primary" id="a-go">Update password</button>
+          <div class="row"><button class="btn small" id="a-resend">Resend email</button><span class="spacer"></span><a href="#" class="small muted" id="a-back">Back to sign in</a></div>`,
+    };
+    const tabs = mode === 'login' || mode === 'signup'
+      ? `<div class="tabs"><button data-m="login" class="${mode === 'login' ? 'active' : ''}">Sign in</button><button data-m="signup" class="${mode === 'signup' ? 'active' : ''}">Create account</button></div>` : '';
     this.root.innerHTML = `<div class="screen"><div class="menu-bg"></div>
       <div class="auth-wrap">
         <div class="auth-hero">
@@ -72,64 +111,98 @@ export class UI {
           <p>Tactical 5v5 bomb defusal, ranked 1v1 duels, wingman and free-for-all. Build your operator, climb the ladder, and settle it on the server.</p>
           <div class="row">${RANKS.map((r) => `<span class="rank-badge" style="--rc:${r.color}" title="${r.name} · ${r.min}+"><i></i></span>`).join('')}</div>
         </div>
-        <div class="auth-box"><div class="panel">${body}</div></div>
+        <div class="auth-box"><div class="panel">${tabs}${views[mode]}</div></div>
       </div></div>`;
-    const $ = (s) => this.root.querySelector(s);
+    const $ = (sel) => this.root.querySelector(sel);
+    const api = this.app.api;
     const err = $('#a-err');
     const say = (msg, good = false) => { err.style.color = good ? 'var(--good)' : ''; err.textContent = msg; };
     if (notice) say(notice.text, notice.good);
+    this.captcha?.remove();
+    this.captcha = hasApi ? mountTurnstile($('#a-ts'), { action: mode }) : null;
+    // Runs an auth request with a fresh Turnstile token, then resets the single-use widget.
+    const withCaptcha = async (fn) => {
+      const t = await this.captcha.token();
+      try { return await fn(t); } finally { this.captcha?.reset(); }
+    };
+    const on = (sel, fn) => { const e = $(sel); if (e) e.onclick = (ev) => { ev.preventDefault(); fn(); }; };
     this.root.querySelectorAll('.tabs button').forEach((b) => { b.onclick = () => this.showAuth(b.dataset.m); });
-    $('#a-email').oninput = (e) => { this.lastEmail = e.target.value.trim(); };
-    if (forgot) {
-      $('#a-back').onclick = () => this.showAuth('login');
-      const send = async () => {
-        const btn = $('#a-go'), email = $('#a-email').value.trim();
-        if (!email) return say('Enter your email.');
-        btn.disabled = true; say('');
-        try {
-          await this.app.api.requestPasswordReset(email);
-          say(`If an account exists for ${email}, a reset link is on its way. Check your inbox (and spam).`, true);
-        } catch (e) { say(e.message); }
-        btn.disabled = false;
-      };
-      $('#a-go').onclick = send;
-      $('#a-email').onkeydown = (e) => { if (e.key === 'Enter') send(); };
-      return;
+    $('#a-email')?.addEventListener('input', (e) => { this.lastEmail = e.target.value.trim(); });
+    on('#a-guest', () => this.app.loginGuest());
+    on('#a-forgot', () => this.showAuth('forgot'));
+    on('#a-back', () => this.showAuth('login'));
+    on('#a-tocode', () => this.showAuth('verify'));
+    const code = $('#a-code');
+    if (code) {
+      code.oninput = () => { code.value = code.value.replace(/\D/g, '').slice(0, OTP_LENGTH); };
+      setTimeout(() => code.focus(), 0);
     }
-    $('#a-guest').onclick = () => this.app.loginGuest();
-    const forgotLink = $('#a-forgot');
-    if (forgotLink) forgotLink.onclick = (e) => { e.preventDefault(); this.showAuth('forgot'); };
-    const resend = $('#a-resend');
-    resend.onclick = async () => {
-      resend.disabled = true;
-      try { await this.app.api.resendConfirmation($('#a-email').value.trim()); say('Confirmation email sent. Check your inbox (and spam).', true); }
-      catch (e) { say(e.message); }
-      resend.disabled = false;
+    const pass = $('#a-pass'), ruleList = $('#a-rules');
+    if (pass && ruleList) pass.addEventListener('input', () => {
+      for (const r of PASSWORD_RULES) ruleList.querySelector(`[data-r="${r.id}"]`).classList.toggle('ok', r.test(pass.value));
+    });
+    on('#a-resend', async () => {
+      const b = $('#a-resend');
+      b.disabled = true;
+      try {
+        if (mode === 'reset') await withCaptcha((t) => api.requestPasswordReset(this.lastEmail, t));
+        else await withCaptcha((t) => api.resendConfirmation(this.lastEmail, t));
+        say('Email sent. Check your inbox (and spam).', true);
+      } catch (e) { say(e.message); }
+      b.disabled = false;
+    });
+
+    const getCode = () => {
+      const c = code.value.trim();
+      if (c.length !== OTP_LENGTH) throw new Error(`Enter the ${OTP_LENGTH}-digit code from the email.`);
+      return c;
+    };
+    const actions = {
+      login: async () => {
+        const em = $('#a-email').value.trim();
+        if (!em || !pass.value) throw new Error('Enter your email and password.');
+        try { await withCaptcha((t) => api.signIn(em, pass.value, t)); }
+        catch (e) { if (/not confirmed/i.test(e.message)) $('#a-unconfirmed').classList.remove('hidden'); throw e; }
+        await this.app.onSignedIn();
+      },
+      signup: async () => {
+        const em = $('#a-email').value.trim();
+        if (!em) throw new Error('Enter your email.');
+        assertPassword(pass.value);
+        const r = await withCaptcha((t) => api.signUp(em, pass.value, $('#a-user').value.trim(), t));
+        if (r.session) return this.app.onSignedIn();
+        this.showAuth('verify', { text: 'Account created — check your inbox.', good: true });
+      },
+      verify: async () => {
+        await api.verifyEmailCode(this.lastEmail, getCode());
+        await this.app.onSignedIn();
+        this.toast('Email confirmed — welcome to John-Paul Simulator!', 'good');
+      },
+      forgot: async () => {
+        const em = $('#a-email').value.trim();
+        if (!em) throw new Error('Enter your email.');
+        await withCaptcha((t) => api.requestPasswordReset(em, t));
+        this.showAuth('reset', { text: `If an account exists for ${em}, a code is on its way.`, good: true });
+      },
+      reset: async () => {
+        const c = getCode();
+        assertPassword(pass.value);
+        if (pass.value !== $('#a-pass2').value) throw new Error('Passwords do not match.');
+        await api.verifyResetCode(this.lastEmail, c);
+        await api.updatePassword(pass.value);
+        await this.app.onSignedIn();
+        this.toast('Password updated', 'good');
+      },
     };
     const go = async () => {
       const btn = $('#a-go');
-      say(''); btn.disabled = true; resend.classList.add('hidden');
-      try {
-        const email = $('#a-email').value.trim(), pass = $('#a-pass').value;
-        if (!email || pass.length < 6) throw new Error('Enter an email and a password of at least 6 characters.');
-        if (mode === 'signup') {
-          const r = await this.app.api.signUp(email, pass, $('#a-user').value.trim());
-          if (!r.session) {
-            say(`Almost there — we sent a confirmation link to ${email}. Click it to activate your account.`, true);
-            resend.classList.remove('hidden');
-            btn.disabled = false;
-            return;
-          }
-        } else await this.app.api.signIn(email, pass);
-        await this.app.onSignedIn();
-      } catch (e) {
-        say(e.message);
-        if (/not confirmed/i.test(e.message)) resend.classList.remove('hidden');
-        btn.disabled = false;
-      }
+      say(''); btn.disabled = true;
+      try { await actions[mode](); }
+      catch (e) { say(e.message); }
+      if (btn.isConnected) btn.disabled = false;
     };
-    $('#a-go').onclick = go;
-    this.root.querySelectorAll('input').forEach((i) => { i.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
+    on('#a-go', go);
+    this.root.querySelectorAll('.auth-box input').forEach((i) => { i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); }); });
   }
 
   // ───────────────────────── shell ─────────────────────────

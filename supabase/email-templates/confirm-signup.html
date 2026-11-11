@@ -8,7 +8,7 @@
   <title>Confirm your John-Paul Simulator account</title>
 </head>
 <body style="margin:0;padding:0;background-color:#0b0e12;">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Confirm your email to activate your operator and start climbing the ranked ladder.</div>
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your code is {{ .Token }}. Confirm your email to activate your operator.</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0b0e12;">
     <tr>
       <td align="center" style="padding:40px 16px;">
@@ -46,6 +46,27 @@
                           <a href="{{ .ConfirmationURL }}" target="_blank" style="display:inline-block;padding:15px 34px;font-family:'Rajdhani','Arial Narrow',Arial,sans-serif;font-size:17px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#17110a;text-decoration:none;border-radius:4px;">
                             Confirm &amp; deploy
                           </a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom:30px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0b0e12;border:1px dashed #3a434e;border-radius:6px;">
+                      <tr>
+                        <td align="center" style="padding:18px 12px 6px 12px;font-family:Inter,Helvetica,Arial,sans-serif;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:#7d8794;">
+                          Or enter this code in the game
+                        </td>
+                      </tr>
+                      <tr>
+                        <td align="center" style="padding:0 12px 6px 12px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Courier New',monospace;font-size:36px;font-weight:700;letter-spacing:10px;color:#ffffff;">
+                          {{ .Token }}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td align="center" style="padding:0 12px 18px 12px;font-family:Inter,Helvetica,Arial,sans-serif;font-size:12px;color:#7d8794;">
+                          6 digits · expires in 1 hour
                         </td>
                       </tr>
                     </table>
