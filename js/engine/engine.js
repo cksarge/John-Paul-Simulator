@@ -154,6 +154,16 @@ export class Engine {
         const ao = new GTAOPass(this.scene, this.camera, w * pr, h * pr);
         ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1, scale: 1.1, samples: 12 });
         ao.blendIntensity = 0.85;
+        // GTAO's depth/normal pass would treat sprites (smoke, flashes) and other transparent
+        // objects as solid geometry and paint them black, so hide them while it renders.
+        const renderAO = ao.render.bind(ao);
+        ao.render = (...args) => {
+          const hidden = [];
+          this.scene.traverseVisible((o) => { if (o.isSprite || o.material?.transparent) hidden.push(o); });
+          for (const o of hidden) o.visible = false;
+          renderAO(...args);
+          for (const o of hidden) o.visible = true;
+        };
         composer.addPass(ao);
       } catch (e) { console.warn('GTAO unavailable', e); }
     }

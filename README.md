@@ -16,9 +16,9 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 **1. Database:** SQL Editor → New query → paste all of `supabase/schema.sql` → **Run**.
 
 **2. URLs:** Authentication → URL Configuration
-- **Site URL:** `https://cksarge.github.io/John-Paul-Simulator/`
+- **Site URL:** `https://jpsim.carterscoding.com/`
 - **Redirect URLs:** add
-  - `https://cksarge.github.io/John-Paul-Simulator/**`
+  - `https://jpsim.carterscoding.com/**`
   - `http://localhost:8765/**`
 
 **3. Email sending (Resend):** Authentication → Emails → SMTP Settings → enable custom SMTP
@@ -42,7 +42,7 @@ Each email contains both a button link and a 6-digit code (Email OTP length = 6)
 The game enforces the same rules (`js/data/auth.js`), with a live checklist on sign-up and reset.
 
 **6. Cloudflare Turnstile:**
-- Cloudflare dashboard → Turnstile → your widget → **Hostnames**: add `cksarge.github.io` and `localhost`.
+- Cloudflare dashboard → Turnstile → your widget → **Hostnames**: add `jpsim.carterscoding.com` and `localhost`.
 - Supabase → Authentication → Attack Protection → **Enable CAPTCHA protection** → provider **Turnstile** → paste the Turnstile **secret key**.
 - The public site key is already in `js/config.js`.
 
@@ -63,7 +63,7 @@ python3 -m http.server 8765
 
 ## Deploy to GitHub Pages
 
-The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, go to **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`**. The game will be live at **https://cksarge.github.io/John-Paul-Simulator/**, and every push to `main` redeploys it.
+The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, go to **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`**. The game will be live at **https://jpsim.carterscoding.com/**, and every push to `main` redeploys it.
 
 ## Controls
 
