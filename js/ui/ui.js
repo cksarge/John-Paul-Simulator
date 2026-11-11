@@ -14,6 +14,17 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; };
 const MODE_ORDER = ['ranked', 'duel', 'duo', 'bomb', 'ffa'];
+const RESEND_COOLDOWN = 60; // seconds between auth emails (matches Supabase's default per-user limit)
+const COOLDOWN_KEY = 'jps_email_sent_at';
+
+function emailCooldownLeft() {
+  let sent = 0;
+  try { sent = Number(localStorage.getItem(COOLDOWN_KEY)) || 0; } catch { /* storage unavailable */ }
+  return Math.max(0, Math.ceil(RESEND_COOLDOWN - (Date.now() - sent) / 1000));
+}
+function markEmailSent() {
+  try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch { /* storage unavailable */ }
+}
 
 const mapPreviewCache = new Map();
 function mapPreview(id) {
@@ -42,6 +53,7 @@ export class UI {
   hide() { this.cleanup(); this.root.innerHTML = ''; }
 
   cleanup() {
+    clearInterval(this.cooldownTimer);
     this.captcha?.remove(); this.captcha = null;
     this.preview?.dispose(); this.preview = null;
     clearInterval(this.onlineTimer);
@@ -149,15 +161,27 @@ export class UI {
     if (pass && ruleList) pass.addEventListener('input', () => {
       for (const r of PASSWORD_RULES) ruleList.querySelector(`[data-r="${r.id}"]`).classList.toggle('ok', r.test(pass.value));
     });
+    // Resend button stays disabled with a countdown until RESEND_COOLDOWN has passed since the last email.
+    const resendBtn = $('#a-resend');
+    let sending = false;
+    const tick = () => {
+      if (!resendBtn?.isConnected) return clearInterval(this.cooldownTimer);
+      const left = emailCooldownLeft();
+      resendBtn.disabled = sending || left > 0;
+      resendBtn.textContent = left > 0 ? `Resend email (${left}s)` : 'Resend email';
+    };
+    clearInterval(this.cooldownTimer);
+    if (resendBtn) { tick(); this.cooldownTimer = setInterval(tick, 1000); }
     on('#a-resend', async () => {
-      const b = $('#a-resend');
-      b.disabled = true;
+      if (emailCooldownLeft() > 0 || sending) return;
+      sending = true; tick();
       try {
         if (mode === 'reset') await withCaptcha((t) => api.requestPasswordReset(this.lastEmail, t));
         else await withCaptcha((t) => api.resendConfirmation(this.lastEmail, t));
+        markEmailSent();
         say('Email sent. Check your inbox (and spam).', true);
       } catch (e) { say(e.message); }
-      b.disabled = false;
+      sending = false; tick();
     });
 
     const getCode = () => {
@@ -179,6 +203,7 @@ export class UI {
         assertPassword(pass.value);
         const r = await withCaptcha((t) => api.signUp(em, pass.value, $('#a-user').value.trim(), t));
         if (r.session) return this.app.onSignedIn();
+        markEmailSent();
         this.showAuth('verify', { text: 'Account created — check your inbox.', good: true });
       },
       verify: async () => {
@@ -189,7 +214,10 @@ export class UI {
       forgot: async () => {
         const em = $('#a-email').value.trim();
         if (!em) throw new Error('Enter your email.');
+        const wait = emailCooldownLeft();
+        if (wait > 0) throw new Error(`Please wait ${wait}s before requesting another email.`);
         await withCaptcha((t) => api.requestPasswordReset(em, t));
+        markEmailSent();
         this.showAuth('reset', { text: `If an account exists for ${em}, a code is on its way.`, good: true });
       },
       reset: async () => {
