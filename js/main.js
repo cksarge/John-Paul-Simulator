@@ -164,24 +164,50 @@ class App {
     this.runGame(payload, null);
   }
 
-  async startOnline(payload) {
+  async startOnline(payload, { rejoin = false } = {}) {
     const me = this.me();
-    this.ui.root.innerHTML = `<div class="screen"><div class="menu-bg"></div><div class="content" style="display:grid;place-items:center"><div style="text-align:center"><div class="queue-pulse"></div><h2>Match found</h2><p class="muted">Connecting to ${payload.players.filter((p) => !p.isBot).length} player(s)…</p></div></div></div>`;
+    const title = rejoin ? 'Reconnecting' : 'Match found';
+    this.ui.root.innerHTML = `<div class="screen"><div class="menu-bg"></div><div class="content" style="display:grid;place-items:center"><div style="text-align:center"><div class="queue-pulse"></div><h2>${title}</h2><p class="muted">Connecting to ${payload.players.filter((p) => !p.isBot).length} player(s)…</p></div></div></div>`;
     try {
       const net = new Room(this.api.sb, 'jps-match-' + payload.matchId, me, { name: me.name });
       await net.connect();
-      this.runGame(payload, net);
+      this.runGame(payload, net, { rejoin });
     } catch (e) {
       this.ui.toast('Could not join match: ' + e.message, 'bad');
       this.ui.showMenu('play');
     }
   }
 
-  runGame(payload, net) {
+  // ───────────── reconnecting to an online match ─────────────
+  saveActiveMatch(payload) {
+    try { localStorage.setItem('jps_active_match', JSON.stringify({ payload, at: Date.now(), user: this.me().id })); } catch { /* ignore */ }
+  }
+
+  clearActiveMatch() {
+    try { localStorage.removeItem('jps_active_match'); } catch { /* ignore */ }
+  }
+
+  // The last online match this account was in, if it might still be running.
+  activeMatch() {
+    try {
+      const r = JSON.parse(localStorage.getItem('jps_active_match') || 'null');
+      if (!r || r.user !== this.me().id || Date.now() - r.at > 30 * 60 * 1000) return null;
+      if (this.game && this.game.matchId === r.payload.matchId) return null;
+      return r;
+    } catch { return null; }
+  }
+
+  rejoinMatch() {
+    const r = this.activeMatch();
+    if (r) this.startOnline(r.payload, { rejoin: true });
+  }
+
+  runGame(payload, net, { rejoin = false } = {}) {
     this.ui.hide();
     this.gameEl.classList.remove('hidden');
     this.setStatus('in match');
-    this.game = new Game(this, { ...payload, net, localId: this.me().id });
+    if (net) this.saveActiveMatch(payload);
+    this.game = new Game(this, { ...payload, net, localId: this.me().id, rejoin });
     this.game.start().catch((e) => {
       console.error(e);
       this.ui.toast('Failed to start match: ' + e.message, 'bad');

@@ -285,7 +285,11 @@ export class UI {
         ${m.ranked ? '<span class="mc-tag ranked">Ranked</span>' : `<span class="mc-tag">${m.short}</span>`}
         <div class="mc-title">${m.name}</div><div class="mc-desc">${m.desc}</div><div class="mc-goal">${goalText(m)} · ${m.maps.length} maps</div><div class="mc-big">${m.short}</div></div>`;
     };
+    const active = online ? app.activeMatch() : null;
+    const am = active && MODES[active.payload.mode];
     el.innerHTML = `
+      ${active ? `<div class="panel rejoin-bar"><div><b>Match in progress</b><div class="muted small">${esc(am?.name || active.payload.mode)} on ${esc(MAPS[active.payload.map]?.name || active.payload.map)} · a bot is playing for you until you return</div></div>
+        <span class="spacer"></span><button class="btn primary" id="rejoin">Reconnect</button><button class="btn small" id="rejoin-x">Dismiss</button></div>` : ''}
       <div class="grid" style="grid-template-columns: minmax(0,1fr) 300px; gap: 22px">
         <div class="col" style="gap:26px">
           <section>
@@ -328,6 +332,10 @@ export class UI {
     const $ = (s) => el.querySelector(s);
     el.querySelectorAll('#online-modes [data-mode]').forEach((c) => { c.onclick = () => this.startQueue(c.dataset.mode); });
     el.querySelector('[data-custom]').onclick = () => this.createLobby();
+    if (active) {
+      $('#rejoin').onclick = () => app.rejoinMatch();
+      $('#rejoin-x').onclick = () => { app.clearActiveMatch(); this.renderPlay(el); };
+    }
     if (online) {
       $('#join-btn').onclick = () => { const c = $('#join-code').value.trim().toUpperCase(); if (c.length === 5) this.joinLobby(c); else this.toast('Enter a 5-character code', 'bad'); };
       $('#browse-btn').onclick = () => this.browseLobbies($('#lobby-list'));

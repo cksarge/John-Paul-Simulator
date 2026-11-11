@@ -86,8 +86,12 @@ The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, g
 
 There is no game server. The player who forms the match (the longest wait in the queue, or the lobby creator) becomes the **host**. The host runs the round logic, the economy, the bots and damage, and relays everything over Supabase Realtime broadcast channels. Each player simulates their own movement and hit detection, which favours the shooter.
 
+Disconnects and reconnecting:
+- If anyone drops, the match waits **10 seconds** for them. After that a bot plays for them, and they can return any time with **Reconnect** on the Play tab to take their player back.
+- If the **host** drops for good, the remaining player with the lowest id takes over hosting automatically and the match continues.
+- In ranked, a player who is gone for more than 10 seconds forfeits.
+
 Limitations:
-- If the host leaves, the match ends. In ranked, the remaining player is credited with the win.
 - Supabase's free tier caps realtime messages per second. 1v1 and 2v2 are well within it, but a full 10-human 5v5 is near the limit, so send rates automatically drop as more humans join.
 - Results are reported by the clients, which is fine among friends but not cheat-proof.
 

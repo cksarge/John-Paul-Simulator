@@ -32,8 +32,11 @@ export class Game {
     this.net = opts.net || null;
     this.online = !!this.net;
     this.localId = opts.localId;
-    this.hostId = opts.hostId || opts.localId;
+    this.rejoin = !!opts.rejoin;
+    // A rejoining player learns the current host from the snapshot (it may have changed).
+    this.hostId = this.rejoin ? null : opts.hostId || opts.localId;
     this.isHost = this.hostId === this.localId;
+    this.pendingLeave = new Map(); // id -> seconds left to reconnect
     this.matchId = opts.matchId || 'off-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     this.players = new Map();
     this.brains = new Map();
@@ -83,6 +86,7 @@ export class Game {
 
     this.input = new Input(eng.renderer.domElement);
     this.input.onUnlock = () => { if (!this.ended && !this.hud.overlayOpen()) this.hud.showPause(); };
+    this.input.onCanvasClick = () => { if (!this.ended && (!this.hud.overlayOpen() || this.hud.overlay === 'score')) this.hud.closeOverlay(true); };
     this.hud = new Hud(this);
     this.hud.mount();
     initAudio();
@@ -94,6 +98,15 @@ export class Game {
       this.rules.begin();
     } else {
       this.helloT = 0;
+      if (this.rejoin) {
+        this.hud.center('RECONNECTING', 'Syncing with the match…', 14);
+        setTimeout(() => {
+          if (this.gotSnap || this.ended) return;
+          this.app.clearActiveMatch?.();
+          this.hud.center('MATCH UNAVAILABLE', 'That match has ended or everyone left.', 3);
+          setTimeout(() => this.leave(), 2500);
+        }, 14000);
+      }
     }
     this.running = true;
     this.hud.showClickToPlay();
@@ -163,6 +176,10 @@ export class Game {
     const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
     this.fpsAcc = (this.fpsAcc || 0) * 0.95 + (dt > 0 ? 1 / dt : 0) * 0.05;
+    // Safety net: if the mouse was released while another panel (e.g. the Tab scoreboard) was open,
+    // nothing would offer a way back in, so show the pause menu.
+    const inp = this.input;
+    if (!this.ended && !inp.locked && !inp.typing && (!this.hud.overlayOpen() || this.hud.overlay === 'score') && now - inp.lockRequestedAt > 1600) this.hud.showPause();
     try {
       if (!(this.paused && !this.online)) this.update(dt, now);
       this.updateCamera(dt);
@@ -205,6 +222,7 @@ export class Game {
     }
     this.updateNades(dt);
     this.updateBomb(dt);
+    if (this.pendingLeave.size) this.tickPendingLeaves(dt);
     this.effects.update(dt);
     if (this.online) this.netSend(dt);
     this.hud.update(dt);
@@ -998,41 +1016,176 @@ export class Game {
     n.on('S', (d) => this.onStates(d));
     n.on('req', (d) => { if (this.isHost) this.handleRequest(d.type, d.data, d.from); });
     n.on('hello', (d) => {
+      this.peerReturned(d.id);
       if (!this.isHost) return;
       this.helloFrom.add(d.id);
-      n.send('snap', { state: this.state, roster: this.rosterPayload(), sync: this.syncPayload() });
+      this.reclaimPlayer(d.id);
+      n.send('snap', this.snapshot());
     });
-    n.on('snap', (d) => {
-      if (this.isHost) return;
-      this.gotSnap = true;
-      for (const r of d.roster) if (!this.players.has(r.id)) this.addPlayer(r);
-      Object.assign(this.state, d.state);
-      this.onEvent('sync', d.sync);
-    });
+    n.on('snap', (d) => this.applySnapshot(d));
+    n.on('owner', (d) => this.applyOwner(d));
+    n.on('host', (d) => { if (d.id !== this.localId) this.setHost(d.id); });
     n.onLeave((id) => this.onPeerLeft(id));
+    n.onJoin((id) => this.peerReturned(id));
   }
 
   rosterPayload() {
-    return [...this.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, isBot: p.isBot, char: p.char, elo: p.elo }));
+    return [...this.players.values()].map((p) => ({
+      id: p.id, name: p.baseName || p.name, team: p.team, isBot: p.isBot, char: p.char, elo: p.elo, owner: p.owner, wasHuman: !!p.wasHuman,
+    }));
   }
 
+  // Full state for players joining or rejoining mid-match.
+  snapshot() {
+    const pstate = {};
+    for (const p of this.players.values()) {
+      pstate[p.id] = { alive: p.alive, pos: [p.pos.x, p.pos.y, p.pos.z], yaw: p.yaw, hp: p.hp, armor: p.armor, helmet: p.helmet, gg: p.gg || 0 };
+    }
+    return { hostId: this.localId, state: this.state, roster: this.rosterPayload(), sync: this.syncPayload(), pstate };
+  }
+
+  applySnapshot(d) {
+    if (this.isHost || (this.gotSnap && !this.rejoin)) return;
+    const first = !this.gotSnap;
+    this.gotSnap = true;
+    if (d.hostId && d.hostId !== this.hostId) this.setHost(d.hostId);
+    for (const r of d.roster) {
+      const p = this.players.get(r.id) || this.addPlayer(r);
+      p.isBot = r.isBot; p.wasHuman = r.wasHuman;
+      p.owner = r.isBot ? d.hostId : r.id;
+      p.isRemoteView = p.owner !== this.localId;
+      if (p.team !== r.team) this.setTeam(p, r.team);
+    }
+    Object.assign(this.state, d.state);
+    this.onEvent('sync', d.sync);
+    if (this.rejoin && first) {
+      // Put our own player back where the host last saw it.
+      const lp = this.local, st = d.pstate?.[this.localId];
+      if (lp && st) {
+        lp.gg = st.gg;
+        if (st.alive) {
+          this.spawnPlayer(lp, [...st.pos, st.yaw], true, false);
+          lp.hp = st.hp; lp.armor = st.armor; lp.helmet = st.helmet;
+          if (RESPAWN_KINDS.has(this.mode.kind)) this.giveSpawnLoadout(lp, st.pos);
+        } else { lp.alive = false; lp.model?.die(1); }
+      }
+      for (const [id, st2] of Object.entries(d.pstate || {})) {
+        const p = this.players.get(id);
+        if (!p || p.isLocal) continue;
+        p.gg = st2.gg; p.alive = st2.alive; p.hp = st2.hp;
+        if (st2.alive) p.snapTo(st2.pos[0], st2.pos[1], st2.pos[2], st2.yaw);
+      }
+      this.hud.center('RECONNECTED', `${this.mode.name} · ${this.mapDef.name}`, 2.5);
+      this.rejoin = false;
+    }
+  }
+
+  // ───────────── disconnects, reconnects and host handover ─────────────
   onPeerLeft(id) {
+    if (this.ended || id === this.localId) return;
+    const p = this.players.get(id);
+    if (!p || p.isBot || this.pendingLeave.has(id)) return;
+    this.pendingLeave.set(id, 10);
+    this.hud.chatLine('', `${p.name} disconnected — waiting 10s for them to reconnect`, -1);
+  }
+
+  peerReturned(id) {
+    if (!this.pendingLeave.has(id)) return;
+    this.pendingLeave.delete(id);
+    const p = this.players.get(id);
+    if (p) this.hud.chatLine('', `${p.name} reconnected`, -1);
+  }
+
+  tickPendingLeaves(dt) {
+    let msg = '';
+    for (const [id, t] of this.pendingLeave) {
+      const left = t - dt;
+      const p = this.players.get(id);
+      if (left <= 0) { this.pendingLeave.delete(id); this.finalizeLeave(id); continue; }
+      this.pendingLeave.set(id, left);
+      if (p) msg = `Waiting for ${p.name} to reconnect… ${Math.ceil(left)}s`;
+    }
+    if (msg) this.hud.info(msg, 0.3);
+  }
+
+  finalizeLeave(id) {
     if (this.ended) return;
     const p = this.players.get(id);
-    if (!p || p.isBot) return;
-    if (id === this.hostId) {
-      // Host gone: the match cannot continue.
-      const forfeitWin = this.mode.ranked;
-      this.onEnd({ winner: forfeitWin ? this.local.team : -2, reason: 'host-left', scores: this.state.scores, stats: this.statsPayload() });
+    if (!p) return;
+    if (this.mode.ranked) {
+      // Ranked: whoever stays wins by forfeit.
+      if (this.isHost) return this.rules.finish(1 - p.team, 'forfeit');
+      if (id === this.hostId) return this.onEnd({ winner: this.local.team, reason: 'forfeit', scores: this.state.scores, stats: this.statsPayload() });
       return;
     }
-    this.hud.chatLine('', `${p.name} left the match`, -1);
+    this.hud.chatLine('', `${p.name} left — a bot takes over until they rejoin`, -1);
+    if (id === this.hostId) return this.migrateHost(id);
+    if (this.isHost) this.convertToBot(p);
+  }
+
+  convertToBot(p) {
+    p.baseName = p.baseName || p.name;
+    p.isBot = true; p.wasHuman = true; p.owner = this.hostId;
+    p.name = p.baseName + ' (bot)';
+    p.isRemoteView = p.owner !== this.localId;
     if (this.isHost) {
-      if (this.mode.ranked) { this.rules.finish(1 - p.team, 'forfeit'); return; }
-      // Replace the leaver with a bot so team sizes stay even.
-      p.isBot = true; p.owner = this.hostId; p.name = p.name + ' (bot)';
       this.brains.set(p.id, new BotBrain(this, p, this.opts.botLevel || 'normal'));
-      p.isRemoteView = false;
+      this.net?.send('owner', { id: p.id, owner: this.hostId, isBot: true });
+    }
+  }
+
+  // A player who dropped (and was replaced by a bot) gets their player back.
+  reclaimPlayer(id) {
+    const p = this.players.get(id);
+    if (!p || !p.wasHuman || !p.isBot) return;
+    this.applyOwner({ id, owner: id, isBot: false });
+    this.net?.send('owner', { id, owner: id, isBot: false });
+  }
+
+  applyOwner(d) {
+    const p = this.players.get(d.id);
+    if (!p) return;
+    p.owner = d.owner;
+    p.isBot = d.isBot;
+    if (d.isBot) { p.baseName = p.baseName || p.name; p.wasHuman = true; p.name = p.baseName + ' (bot)'; }
+    else { if (p.baseName) p.name = p.baseName; this.brains.delete(p.id); }
+    p.isRemoteView = p.owner !== this.localId;
+    p.buffer = [];
+  }
+
+  setHost(id) {
+    this.hostId = id;
+    this.isHost = id === this.localId;
+    for (const p of this.players.values()) {
+      if (!p.isBot) continue;
+      p.owner = id;
+      p.isRemoteView = p.owner !== this.localId;
+      if (this.isHost && !this.brains.has(p.id)) this.brains.set(p.id, new BotBrain(this, p, this.opts.botLevel || 'normal'));
+    }
+  }
+
+  // The host is gone for good: the remaining human with the lowest id takes over.
+  // Every client runs this with the same inputs, so they all agree on the new host.
+  migrateHost(oldId) {
+    const old = this.players.get(oldId);
+    const candidates = [...this.players.values()]
+      .filter((p) => !p.isBot && p.id !== oldId && !this.pendingLeave.has(p.id))
+      .map((p) => p.id).sort();
+    const next = candidates[0];
+    if (!next) return this.onEnd({ winner: -2, reason: 'host-left', scores: this.state.scores, stats: this.statsPayload() });
+    if (old) { old.baseName = old.baseName || old.name; old.isBot = true; old.wasHuman = true; old.name = old.baseName + ' (bot)'; }
+    this.setHost(next);
+    if (this.isHost) {
+      this.state.lossStreak = this.state.lossStreak || [0, 0];
+      this.rules = new Rules(this);
+      if (RESPAWN_KINDS.has(this.mode.kind)) {
+        for (const p of this.players.values()) if (!p.alive) this.rules.respawnQueue.set(p.id, 2);
+      }
+      this.net?.send('host', { id: this.localId });
+      this.hud.chatLine('', 'You are now hosting this match', -1);
+    } else {
+      const np = this.players.get(next);
+      this.hud.chatLine('', `${np?.name || 'Another player'} is now hosting`, -1);
     }
   }
 
@@ -1099,6 +1252,14 @@ export class Game {
         const pos = hit ? eye.clone().addScaledVector(dir, Math.max(0.3, hit.dist - 0.25)) : want;
         cam.position.lerp(pos, Math.min(1, dt * 12));
         cam.lookAt(eye.clone().addScaledVector(t.forward(), 6));
+      } else {
+        // Nobody alive yet (warmup, between rounds): slow overview orbit above the map instead of
+        // leaving the camera at the origin, where it sits inside a wall and only shows fog.
+        const size = this.world.size, c = new THREE.Vector3(size.x / 2, 0, size.z / 2);
+        const span = Math.max(size.x, size.z);
+        this.orbitT = (this.orbitT || 0) + dt * 0.06;
+        cam.position.set(c.x + Math.cos(this.orbitT) * span * 0.55, span * 0.38 + 8, c.z + Math.sin(this.orbitT) * span * 0.55);
+        cam.lookAt(c);
       }
     }
     if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
@@ -1110,6 +1271,7 @@ export class Game {
   async onEnd(d) {
     if (this.ended) return;
     this.ended = true;
+    this.app.clearActiveMatch?.();
     this.state.phase = 'over';
     this.input.unlock();
     const lp = this.local;
@@ -1151,6 +1313,8 @@ export class Game {
   }
 
   leave() {
+    // Leaving a ranked match is a forfeit, so there's nothing to rejoin.
+    if (this.ended || this.mode.ranked) this.app.clearActiveMatch?.();
     this.destroy();
     this.app.exitGame();
   }

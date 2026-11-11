@@ -11,6 +11,7 @@ export class Room {
     this.presence = presence;
     this.handlers = new Map();
     this.leaveHandlers = [];
+    this.joinHandlers = [];
     this.syncHandlers = [];
     this.channel = null;
   }
@@ -20,6 +21,7 @@ export class Room {
     this.handlers.get(event).push(fn);
   }
   onLeave(fn) { this.leaveHandlers.push(fn); }
+  onJoin(fn) { this.joinHandlers.push(fn); }
   onSync(fn) { this.syncHandlers.push(fn); }
 
   connect() {
@@ -32,6 +34,7 @@ export class Room {
       });
       ch.on('presence', { event: 'sync' }, () => { for (const h of this.syncHandlers) h(this.members()); });
       ch.on('presence', { event: 'leave' }, ({ key }) => { for (const h of this.leaveHandlers) h(key); });
+      ch.on('presence', { event: 'join' }, ({ key }) => { if (key !== this.me.id) for (const h of this.joinHandlers) h(key); });
       const timer = setTimeout(() => reject(new Error('Realtime connection timed out')), 12000);
       ch.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {

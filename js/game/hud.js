@@ -89,7 +89,11 @@ export class Hud {
     this.overlay = null;
     this.el.ovl.innerHTML = '';
     this.g.paused = false;
-    if (relock && !this.g.ended) this.g.input.lock();
+    if (relock && !this.g.ended) {
+      this.g.input.lock().catch(() => {
+        if (!this.overlay && !this.g.ended) this.showPause('The browser needs a moment after you leave the game. Click Resume again.');
+      });
+    }
   }
 
   showClickToPlay() {
@@ -105,11 +109,12 @@ export class Hud {
     this.el.ovl.querySelector('[data-a=go]').onclick = () => this.closeOverlay(true);
   }
 
-  showPause() {
+  showPause(note = '') {
     this.overlay = 'pause';
     this.g.paused = true;
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel pause">
       <h2>Paused</h2>
+      ${note ? `<p class="small" style="color:var(--accent);margin:0">${esc(note)}</p>` : ''}
       ${this.g.online ? '<p class="muted small">Online match keeps running.</p>' : ''}
       <button class="btn primary" data-a="resume">Resume</button>
       <button class="btn" data-a="settings">Settings</button>

@@ -116,6 +116,37 @@ export class Rules {
     return out;
   }
 
+  // Picks a starting view direction with no enemy in sight. Prefers facing `preferYaw`
+  // (the map centre); falls back to the direction that shows the fewest enemies.
+  safeYaw(pt, enemies, preferYaw) { return this.safeYawInfo(pt, enemies, preferYaw).yaw; }
+
+  // Returns {yaw, seen}: the chosen direction and how many enemies are still in view from it.
+  safeYawInfo(pt, enemies, preferYaw) {
+    const w = this.g.world;
+    const eye = new THREE.Vector3(pt[0], pt[1] + 1.64, pt[2]);
+    const targets = enemies.map((e) => new THREE.Vector3(e[0], e[1] + 1.2, e[2]));
+    const visible = targets.filter((t) => w.lineOfSight(eye, t));
+    if (!visible.length) return { yaw: preferYaw, seen: 0 };
+    const HALF_VIEW = THREE.MathUtils.degToRad(75); // a bit wider than the widest horizontal FOV
+    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    let best = preferYaw, bestScore = -Infinity, bestSeen = 0;
+    for (let i = 0; i < 24; i++) {
+      const yaw = (i / 24) * Math.PI * 2;
+      const seen = visible.filter((t) => Math.abs(wrap(Math.atan2(-(t.x - eye.x), -(t.z - eye.z)) - yaw)) < HALF_VIEW).length;
+      const score = -seen * 10 + Math.cos(wrap(yaw - preferYaw));
+      if (score > bestScore) { bestScore = score; best = yaw; bestSeen = seen; }
+    }
+    return { yaw: best, seen: bestSeen };
+  }
+
+  // Applies safeYaw to a set of spawns given the positions enemies will appear at.
+  faceAwayFromEnemies(spawns, teamOf) {
+    for (const [id, pt] of Object.entries(spawns)) {
+      const enemies = Object.entries(spawns).filter(([oid]) => oid !== id && teamOf(oid) !== teamOf(id)).map(([, e]) => e);
+      pt[3] = this.safeYaw(pt, enemies, pt[3]);
+    }
+  }
+
   startRound() {
     const s = this.s, g = this.g, m = this.mode;
     s.round++;
@@ -127,6 +158,7 @@ export class Rules {
       const pts = this.spawnPoints(team, ps.length);
       ps.forEach((p, i) => { spawns[p.id] = pts[i]; });
     }
+    this.faceAwayFromEnemies(spawns, (id) => g.players.get(id)?.team);
     for (const p of g.players.values()) {
       if (!p.alive || m.kind !== 'bomb' || s.round === 1 || this.justSwapped) resetKit.push(p.id);
     }
@@ -200,6 +232,8 @@ export class Rules {
     s.bomb = { state: 'none' };
     const spawns = {};
     for (const p of g.players.values()) { p.gg = 0; spawns[p.id] = this.respawnPoint(p); }
+    // Everyone spawns at once here, so check against each other's spawn points too.
+    this.faceAwayFromEnemies(spawns, (id) => (this.mode.kind === 'tdm' ? g.players.get(id)?.team : id));
     g.broadcast('round', {
       round: 1, time: s.time, scores: [0, 0], spawns, resetKit: [...g.players.keys()], money: {}, bomb: s.bomb,
       teams: Object.fromEntries([...g.players.values()].map((p) => [p.id, p.team])), freeArmor: true, phase: 'live',
@@ -216,9 +250,28 @@ export class Rules {
         for (const o of this.g.players.values()) if (o !== p && o.alive && o.team !== p.team) minD = Math.min(minD, Math.hypot(o.pos.x - pt[0], o.pos.z - pt[2]));
         if (minD > bestD) { bestD = minD; best = pt; }
       }
-      return best;
+      return this.faceAway(p, best);
     }
-    return this.ffaSpawn(p);
+    // Solo modes: skip spots where every direction has an enemy in view.
+    let fallback = null;
+    for (let tries = 0; tries < 8; tries++) {
+      const pt = this.ffaSpawn(p);
+      const seen = this.faceAway(p, pt, true);
+      if (!seen) return pt;
+      if (!fallback || seen < fallback.seen) fallback = { pt, seen };
+    }
+    return fallback.pt;
+  }
+
+  // Respawns: look away from any living enemy that would be in view.
+  // Returns the spawn, or (with returnSeen) how many enemies are still visible from it.
+  faceAway(p, pt, returnSeen = false) {
+    const w = this.g.world;
+    const enemies = [...this.g.players.values()].filter((o) => o !== p && o.alive && this.g.canDamage(p, o)).map((o) => [o.pos.x, o.pos.y, o.pos.z]);
+    const prefer = pt[3] ?? Math.atan2(-(w.size.x / 2 - pt[0]), -(w.size.z / 2 - pt[2]));
+    const info = this.safeYawInfo(pt, enemies, prefer);
+    pt[3] = info.yaw;
+    return returnSeen ? info.seen : pt;
   }
 
   ffaSpawn(p) {

@@ -31,6 +31,8 @@ export class Input {
         if (was && !this.locked) { this.keys.clear(); this.mouse.left = this.mouse.right = false; this.onUnlock?.(); }
       },
       cm: (e) => e.preventDefault(),
+      // Clicking the game view always recaptures the mouse (e.g. after alt-tabbing away).
+      click: () => { if (!this.locked && this.onCanvasClick) this.onCanvasClick(); },
       blur: () => { this.keys.clear(); this.mouse.left = this.mouse.right = false; },
     };
     addEventListener('keydown', this._h.kd);
@@ -42,15 +44,34 @@ export class Input {
     addEventListener('blur', this._h.blur);
     document.addEventListener('pointerlockchange', this._h.plc);
     document.addEventListener('contextmenu', this._h.cm);
+    canvas.addEventListener('click', this._h.click);
     this.locked = false;
+    this.lockRequestedAt = 0;
   }
 
+  // Resolves once the pointer is captured; rejects if the browser refuses
+  // (it blocks re-locking for about a second after Esc or a tab switch).
   lock() {
-    if (this.locked) return;
-    try {
-      const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
-      if (p?.catch) p.catch(() => this.canvas.requestPointerLock());
-    } catch { this.canvas.requestPointerLock(); }
+    if (this.locked) return Promise.resolve();
+    this.lockRequestedAt = performance.now();
+    return new Promise((resolve, reject) => {
+      const done = () => { cleanup(); resolve(); };
+      const fail = () => { cleanup(); reject(new Error('pointer lock refused')); };
+      const cleanup = () => {
+        document.removeEventListener('pointerlockchange', done);
+        document.removeEventListener('pointerlockerror', fail);
+      };
+      document.addEventListener('pointerlockchange', done, { once: true });
+      document.addEventListener('pointerlockerror', fail, { once: true });
+      try {
+        const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
+        // Some platforms reject unadjustedMovement; retry plain lock in the same gesture.
+        if (p?.catch) p.catch(() => { try { this.canvas.requestPointerLock()?.catch?.(fail); } catch { fail(); } });
+      } catch {
+        try { this.canvas.requestPointerLock(); } catch { fail(); }
+      }
+      setTimeout(() => { if (!this.locked) fail(); }, 1500);
+    });
   }
   unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
 
@@ -75,6 +96,7 @@ export class Input {
     removeEventListener('blur', this._h.blur);
     document.removeEventListener('pointerlockchange', this._h.plc);
     document.removeEventListener('contextmenu', this._h.cm);
+    this.canvas.removeEventListener('click', this._h.click);
     this.unlock();
   }
 }
