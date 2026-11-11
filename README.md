@@ -8,13 +8,31 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 - **Maps:** Vault and Courtyard (small, for duels), Dustline and Harbor (large, with bomb sites)
 - **Operators:** 8 preset characters plus a full character creator (skin, hair, face, headgear, build, height, clothing colours)
 - **Weapons:** knife, 2 pistols, SMG, shotgun, 2 rifles, sniper (scoped), frag and smoke grenades, kevlar and helmet
-- **Accounts:** sign-up and sign-in, profiles, match history, XP levels, and leaderboards for ELO, kills, wins and level
+- **Accounts:** sign-up with email confirmation, forgot/reset password, profiles, match history, XP levels, and leaderboards for ELO, kills, wins and level
 - **Graphics:** Low / Medium / High / Ultra presets plus individual settings for resolution scale, shadows, MSAA/SMAA/FXAA, bloom, GTAO ambient occlusion, frame-rate cap, FOV and crosshair
 
 ## One-time Supabase setup
 
-1. Supabase dashboard → **SQL Editor** → New query → paste all of `supabase/schema.sql` → **Run**.
-2. **Authentication → Sign In / Providers → Email** → turn **off** "Confirm email". Supabase's built-in mailer only sends a few emails per hour, so leaving confirmation on will block friends from signing up.
+**1. Database:** SQL Editor → New query → paste all of `supabase/schema.sql` → **Run**.
+
+**2. URLs:** Authentication → URL Configuration
+- **Site URL:** `https://cksarge.github.io/John-Paul-Simulator/`
+- **Redirect URLs:** add
+  - `https://cksarge.github.io/John-Paul-Simulator/**`
+  - `http://localhost:8765/**`
+
+**3. Email sending (Resend):** Authentication → Emails → SMTP Settings → enable custom SMTP
+- Host `smtp.resend.com`, port `465`, username `resend`, password = your Resend API key
+- Sender email: an address on your Resend-verified domain (e.g. `noreply@yourdomain.com`), sender name `John-Paul Simulator`
+- Leave **Confirm email** turned **on** (Authentication → Sign In / Providers → Email).
+
+**4. Email templates:** Authentication → Emails → Templates
+| Template | Subject | Body |
+|---|---|---|
+| Confirm signup | `Confirm your John-Paul Simulator account` | paste `supabase/email-templates/confirm-signup.html` |
+| Reset password | `Reset your John-Paul Simulator password` | paste `supabase/email-templates/reset-password.html` |
+
+Confirmation links bring players back to the game already signed in. Reset links open `reset-password.html`, where they choose a new password. If a link has expired, both pages offer to send a new one.
 
 The project URL and publishable key are in `js/config.js`.
 
@@ -29,14 +47,7 @@ python3 -m http.server 8765
 
 ## Deploy to GitHub Pages
 
-```sh
-git init && git add . && git commit -m "John-Paul Simulator"
-git branch -M main
-git remote add origin https://github.com/<you>/john-paul-simulator.git
-git push -u origin main
-```
-
-Then in the repo: **Settings → Pages → Source: Deploy from a branch → `main` / root**. The site will be at `https://<you>.github.io/john-paul-simulator/`.
+The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, go to **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`**. The game will be live at **https://cksarge.github.io/John-Paul-Simulator/**, and every push to `main` redeploys it.
 
 ## Controls
 
