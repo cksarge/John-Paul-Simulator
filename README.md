@@ -27,6 +27,7 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 - Leave **Confirm email** turned **on** (Authentication → Sign In / Providers → Email).
 
 **4. Email templates:** Authentication → Emails → Templates
+
 | Template | Subject | Body |
 |---|---|---|
 | Confirm signup | `Confirm your John-Paul Simulator account` | paste `supabase/email-templates/confirm-signup.html` |
