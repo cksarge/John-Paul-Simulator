@@ -70,8 +70,8 @@ export function tickWeapon(p, dt, firing) {
 
 export function ready(p) {
   const w = p.weapon;
-  if (!w) return false;
-  return p.ws.cooldown <= 0 && p.ws.reloadT < 0 && p.ws.drawT >= (w.draw || 0.4);
+  if (!w && !(p.slot === 'nade' && p.weaponId)) return false;
+  return p.ws.cooldown <= 0 && p.ws.reloadT < 0 && p.ws.drawT >= (w?.draw || 0.4);
 }
 
 export function spreadFor(p) {

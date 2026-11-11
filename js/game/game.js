@@ -378,10 +378,12 @@ export class Game {
   releaseTrigger(p) { p.triggerHeld = false; }
 
   tryFire(p, isLocal) {
-    const w = p.weapon;
-    if (!w || !p.alive) return;
-    if (w.type === 'knife') { if (ready(p)) this.knife(p, false); return; }
+    if (!p.alive) return;
+    // Grenades aren't in WEAPONS, so handle them before the weapon lookup.
     if (p.slot === 'nade') { if (!p.triggerHeld && ready(p)) this.throwNade(p); p.triggerHeld = true; return; }
+    const w = p.weapon;
+    if (!w) return;
+    if (w.type === 'knife') { if (ready(p)) this.knife(p, false); return; }
     if (p.slot === 'bomb') return;
     if (!ready(p)) return;
     if (!w.auto && p.triggerHeld) return;
