@@ -48,7 +48,7 @@ The game enforces the same rules (`js/data/auth.js`), with a live checklist on s
 
 Sign in, sign up, forgot password and resend-email all send a Turnstile token. Typing in a 6-digit code doesn't need one.
 
-Confirmation links bring players back to the game already signed in. Reset links open `reset-password.html`, where they choose a new password. If a link has expired, both pages offer to send a new one.
+Confirmation links bring players back to the game already signed in. Reset links open the game on a "Choose a new password" screen. If a link has expired, the game says so and offers to send a new one.
 
 The project URL and publishable key are in `js/config.js`.
 

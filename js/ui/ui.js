@@ -101,6 +101,14 @@ export class UI {
           <div class="err" id="a-err"></div>
           <button class="btn primary" id="a-go">Update password</button>
           <div class="row"><button class="btn small" id="a-resend">Resend email</button><span class="spacer"></span><a href="#" class="small muted" id="a-back">Back to sign in</a></div>`,
+      newpass: `
+          <h2 style="margin:0">Choose a new password</h2>
+          <p class="muted small" style="margin:0">Signed in as <b>${esc(this.app.user?.email || '')}</b>.</p>
+          <label class="field"><span>New password</span><input type="password" id="a-pass" autocomplete="new-password"></label>
+          ${rules}
+          <label class="field"><span>Confirm password</span><input type="password" id="a-pass2" autocomplete="new-password"></label>
+          <div class="err" id="a-err"></div>
+          <button class="btn primary" id="a-go">Update password</button>`,
     };
     const tabs = mode === 'login' || mode === 'signup'
       ? `<div class="tabs"><button data-m="login" class="${mode === 'login' ? 'active' : ''}">Sign in</button><button data-m="signup" class="${mode === 'signup' ? 'active' : ''}">Create account</button></div>` : '';
@@ -119,7 +127,7 @@ export class UI {
     const say = (msg, good = false) => { err.style.color = good ? 'var(--good)' : ''; err.textContent = msg; };
     if (notice) say(notice.text, notice.good);
     this.captcha?.remove();
-    this.captcha = hasApi ? mountTurnstile($('#a-ts'), { action: mode }) : null;
+    this.captcha = hasApi && $('#a-ts') ? mountTurnstile($('#a-ts'), { action: mode }) : null;
     // Runs an auth request with a fresh Turnstile token, then resets the single-use widget.
     const withCaptcha = async (fn) => {
       const t = await this.captcha.token();
@@ -189,6 +197,13 @@ export class UI {
         assertPassword(pass.value);
         if (pass.value !== $('#a-pass2').value) throw new Error('Passwords do not match.');
         await api.verifyResetCode(this.lastEmail, c);
+        await api.updatePassword(pass.value);
+        await this.app.onSignedIn();
+        this.toast('Password updated', 'good');
+      },
+      newpass: async () => {
+        assertPassword(pass.value);
+        if (pass.value !== $('#a-pass2').value) throw new Error('Passwords do not match.');
         await api.updatePassword(pass.value);
         await this.app.onSignedIn();
         this.toast('Password updated', 'good');

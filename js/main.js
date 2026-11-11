@@ -21,7 +21,9 @@ class App {
     step(55, 'Connecting to services');
     // Read email-link results before the auth client consumes the URL.
     const hash = new URLSearchParams(location.hash.slice(1));
-    const confirmed = new URLSearchParams(location.search).has('confirmed') || hash.get('type') === 'signup';
+    const query = new URLSearchParams(location.search);
+    const confirmed = query.has('confirmed') || hash.get('type') === 'signup';
+    const recovery = query.has('reset') || hash.get('type') === 'recovery';
     let linkError = null;
     try {
       const { Api, authErrorFromUrl } = await import('./net/api.js');
@@ -38,7 +40,9 @@ class App {
     let session = null;
     try { session = this.api ? await this.api.session() : null; } catch { session = null; }
     if (location.hash || location.search) history.replaceState(null, '', location.pathname);
-    if (session) {
+    if (recovery && session) { this.user = session.user; this.ui.showAuth('newpass', { text: 'Link verified — choose a new password.', good: true }); }
+    else if (recovery && linkError) this.ui.showAuth('forgot', { text: linkError });
+    else if (session) {
       await this.onSignedIn().catch((e) => { console.warn(e); this.ui.showAuth(); this.ui.toast(e.message, 'bad'); });
       if (confirmed) this.ui.toast('Email confirmed — welcome to John-Paul Simulator!', 'good');
     } else if (linkError) this.ui.showAuth('login', { text: linkError });

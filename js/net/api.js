@@ -68,7 +68,7 @@ export class Api {
   }
 
   async requestPasswordReset(email, captchaToken) {
-    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl('reset-password.html'), captchaToken });
+    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl('index.html?reset=1'), captchaToken });
     if (error) throw friendly(error);
   }
 
