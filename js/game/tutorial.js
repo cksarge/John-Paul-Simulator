@@ -4,6 +4,8 @@ import { COURSE_ZONES } from '../data/maps.js';
 import { pad, isPS } from '../engine/gamepad.js';
 import { sfx } from '../engine/audio.js';
 import { DUMMY_LOOK } from './training.js';
+import { WEAPONS } from '../data/weapons.js';
+import { DEFAULT_CHAR } from '../data/characters.js';
 
 // The tutorial: a guided course (map 'course') that walks through every control one step at a time.
 // It runs on the Training Range's sandbox (mode kind 'training'): one endless live phase, free buying,
@@ -17,6 +19,7 @@ const KEYS = {
   jump: ['Space', 'A', '✕'], crouch: ['Ctrl', 'B', '◯'], walk: ['Shift', 'a light push on the stick', 'a light push on the stick'],
   fire: ['Left click', 'RT', 'R2'], reload: ['R', 'X', '▢'], inspect: ['V', 'L3', 'L3'],
   knife: ['3', 'D-pad ↓', 'D-pad ↓'], last: ['Q', 'Y', '△'], nade: ['4', 'LB', 'L1'], use: ['E', 'RB', 'R1'],
+  ping: ['Z', 'R3', 'R3'], emote: ['G', 'D-pad ↑', 'D-pad ↑'], scores: ['Tab', 'View', 'Touchpad'],
 };
 const label = (a) => {
   const k = KEYS[a];
@@ -29,6 +32,10 @@ const cellOf = (p) => [Math.floor(p.pos.x / CELL), Math.floor(p.pos.z / CELL)];
 const inRect = (p, r) => { const [x, y] = cellOf(p); return x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]; };
 const inZone = (p, z) => inRect(p, COURSE_ZONES[z]);
 const TARGETS = [[33, 13], [31, 16], [34, 18]];
+const LOADOUT_KEY = 'jps_loadout_free'; // the last loadout for modes with free buying (game.js loadoutKey)
+const CRACKED = [[22, 14], [23, 14], [24, 14], [25, 14]];
+const strip = (t) => { const p = t.lp; p.inv.primary = null; p.armor = 0; p.helmet = false; t.g.selectSlot(p, 'secondary'); };
+const hasKit = (t) => WEAPONS[t.lp.inv.primary]?.type === 'rifle' && t.lp.armor >= 100;
 
 // Section numbers follow the spec: 1 basics · 2 climbing · 3 doors · 4 shooting · 5 grenades · 6 buying ·
 // 7 the charge · 8 team tools · 9 final test.
@@ -73,6 +80,50 @@ export const STEPS = [
     done: (t) => t.b.knife && (t.lp.slot === 'primary' || t.lp.slot === 'secondary') },
   { id: 'inspect', section: 4, title: 'Inspect your weapon', zone: 'range', help: () => `Press ${kbd('inspect')} to inspect your rifle and its finish.`,
     done: (t) => t.g.viewmodel.inspecting },
+  { id: 'frag', section: 5, title: 'Blow open the cracked wall', zone: 'nades', help: () => `Press ${kbd('nade')} for your frags and throw them at the cracked wall with ${kbd('fire')} until it breaks. Explosives knock cracked walls down.`,
+    enter: (t) => { t.lp.inv.nades = ['he', 'he']; t.g.selectSlot(t.lp, 'nade'); },
+    // Missed? Another frag shows up a few seconds later.
+    tick: (t, dt) => { if (t.lp.inv.nades.includes('he')) t.b.wait = 0; else if ((t.b.wait = (t.b.wait || 0) + dt) > 4) t.lp.inv.nades.push('he'); },
+    done: (t) => CRACKED.some(([x, y]) => t.g.world.prop(x, y)?.broken) },
+  { id: 'smoke', section: 5, title: 'Throw a smoke', zone: 'nades', help: () => `Smoke blocks sight lines. Press ${kbd('nade')} and throw it with ${kbd('fire')}.`,
+    enter: (t) => { t.lp.inv.nades = ['smoke']; t.g.selectSlot(t.lp, 'nade'); },
+    done: (t) => !t.lp.inv.nades.includes('smoke') },
+  { id: 'buy', section: 6, title: 'Open the buy menu', zone: 'buy', help: () => `Press ${kbd('buy')} to open the buy menu. In matches you buy at the start of each round.`,
+    enter: (t) => strip(t),
+    done: (t) => t.g.hud.overlay === 'buy' },
+  { id: 'purchase', section: 6, title: 'Buy a rifle and kevlar', zone: 'buy', help: () => 'Pick any rifle and kevlar from the buy menu.',
+    done: (t) => hasKit(t) },
+  { id: 'rebuy', section: 6, title: 'Rebuy your loadout', zone: 'buy', help: () => `Your kit is gone, like after losing a round. Press ${kbd('rebuy')} to buy your last loadout again in one go.`,
+    enter: (t) => { if (t.g.hud.overlay === 'buy') t.g.hud.closeOverlay(true); strip(t); },
+    done: (t) => hasKit(t) },
+  { id: 'keep', section: 6, title: 'Keep your loadout', zone: 'buy',
+    help: () => (pad.active ? 'Open the buy menu and switch Keep loadout on or off. When it’s on, your last loadout is bought for you every round.' : `Press ${kbd('keep')} to switch Keep loadout on or off. When it’s on, your last loadout is bought for you every round.`),
+    enter: (t) => { t.b.keep = !!t.g.settings.keepLoadout; },
+    done: (t) => !!t.g.settings.keepLoadout !== t.b.keep },
+  { id: 'plant', section: 7, title: 'Plant the charge', zone: 'site', help: () => `You're carrying the charge. Stand on site A and hold ${kbd('use')} until it's planted.`,
+    enter: (t) => { if (t.g.hud.overlay === 'buy') t.g.hud.closeOverlay(true); t.setBomb({ state: 'carried', carrier: t.lp.id }); },
+    exit: (t) => { if (t.g.state.bomb?.state === 'carried') t.setBomb({ state: 'none' }); },
+    done: (t) => t.g.state.bomb?.state === 'planted' },
+  { id: 'defuse', section: 7, title: 'Defuse the charge', zone: 'site', help: () => `Now you're on defense. Hold ${kbd('use')} at the charge to defuse it before it goes off.`,
+    enter: (t) => {
+      t.b.team = t.lp.team;
+      t.lp.team = 1;
+      if (t.g.state.bomb?.state !== 'planted') { const c = t.zoneCenter('site'); t.setBomb({ state: 'planted', pos: [c.x, c.y, c.z], site: 'A', time: 40, planter: t.lp.id }); }
+    },
+    exit: (t) => { t.lp.team = t.b.team; t.setBomb({ state: 'none' }); },
+    done: (t) => t.g.state.bomb?.state === 'defused' },
+  { id: 'ping', section: 8, title: 'Ping a spot', zone: 'team', help: () => `Tap ${kbd('ping')} to mark a spot for your team. Pinging an enemy marks them.`,
+    done: (t) => t.b.quick },
+  { id: 'wheel', section: 8, title: 'Use the ping wheel', zone: 'team', help: () => `Hold ${kbd('ping')}, pick a callout with ${kbd('look')}, then let go.`,
+    done: (t) => t.b.wheel },
+  { id: 'emote', section: 8, title: 'Emote', zone: 'team', help: () => `Hold ${kbd('emote')} and pick an emote, or tap it to play your first one.`,
+    done: (t) => t.g.emoteT > 0 },
+  { id: 'scores', section: 8, title: 'Check the scoreboard', zone: 'team', help: () => `Hold ${kbd('scores')} to see the scoreboard.`,
+    tick: (t, dt) => { if (t.g.input.keys.has('Tab')) t.b.held = (t.b.held || 0) + dt; },
+    done: (t) => t.b.held > 0.5 },
+  { id: 'fight', section: 9, title: 'Win a 1v1', zone: 'arena', respawn: 'arena', help: () => 'Last test: a bot is waiting in the arena. Use what you learned and take it down.',
+    enter: (t) => { t.giveRifle(); t.spawnBot(); },
+    done: (t) => t.b.won },
 ];
 export const SECTIONS = 9;
 
@@ -83,6 +134,8 @@ export class Tutorial {
     this.b = {};
     this.kills = 0;
     this.t = 0;
+    this.keep0 = !!game.settings.keepLoadout;
+    try { this.loadout0 = localStorage.getItem(LOADOUT_KEY); } catch { this.loadout0 = null; }
     this.dummies = TARGETS.map((_, i) => game.addPlayer({ id: 'dummy-' + i, name: 'Target', team: 1, isBot: true, dummy: true, char: DUMMY_LOOK, elo: 0 }));
     // Marker: a ring on the floor and a soft beam of light above it.
     const mat = (o) => new THREE.MeshBasicMaterial({ color: 0xf2a33a, transparent: true, opacity: o, depthWrite: false, side: THREE.DoubleSide });
@@ -105,6 +158,7 @@ export class Tutorial {
 
   // ───────────── steps ─────────────
   begin(i) {
+    this.step?.exit?.(this);
     this.i = i;
     this.b = {};
     const s = this.step;
@@ -123,10 +177,18 @@ export class Tutorial {
   skip() { if (this.step) this.begin(this.i + 1); }
 
   finish() {
+    if (this.done) return;
+    this.done = true;
     this.marker.visible = false;
     this.g.hud.el.tut?.classList.add('hidden');
-    this.g.hud.center('TUTORIAL COMPLETE', '', 4);
+    try { localStorage.setItem('jps_tutorial_done', '1'); localStorage.setItem('jps_tutorial_seen', '1'); } catch { /* ignore */ }
     sfx.win();
+    const g = this.g, app = g.app;
+    setTimeout(() => g.running && g.hud.showTutorialDone((pick) => {
+      if (pick === 'bots') app.ui.source = 'offline';
+      g.leave();
+      if (pick === 'range') app.startOffline({ mode: 'training', map: 'range', botLevel: 'easy' });
+    }), 900);
   }
 
   zoneCenter(z) {
@@ -150,6 +212,29 @@ export class Tutorial {
   }
 
   // ───────────── helpers ─────────────
+  setBomb(b) {
+    this.g.state.bomb = b;
+    this.g.broadcast('bomb', b);
+    this.g.refreshBombCarrier();
+  }
+
+  onDefuse(p) {
+    const b = this.g.state.bomb;
+    if (b?.state !== 'planted' || !p.alive || Math.hypot(p.pos.x - b.pos[0], p.pos.z - b.pos[2]) > 2.4) return true;
+    this.setBomb({ ...b, state: 'defused', defuser: p.id });
+    return true;
+  }
+
+  onPing(kind) { if (kind) this.b.wheel = true; else this.b.quick = true; }
+
+  // The final test: an Easy bot at the far end of the arena. Both sides go back to their ends if you lose.
+  spawnBot() {
+    const g = this.g;
+    this.bot ||= g.addPlayer({ id: 'tut-bot', name: 'Rookie', team: 1, isBot: true, char: { ...DEFAULT_CHAR, top: '#b5443a' }, elo: 0 });
+    const r = g.mapDef.spawns[1], x = ((r[0] + r[2]) / 2 + 0.5) * CELL, z = ((r[1] + r[3]) / 2 + 0.5) * CELL;
+    g.spawnPlayer(this.bot, [x, g.world.heightAt(x, z), z, Math.PI / 2], true, false);
+  }
+
   giveRifle() {
     const p = this.lp;
     if (!p.inv.primary) { p.inv.primary = 'ar7'; p.giveAmmo('ar7'); }
@@ -168,8 +253,10 @@ export class Tutorial {
     if (victim.dummy) {
       if (killer?.isLocal) this.kills++;
       setTimeout(() => { if (victim.model && !victim.alive) victim.model.root.visible = false; }, 1500);
+    } else if (victim === this.bot) {
+      if (this.step?.id === 'fight') this.b.won = true;
     } else if (victim.isLocal) {
-      setTimeout(() => this.respawnLocal(), 1200);
+      setTimeout(() => { this.respawnLocal(); if (this.step?.id === 'fight') this.spawnBot(); }, 1200);
     }
   }
 
@@ -200,5 +287,12 @@ export class Tutorial {
 
   dispose() {
     this.marker.removeFromParent();
+    // The tutorial's buying and the keep-loadout step mustn't change the player's own settings.
+    const g = this.g;
+    if (!!g.settings.keepLoadout !== this.keep0) {
+      g.settings.keepLoadout = this.keep0;
+      try { localStorage.setItem('jps_settings', JSON.stringify(g.settings)); } catch { /* ignore */ }
+    }
+    try { if (this.loadout0 === null) localStorage.removeItem(LOADOUT_KEY); else localStorage.setItem(LOADOUT_KEY, this.loadout0); } catch { /* ignore */ }
   }
 }

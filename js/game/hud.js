@@ -142,6 +142,20 @@ export class Hud {
     o.querySelector('[data-a=leave]').onclick = () => this.g.leave();
   }
 
+  // End of the tutorial: where to go next.
+  showTutorialDone(onPick) {
+    this.overlay = 'tutdone';
+    this.g.input.unlock();
+    this.el.ovl.innerHTML = `<div class="overlay"><div class="panel pause">
+      <h2>Tutorial complete</h2>
+      <p class="muted small" style="margin:0">You know the basics. Warm up against bots, sharpen your aim on the range, or head online.</p>
+      <button class="btn primary" data-pick="bots">Play vs bots</button>
+      <button class="btn" data-pick="range">Training Range</button>
+      <button class="btn" data-pick="menu">Menu</button>
+    </div></div>`;
+    this.el.ovl.querySelectorAll('[data-pick]').forEach((b) => { b.onclick = () => onPick(b.dataset.pick); });
+  }
+
   // ───────────── buy menu ─────────────
   toggleBuy() {
     if (this.overlay === 'buy') return this.closeOverlay(true);

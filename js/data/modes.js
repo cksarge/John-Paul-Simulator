@@ -69,7 +69,7 @@ export const MODES = {
   },
   // The tutorial is a training variant (same sandbox: no rounds, free buying, no stats); js/game/tutorial.js runs it.
   tutorial: {
-    id: 'tutorial', name: 'Tutorial', short: 'TUT', maxPlayers: 2, kind: 'training', offlineOnly: true,
+    id: 'tutorial', name: 'Tutorial', short: 'TUT', maxPlayers: 2, kind: 'training', offlineOnly: true, plantTime: 3.2, defuseTime: 5, bombTime: 40,
     desc: 'A guided course through movement, shooting, grenades, buying, the charge and team tools, then a 1v1.',
     maps: ['course'],
   },

@@ -65,5 +65,8 @@ export function checkTutorial() {
     if (ids.has(st.id)) bad.push(`duplicate step ${st.id}`);
     ids.add(st.id);
   }
+  const order = ['look', 'move', 'walk-key', 'jump', 'crouch', 'mantle', 'ladder', 'lift', 'door', 'gate', 'shoot', 'reload', 'switch', 'inspect',
+    'frag', 'smoke', 'buy', 'purchase', 'rebuy', 'keep', 'plant', 'defuse', 'ping', 'wheel', 'emote', 'scores', 'fight'];
+  if (STEPS.map((st) => st.id).join() !== order.join()) bad.push(`step order is ${STEPS.map((st) => st.id).join()}`);
   return bad;
 }
