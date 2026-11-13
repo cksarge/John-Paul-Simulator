@@ -290,6 +290,12 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .topscore .timer.bomb { color: var(--bad); }
 .topscore .timer small { display: block; font-size: 10px; letter-spacing: 2px; color: var(--muted); line-height: 1; margin-top: 2px; }
 .goal-pill { position: absolute; top: 88px; left: 50%; transform: translateX(-50%); font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 12px; border-radius: 3px; background: rgba(10,12,16,.62); color: #e7ebef; white-space: nowrap; }
+.tut-panel { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); padding: 10px 16px 12px; border-left: 3px solid var(--accent); border-radius: 3px; background: rgba(10,12,16,.78); color: #e7ebef; text-align: center; }
+.tut-panel .tut-step { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
+.tut-panel .tut-title { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: 1px; text-transform: uppercase; line-height: 1.15; margin-top: 2px; }
+.tut-panel .tut-help { font-size: 14px; color: var(--muted); margin-top: 4px; }
+.tut-panel .tut-help kbd { display: inline-block; min-width: 1.6em; padding: 0 6px; border: 1px solid rgba(255,255,255,.3); border-bottom-width: 2px; border-radius: 3px; font-family: var(--display); font-weight: 700; font-size: 13px; color: #fff; background: rgba(255,255,255,.06); }
+.tut-panel.done { border-left-color: var(--good, #3dff8f); }
 .drop-card { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 22px; border: 1px solid var(--rc); border-radius: 6px; background: rgba(255,255,255,.03); box-shadow: 0 0 24px -8px var(--rc); animation: toastIn .3s; }
 .drop-swatch { width: 120px; height: 44px; border-radius: 4px; border: 1px solid var(--line2); }
 .goal-tag { font-family: var(--display); font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
@@ -333,7 +339,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .snd-step, .snd-reload, .snd-knife { color: #e7ebef; }
 .snd-door, .snd-glass, .snd-wood, .snd-smoke { color: #ffd23f; }
 /* HUD size: scales the corner panels, scores, radar, killfeed, chat and messages. */
-.hud-bottom-left, .hud-bottom-right, .money, .bomb-icon, .killfeed, .radar, .chat, .topscore, .goal-pill, .alive-row, .center-msg, .info-msg, .spectate, .progress { zoom: var(--hud-scale, 1); }
+.hud-bottom-left, .hud-bottom-right, .money, .bomb-icon, .killfeed, .radar, .chat, .topscore, .goal-pill, .tut-panel, .alive-row, .center-msg, .info-msg, .spectate, .progress { zoom: var(--hud-scale, 1); }
 .radar { position: absolute; left: 18px; top: 18px; width: 200px; height: 200px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); background: rgba(10,12,16,.55); overflow: hidden; }
 .radar canvas { width: 100%; height: 100%; }
 .scope { position: absolute; inset: 0; background: radial-gradient(circle at center, transparent 0, transparent 34vh, #000 34.2vh); }

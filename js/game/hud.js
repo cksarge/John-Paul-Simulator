@@ -41,6 +41,7 @@ export class Hud {
       <div class="fps hidden"></div>
       <div class="topscore"></div>
       <div class="goal-pill"></div>
+      <div class="tut-panel hidden"></div>
       <div class="alive-row"></div>
       <div class="killfeed"></div>
       <div class="crosshair"></div>
@@ -75,7 +76,7 @@ export class Hud {
       ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), blind: q('.blind'), scope: q('.scope'),
       center: q('.center-msg'), goal: q('.goal-pill'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
       money: q('.money'), hp: q('.hp'), ar: q('.ar'), slots: q('.slots'), wname: q('.weapon-name'), ammo: q('.ammo .hud-num'),
-      chat: q('.chat'), ovl: q('.ovl'), wheel: q('.emote-wheel'), killcam: q('.killcam'), cues: q('.snd-cues'),
+      chat: q('.chat'), ovl: q('.ovl'), tut: q('.tut-panel'), wheel: q('.emote-wheel'), killcam: q('.killcam'), cues: q('.snd-cues'),
     };
     this.cues = new Map();
     this.radarImg = this.g.world.radarCanvas(8);
@@ -500,7 +501,11 @@ export class Hud {
       const hs = s.hostages || [];
       goal += ` · Hostages: ${hs.map((h) => (h.state === 'rescued' ? '✓' : h.state === 'carried' ? '➜' : '●')).join(' ')}`;
     }
-    if (kind === 'training') {
+    if (g.tutorial) {
+      const tu = g.tutorial;
+      el.top.innerHTML = `<div class="timer">${tu.section}/${tu.sections}<small>TUTORIAL</small></div>`;
+      goal = '';
+    } else if (kind === 'training') {
       const tr = g.training, st = tr?.stats;
       el.top.innerHTML = `<div class="ts ct" title="Kills">${st?.kills ?? 0}</div><div class="timer">${st?.running ? fmtTime(st.left) : '∞'}<small>TRAINING</small></div><div class="ts t" title="Accuracy">${tr ? tr.accuracy() + '%' : ''}</div>`;
       goal = tr ? tr.hudLine() : '';
@@ -522,6 +527,7 @@ export class Hud {
     }
 
     el.goal.textContent = goal;
+    el.goal.classList.toggle('hidden', !goal);
 
     // Vitals
     el.hp.querySelector('.hud-num').textContent = Math.max(0, p.hp);

@@ -14,7 +14,7 @@ export const DRILLS = {
   nades: { name: 'Grenade line-ups', desc: 'Unlimited grenades with a live arc preview. Practise throws over the crates in the yard.' },
 };
 
-const DUMMY_LOOK = { ...OPERATORS[0].char, name: 'Target', top: '#ff8a3d', pants: '#3a3f45', vest: 'plate', vestColor: '#ffd23f', headgear: 'none', face: 'none', outfit: 'standard', skins: {} };
+export const DUMMY_LOOK = { ...OPERATORS[0].char, name: 'Target', top: '#ff8a3d', pants: '#3a3f45', vest: 'plate', vestColor: '#ffd23f', headgear: 'none', face: 'none', outfit: 'standard', skins: {} };
 const MAX_DUMMIES = 6;
 const bestKey = (drill) => 'jps_training_best_' + drill;
 

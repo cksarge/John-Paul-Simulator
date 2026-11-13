@@ -98,6 +98,7 @@ export class Pings {
     this.recent = this.recent.filter((t) => now - t < 4000);
     if (this.recent.length >= 3 || now - (this.recent[this.recent.length - 1] || 0) < 450) return;
     this.recent.push(now);
+    this.g.tutorial?.onPing(kind);
     const a = this.aim(p);
     kind = kind || (a.enemy ? 'enemy' : 'go');
     this.g.broadcast('ping', { id: p.id, team: p.team, kind, pos: [a.pos.x, a.pos.y, a.pos.z] });

@@ -407,7 +407,7 @@ export class Rules {
     const site = this.g.world.siteAt(pos[0], pos[2]);
     if (!site || p.pos.distanceTo(new THREE.Vector3(...pos)) > 2) return;
     s.bomb = { state: 'planted', pos, site, time: this.mode.bombTime, planter: p.id };
-    p.money = Math.min(this.econ.max, p.money + this.econ.plant);
+    if (this.econ) p.money = Math.min(this.econ.max, p.money + this.econ.plant);
     this.g.broadcast('bomb', s.bomb);
   }
 
@@ -484,6 +484,7 @@ export class Rules {
   }
 
   onDefuse(p) {
+    if (this.g.tutorial?.onDefuse(p)) return;
     const s = this.s, b = s.bomb;
     if (s.phase !== 'live' || !b || b.state !== 'planted' || p.team !== 1 || !p.alive) return;
     if (Math.hypot(p.pos.x - b.pos[0], p.pos.z - b.pos[2]) > 2.4) return;

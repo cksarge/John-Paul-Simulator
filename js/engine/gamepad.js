@@ -4,7 +4,7 @@
 export const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, L3: 10, R3: 11, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 
 // Sony pads report vendor 054c; "Wireless Controller" alone is the DualShock 4's name (Xbox pads add "Xbox").
-const isPS = (id) => !/xbox|xinput|045e/i.test(id || '') && /054c|playstation|dualsense|dualshock|wireless controller/i.test(id || '');
+export const isPS = (id) => !/xbox|xinput|045e/i.test(id || '') && /054c|playstation|dualsense|dualshock|wireless controller/i.test(id || '');
 
 // Labels for hints: [keyboard, Xbox, PlayStation].
 const LABELS = {

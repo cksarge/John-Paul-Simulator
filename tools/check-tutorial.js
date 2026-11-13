@@ -7,6 +7,7 @@ import { MAPS, COURSE_ZONES } from '../js/data/maps.js';
 import { MODES } from '../js/data/modes.js';
 import { World } from '../js/engine/world.js';
 import { isPlatform } from '../js/engine/grid.js';
+import { STEPS, SECTIONS } from '../js/game/tutorial.js';
 
 // Cells a player can stand in, and the height of the floor there.
 function floorH(w, x, y) {
@@ -56,5 +57,13 @@ export function checkTutorial() {
   }
   const s = COURSE_ZONES.site;
   if (s && w.siteAt(((s[0] + s[2]) / 2 + 0.5) * 2, ((s[1] + s[3]) / 2 + 0.5) * 2) !== 'A') bad.push('site zone is not on bomb site A');
+  const ids = new Set();
+  for (const st of STEPS) {
+    if (!st.id || !st.title || typeof st.done !== 'function' || typeof st.help !== 'function') bad.push(`step ${st.id || '?'} is missing id, title, help or done`);
+    if (!(st.zone in COURSE_ZONES)) bad.push(`step ${st.id} has unknown zone ${st.zone}`);
+    if (!(st.section >= 1 && st.section <= SECTIONS)) bad.push(`step ${st.id} has section ${st.section}`);
+    if (ids.has(st.id)) bad.push(`duplicate step ${st.id}`);
+    ids.add(st.id);
+  }
   return bad;
 }

@@ -280,6 +280,7 @@ export class Game {
     this.updateBomb(dt);
     this.hostageView?.update(dt);
     this.training?.update(dt);
+    this.tutorial?.update(dt);
     this.pings?.update(dt);
     // Lifts run on the shared round clock; spawn barriers hold until the round goes live.
     this.world.clock = -this.state.time;
@@ -392,6 +393,7 @@ export class Game {
     if (!ui && s.toggleWalk && (inp.pressed('ShiftLeft') || inp.pressed('ShiftRight'))) this.walkOn = !this.walkOn;
     const crouchKey = s.toggleCrouch ? !!this.crouchOn : k('ControlLeft') || k('KeyC');
     const walkKey = s.toggleWalk ? !!this.walkOn : k('ShiftLeft') || k('ShiftRight');
+    this.moveKeys = { walk: walkKey || (!!stickMove && stickMove.m < 0.6 && wish.lengthSq() > 0), crouch: crouchKey }; // read by the tutorial
     this.movePlayer(p, wish, dt, {
       walk: walkKey || (!!stickMove && stickMove.m < 0.6),
       crouch: crouchKey || acting,
@@ -1523,11 +1525,12 @@ export class Game {
         if (k && k !== v) { k.kills++; if (d.hs) k.hs++; if (this.isHost) k.money = d.money ?? k.money; }
         this.trackKill(k, v, d);
         this.training?.onKill(k, v);
+        this.tutorial?.onKill(k, v);
         this.hud.killfeed(k, v, d.w, d.hs);
         const fx = k && k !== v ? k.char?.killfx : null;
         if (fx && fx !== 'none' && KILL_FX[fx]) this.effects.killFx(fx, v.pos.clone().setY(v.pos.y + 1), KILL_FX[fx].color);
         if (k?.isLocal && k !== v) { this.hud.hitmarker(d.hs, true); }
-        if (v.isLocal && k && k !== v && this.settings.killcam !== false && this.state.phase !== 'over') {
+        if (v.isLocal && k && k !== v && this.settings.killcam !== false && this.state.phase !== 'over' && !this.tutorial) {
           this.killcam = { killer: k.id, delay: 0.7, pos: this.rec.t - 2.8, end: this.rec.t + 0.6, w: d.w, hs: d.hs, revived: new Set() };
         }
         if (v.isLocal) {
@@ -2264,6 +2267,7 @@ export class Game {
     this.running = false;
     onSoundCue(null);
     this.rec?.unwrap();
+    this.tutorial?.dispose();
     this.input?.dispose();
     this.hud?.unmount();
     this.net?.leave();
