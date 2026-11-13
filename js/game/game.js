@@ -459,9 +459,13 @@ export class Game {
     if (!this.canBuy()) { if (manual) this.hud.info('You can only buy during the buy phase', 2); return; }
     const missing = this.missingItems(items, p);
     if (!missing.length) { if (manual) this.hud.info(`Already equipped: ${label}`, 1.5); return; }
-    this.equipping = (this.equipping || 0) + 1;
+    // Remember exactly what this rebuy asked for: when those purchases arrive (after a network round
+    // trip online) they must not overwrite the saved loadout.
+    this.pendingEquip ||= [];
+    this.pendingEquip.push(...missing);
+    clearTimeout(this.pendingEquipT);
+    this.pendingEquipT = setTimeout(() => { this.pendingEquip = []; }, 8000);
     missing.forEach((item, i) => setTimeout(() => { if (this.canBuy()) this.request('buy', { item }); }, i * 60));
-    setTimeout(() => { this.equipping--; }, missing.length * 60 + 900);
     if (manual) this.hud.info(`Equipping ${label}`, 1.5);
   }
 
@@ -1554,7 +1558,9 @@ export class Game {
     else if (it === 'helmet') { p.armor = 100; p.helmet = true; }
     if (p.isLocal) {
       sfx.buy(); this.viewmodel.setWeapon(p.weaponId, p.char); this.hud.refreshBuy();
-      if (!this.equipping) this.saveLastLoadout();
+      const queued = this.pendingEquip?.indexOf(it) ?? -1;
+      if (queued >= 0) this.pendingEquip.splice(queued, 1);
+      else this.saveLastLoadout();
     }
   }
 
