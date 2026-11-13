@@ -31,6 +31,7 @@ export class BotBrain {
 
   reset() {
     this.path = null; this.pathI = 0; this.goal = null; this.goalT = 0;
+    this.detour = null; this.gateAvoid = {}; this.waiting = false;
     this.target = null; this.seenT = 0; this.lostT = 0; this.lastSeen = null;
     this.thinkT = Math.random() * 0.2; this.stuckT = 0; this.lastPos = this.p.pos.clone();
     this.aimErr = new THREE.Vector2((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2);
@@ -247,14 +248,14 @@ export class BotBrain {
     }
     this.goalT -= 0.2;
     const goal = this.chooseGoal();
-    if (goal && (!this.goal || this.goal.distanceTo(goal) > 3 || this.goalT <= 0 || !this.path)) {
+    if (goal && !this.detour && (!this.goal || this.goal.distanceTo(goal) > 3 || this.goalT <= 0 || !this.path)) {
       this.goal = goal.clone(); this.goalT = 4 + Math.random() * 4;
-      this.path = g.world.findPath(p.pos, this.goal); this.pathI = 0;
+      this.repath();
     }
-    // Stuck detection
-    if (p.pos.distanceTo(this.lastPos) < 0.15 && this.path && this.pathI < this.path.length) {
+    // Stuck detection (not while deliberately waiting for a lift or a spawn barrier)
+    if (!this.waiting && p.pos.distanceTo(this.lastPos) < 0.15 && this.path && this.pathI < this.path.length) {
       this.stuckT += 0.2;
-      if (this.stuckT > 1.2) { this.path = g.world.findPath(p.pos, this.goal); this.pathI = 0; this.stuckT = 0; }
+      if (this.stuckT > 1.2) { this.detour = null; this.repath(); this.stuckT = 0; }
     } else this.stuckT = 0;
     this.lastPos.copy(p.pos);
   }
@@ -276,8 +277,69 @@ export class BotBrain {
     g.throwNade(p);
   }
 
+  // Gates whose switch this bot couldn't reach recently, so it plans around them for a while.
+  avoidGates() {
+    const now = performance.now(), out = new Set();
+    for (const [k, until] of Object.entries(this.gateAvoid || {})) if (until > now) out.add(k);
+    return out;
+  }
+  repath() {
+    if (!this.goal) return;
+    this.path = this.g.world.findPath(this.p.pos, this.goal, { gates: true, avoid: this.avoidGates() }); this.pathI = 0;
+  }
+
+  // The new map pieces: throw a gate's switch before walking through it, wait for lifts, and hold
+  // still behind spawn barriers. Returns a move vector, or null to carry on as normal.
+  useMapPieces() {
+    const p = this.p, W = this.g.world, here = [Math.floor(p.pos.x / 2), Math.floor(p.pos.z / 2)];
+    // Buy time behind a spawn barrier: just wait.
+    if (W.barriersOn && W.barrierCells.length) { this.waiting = true; return new THREE.Vector3(); }
+    // On the way to a switch: throw it once in reach, then head back to the goal.
+    if (this.detour) {
+      const { sw, gate } = this.detour;
+      if (gate.open) { this.detour = null; this.repath(); return null; }
+      if (Math.hypot(p.pos.x - (sw.x + 0.5) * 2, p.pos.z - (sw.y + 0.5) * 2) < 3.0) {
+        if (!(this.switchT > performance.now())) { this.switchT = performance.now() + 1600; this.g.request('gate', { cell: [sw.x, sw.y] }, p); }
+        this.waiting = true;
+        if (gate.open) { this.detour = null; this.repath(); }
+        return new THREE.Vector3();
+      }
+      return null;
+    }
+    if (!this.path || this.pathI >= this.path.length) return null;
+    // A closed gate coming up on the route: go and throw its switch first.
+    for (let i = this.pathI; i < Math.min(this.path.length, this.pathI + 4); i++) {
+      const cx = Math.floor(this.path[i].x / 2), cy = Math.floor(this.path[i].z / 2), gate = W.prop(cx, cy);
+      if (!gate || gate.ch !== 'P' || gate.open || !gate.link) continue;
+      const key = cx + ',' + cy, avoid = this.avoidGates();
+      avoid.add(key);
+      for (const g2 of W.props.values()) if (g2.ch === 'P' && g2.link === gate.link) avoid.add(g2.x + ',' + g2.y);
+      const toSwitch = W.findPath(p.pos, W.cellCenter(gate.link.x, gate.link.y), { gates: true, avoid });
+      if (toSwitch) { this.detour = { sw: gate.link, gate }; this.path = toSwitch; this.pathI = 0; }
+      else { (this.gateAvoid ||= {})[key] = performance.now() + 15000; this.repath(); }
+      return null;
+    }
+    // Lifts: wait for one to come level before stepping on or off it.
+    const wp = this.path[this.pathI], wc = [Math.floor(wp.x / 2), Math.floor(wp.z / 2)];
+    const lift = W.isLift(wc[0], wc[1]) && !(wc[0] === here[0] && wc[1] === here[1]) ? W.prop(wc[0], wc[1]) : null;
+    if (lift && Math.abs(lift.h - p.pos.y) > 0.45 && Math.hypot(wp.x - p.pos.x, wp.z - p.pos.z) < 2.6) { this.waiting = true; return new THREE.Vector3(); }
+    const riding = W.isLift(here[0], here[1]) ? W.prop(here[0], here[1]) : null;
+    if (riding && Math.abs(wp.y - riding.h) > 0.5) {
+      // Stand in the middle of the lift until it reaches the next step's height.
+      this.waiting = true;
+      const dx = (here[0] + 0.5) * 2 - p.pos.x, dz = (here[1] + 0.5) * 2 - p.pos.z, d = Math.hypot(dx, dz);
+      return d > 0.3 ? new THREE.Vector3(dx / d, 0, dz / d) : new THREE.Vector3();
+    }
+    return null;
+  }
+
   navigate() {
     const p = this.p;
+    this.waiting = false;
+    if (this.detour || (this.path && this.pathI < this.path.length)) {
+      const special = this.useMapPieces();
+      if (special) return special;
+    }
     if (!this.path || this.pathI >= this.path.length) {
       this.lookAt = (this.g.mode.kind === 'bomb' || this.g.mode.kind === 'hostage') && p.team === 1 ? new THREE.Vector3(this.g.world.size.x / 2, 0, this.g.world.size.z / 2) : null;
       return new THREE.Vector3();

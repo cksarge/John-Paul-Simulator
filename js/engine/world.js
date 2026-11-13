@@ -27,6 +27,10 @@ const LIFT = { wait: 3, move: 2.5 };
 const LIFT_PERIOD = 2 * (LIFT.wait + LIFT.move);
 // Standing height of a body, for walking under bridges.
 const BODY_H = 1.8;
+// Full-height cells (walls, closed doors and gates, glass, spawn barriers) reach the sky as far as
+// bodies are concerned: an invisible barrier on top, so nobody can glitch up onto a wall. Bullets,
+// sight lines and grenades still use the real 6 m height.
+const FULL_H = 6, SKY = 1000;
 const RAIL_BITS = [[1, 0, 1], [-1, 0, 2], [0, 1, 4], [0, -1, 8]];
 // Ramp / stair directions in DIR_OF order: north, east, south, west (the way they rise).
 const DIR_VEC = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -359,7 +363,8 @@ export class World {
     const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL);
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
-      const h = this.isRamp(cx, cz) ? this.rampUnder(cx, cz, x, z, r) : this.cellH(cx, cz);
+      let h = this.isRamp(cx, cz) ? this.rampUnder(cx, cz, x, z, r) : this.cellH(cx, cz);
+      if (h >= FULL_H) h = SKY;
       if (h > y + (this.isLift(cx, cz) ? 0.4 : 0.001) && h > top) top = h;
       // An overhead slab blocks only bodies that overlap it.
       const i = cz * this.w + cx, ut = this.UT[i] || 0;
@@ -375,6 +380,7 @@ export class World {
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
       const h = this.isRamp(cx, cz) ? this.rampUnder(cx, cz, x, z, r) : this.cellH(cx, cz);
+      if (h >= FULL_H) continue; // never something to stand on
       if (h <= y + (this.isLift(cx, cz) ? 0.4 : 0.05) && h > f) f = h;
       const ut = this.UT[cz * this.w + cx] || 0;
       if (ut && ut <= y + 0.05 && ut > f) f = ut;
@@ -541,6 +547,8 @@ export class World {
     if (ch === '.' || ch === 'L' || isPlatform(ch)) return this.H[cy * this.w + cx];
     if (ch === 'D') return 0; // bots open doors on their way through
     if (ch === 'Y' || ch === 'E') return 0; // barriers drop at the start; lifts are boarded at the bottom
+    // Closed gates count as a way through for bots that know to throw the gate's switch first.
+    if (ch === 'P' && this.navGates && this.prop(cx, cy)?.link && !this.navGates.has(cx + ',' + cy)) return 0;
     if (DIR_OF[ch]) return (this.RLo[cy * this.w + cx] + this.RHi[cy * this.w + cx]) / 2;
     return null;
   }
@@ -554,8 +562,14 @@ export class World {
     return g !== null && g + BODY_H <= d.lo && from + BODY_H <= d.lo ? g : null;
   }
 
-  // A* over cells. Bridge cells get a second node (index + w*h) for their deck.
-  findPath(from, to) {
+  // A* over cells. Bridge cells get a second node (index + w*h) for their deck. With `gates`, closed
+  // gates that have a switch are passable (the bot opens them on the way), except any listed in `avoid`.
+  findPath(from, to, { gates = false, avoid = null } = {}) {
+    this.navGates = gates ? avoid || new Set() : null;
+    try { return this.findPathInner(from, to); } finally { this.navGates = null; }
+  }
+
+  findPathInner(from, to) {
     const W = this.w, N = W * this.h;
     const sx = Math.floor(from.x / CELL), sy = Math.floor(from.z / CELL);
     let tx = Math.floor(to.x / CELL), ty = Math.floor(to.z / CELL);
@@ -602,7 +616,8 @@ export class World {
           const a = this.navInto(ch, cx + ddx, cy), b = this.navInto(ch, cx, cy + ddy);
           if (a === null || b === null || Math.abs(a - ch) > 0.55 || Math.abs(b - ch) > 0.55) continue;
         }
-        const ni = ny * W + nx + level(nx, ny, nh) * N, ng = g[cur] + cost + (up < -0.55 ? 1.5 : 0) + (ladderUp ? 2 : 0);
+        const gate = this.chars[ny][nx] === 'P' ? 6 : 0; // a detour to the switch
+        const ni = ny * W + nx + level(nx, ny, nh) * N, ng = g[cur] + cost + (up < -0.55 ? 1.5 : 0) + (ladderUp ? 2 : 0) + gate;
         if (ng < g[ni]) { g[ni] = ng; came[ni] = cur; push(ni, ng + hfn(nx, ny)); }
       }
     }

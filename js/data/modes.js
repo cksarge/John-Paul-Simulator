@@ -28,8 +28,8 @@ export const MODES = {
   },
   duo: {
     id: 'duo', name: '2v2 Wingman', short: '2V2', teamSize: 2, kind: 'rounds',
-    desc: 'Two-player squads, free loadouts, fast rounds. First to 7.',
-    roundsToWin: 7, roundTime: 90, buyTime: 8, maps: SMALL,
+    desc: 'Two-player squads and fast rounds. Round wins pay more than losses, so the winning pair can afford better guns. First to 7.',
+    economy: true, roundsToWin: 7, roundTime: 90, buyTime: 8, maps: SMALL,
   },
   bomb: {
     id: 'bomb', name: '5v5 Bomb Defusal', short: '5V5', teamSize: 5, kind: 'bomb',

@@ -2,7 +2,7 @@
 
 A browser-based 3D tactical FPS. There is no build step: it is plain ES modules loaded straight from the folder, so it runs on GitHub Pages as-is.
 
-- **Modes:** Ranked 1v1 (ELO), 1v1 Duel (both 1v1s have a round economy: winning pays more than losing), 2v2 Wingman, 5v5 Bomb Defusal (full economy), 5v5 Hostage Rescue (carry one of two hostages back to your spawn), 4v4 Retakes (the charge is already planted; attackers hold the site, defenders retake and defuse), Team Deathmatch, Gun Game, Free For All. Every mode shows its win condition ("First to …") on the HUD and scoreboard.
+- **Modes:** Ranked 1v1 (ELO), 1v1 Duel and 2v2 Wingman (all three have a round economy: winning pays more than losing), 5v5 Bomb Defusal (full economy), 5v5 Hostage Rescue (carry one of two hostages back to your spawn), 4v4 Retakes (the charge is already planted; attackers hold the site, defenders retake and defuse), Team Deathmatch, Gun Game, Free For All. Every mode shows its win condition ("First to …") on the HUD and scoreboard.
 - **Training Range** (Play → Versus bots): free practice, a 60-second aim drill with best scores, moving targets, a spray board and grenade line-ups with a live arc preview. Unlimited ammo, every weapon free.
 - **Seasons:** three-month ranked seasons (Season 1 runs to Dec 31, 2026; Seasons 2–5 cover all of 2027). Each has a 30-tier reward track filled by match and challenge XP, four season-exclusive cosmetics and a ranked card for 5 ranked wins. Ratings move halfway back toward 1000 when a season ends. Future seasons' items are visible but locked until they start.
 - **Challenges:** three daily (300 XP) and three weekly (1,000 XP) challenges, the same for everyone, shown on the Season tab.
