@@ -58,6 +58,8 @@ export class Game {
     this.fires = [];
     this.decoys = [];
     this.nadeSeq = 0;
+    // Detailed personal stats for the stats page (weapons, accuracy, head-to-head, where you died).
+    this.myStats = { shots: 0, hits: 0, weapons: {}, victims: {}, killers: {}, deaths: [] };
     this.punch = 0;
     this.lookDX = 0; this.lookDY = 0;
     this.outShots = new Map();
@@ -658,6 +660,11 @@ export class Game {
         }
       } else shots.push([+tr.end.x.toFixed(1), +tr.end.y.toFixed(1), +tr.end.z.toFixed(1), 2]);
       if (i < 3 && !w.silent) this.effects.tracer(this.muzzlePos(p, isLocal), tr.end);
+    }
+    if (isLocal) {
+      const ws = (this.myStats.weapons[w.id] ||= { k: 0, s: 0, h: 0, hs: 0 });
+      ws.s++; this.myStats.shots++;
+      if (dmgBy.size) { ws.h++; this.myStats.hits++; }
     }
     for (const [victim, { d, part }] of dmgBy) {
       this.request('hit', { v: victim.id, d: Math.round(d), part, w: w.id }, p);
@@ -1356,6 +1363,7 @@ export class Game {
         const dir = k ? (new THREE.Vector3().subVectors(v.pos, k.pos).dot(v.forward()) > 0 ? -1 : 1) : 1;
         v.model?.die(dir);
         if (k && k !== v) { k.kills++; if (d.hs) k.hs++; if (this.isHost) k.money = d.money ?? k.money; }
+        this.trackKill(k, v, d);
         this.hud.killfeed(k, v, d.w, d.hs);
         const fx = k && k !== v ? k.char?.killfx : null;
         if (fx && fx !== 'none' && KILL_FX[fx]) this.effects.killFx(fx, v.pos.clone().setY(v.pos.y + 1), KILL_FX[fx].color);
@@ -1848,6 +1856,21 @@ export class Game {
     if (inp.pressed('KeyV')) this.specCam.cycle();
   }
 
+  trackKill(k, v, d) {
+    const st = this.myStats, lp = this.local;
+    if (!lp) return;
+    const key = (p) => (p.isBot ? 'bot' : p.id);
+    if (k === lp && v !== lp) {
+      const ws = (st.weapons[d.w] ||= { k: 0, s: 0, h: 0, hs: 0 });
+      ws.k++; if (d.hs) ws.hs++;
+      const e = (st.victims[key(v)] ||= { n: v.isBot ? 'Bots' : (v.baseName || v.name), c: 0 }); e.c++;
+    }
+    if (v === lp && k && k !== lp) {
+      const e = (st.killers[key(k)] ||= { n: k.isBot ? 'Bots' : (k.baseName || k.name), c: 0 }); e.c++;
+    }
+    if (v === lp && st.deaths.length < 60) st.deaths.push([+v.pos.x.toFixed(1), +v.pos.z.toFixed(1)]);
+  }
+
   // ───────────────────────── kill cam ─────────────────────────
   // Replays the last few seconds through the killer's eyes. Live state keeps running underneath;
   // only the camera and player models are driven from the recording.
@@ -1935,6 +1958,7 @@ export class Game {
     (result === 'win' ? sfx.win : result === 'loss' ? sfx.lose : sfx.roundStart)();
     this.hud.showResults({ result, reason: d.reason, scores: d.scores, stats: d.stats || this.statsPayload(), eloChange: null, score });
     if (this.spectator) return;
+    this.app.recordLocalStats?.({ mode: this.mode.id, map: this.mapDef.id, result, online: this.online, k: myStats.k, d: myStats.d, hs: myStats.hs, details: this.myStats });
     if (d.reason !== 'host-left') this.app.awardDrop?.(result, this.online).then((item) => this.hud.showDrop(item)).catch((e) => console.warn('Drop failed', e));
     const api = this.app.api;
     if (api && this.app.user) {
@@ -1949,7 +1973,7 @@ export class Game {
         }
         await api.recordMatch({
           matchId: this.matchId, mode: this.mode.id, map: this.mapDef.id, ranked: !!this.mode.ranked, online: this.online,
-          result, kills: myStats.k, deaths: myStats.d, headshots: myStats.hs, score, eloChange,
+          result, kills: myStats.k, deaths: myStats.d, headshots: myStats.hs, score, eloChange, details: this.myStats,
         });
         this.hud.setEloChange(this.mode.ranked ? eloChange : null);
         this.app.refreshProfile?.();

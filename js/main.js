@@ -225,6 +225,33 @@ class App {
     });
   }
 
+  // ───────────── personal stats (this browser) ─────────────
+  // Totals per account (or guest) so the stats page has weapon, accuracy and head-to-head data
+  // even before the database stores per-match details.
+  localStatsKey() { return 'jps_stats_' + (this.user?.id || 'guest'); }
+
+  localStats() {
+    try { return JSON.parse(localStorage.getItem(this.localStatsKey()) || 'null') || { matches: [], weapons: {}, shots: 0, hits: 0, h2h: {}, deaths: {} }; }
+    catch { return { matches: [], weapons: {}, shots: 0, hits: 0, h2h: {}, deaths: {} }; }
+  }
+
+  recordLocalStats(m) {
+    const st = this.localStats(), d = m.details || {};
+    st.matches.unshift({ mode: m.mode, map: m.map, result: m.result, online: m.online, k: m.k, d: m.d, hs: m.hs, at: Date.now() });
+    st.matches = st.matches.slice(0, 200);
+    st.shots += d.shots || 0; st.hits += d.hits || 0;
+    for (const [w, v] of Object.entries(d.weapons || {})) {
+      const a = (st.weapons[w] ||= { k: 0, s: 0, h: 0, hs: 0 });
+      a.k += v.k; a.s += v.s; a.h += v.h; a.hs += v.hs;
+    }
+    for (const [id, v] of Object.entries(d.victims || {})) { const a = (st.h2h[id] ||= { n: v.n, k: 0, d: 0 }); a.k += v.c; a.n = v.n; }
+    for (const [id, v] of Object.entries(d.killers || {})) { const a = (st.h2h[id] ||= { n: v.n, k: 0, d: 0 }); a.d += v.c; a.n = v.n; }
+    const spots = (st.deaths[m.map] ||= []);
+    spots.push(...(d.deaths || []));
+    st.deaths[m.map] = spots.slice(-400);
+    try { localStorage.setItem(this.localStatsKey(), JSON.stringify(st)); } catch { /* storage full */ }
+  }
+
   // ───────────── replays ─────────────
   storeReplay(data) {
     import('./game/replaystore.js').then((m) => m.saveReplay(data)).then((id) => { this.lastReplayId = id; })

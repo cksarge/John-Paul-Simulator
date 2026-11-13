@@ -19,7 +19,9 @@ export class Matchmaker {
 
   async start() {
     const me = this.app.me();
-    this.room = new Room(this.app.api.sb, 'jps-q-' + this.mode, me, { name: me.name, elo: me.elo, char: me.char });
+    // A party queues as one entry carrying every member (the leader's).
+    const group = this.app.party?.group() || [{ id: me.id, name: me.name, elo: me.elo, char: me.char }];
+    this.room = new Room(this.app.api.sb, 'jps-q-' + this.mode, me, { name: me.name, elo: me.elo, char: me.char, group });
     this.room.onSync(() => this.evaluate());
     this.room.on('match', (payload) => this.accept(payload));
     await this.room.connect();
@@ -31,27 +33,45 @@ export class Matchmaker {
     return this.room.members().filter((m) => m.id).sort((a, b) => (a.t - b.t) || (a.id < b.id ? -1 : 1));
   }
 
+  // Entries that fit in one match, oldest first. Team modes also need each group to fit on a team.
+  pick(list) {
+    const m = MODES[this.mode], need = needFor(this.mode), out = [];
+    const room = SOLO_KINDS.has(m.kind) ? null : [m.teamSize, m.teamSize];
+    let total = 0;
+    for (const e of list) {
+      const g = e.group?.length ? e.group : [e];
+      if (total + g.length > need) continue;
+      let team = -1;
+      if (room) { team = room[0] >= room[1] ? 0 : 1; if (room[team] < g.length) team = 1 - team; if (room[team] < g.length) continue; room[team] -= g.length; }
+      out.push({ g, team });
+      total += g.length;
+    }
+    return { out, total };
+  }
+
   evaluate() {
     if (this.done || !this.room) return;
     const list = this.queue(), me = this.app.me();
     const need = needFor(this.mode), m = MODES[this.mode];
     const leader = list[0]?.id === me.id;
     const waited = (Date.now() - this.started) / 1000;
-    const canFill = !m.ranked && list.length >= 2 && waited >= FILL_AFTER;
-    this.onUpdate?.({ count: list.length, need, waited, leader, canForce: leader && !m.ranked && list.length >= 2 });
+    const humans = list.reduce((n, e) => n + (e.group?.length || 1), 0);
+    const canFill = !m.ranked && humans >= 2 && waited >= FILL_AFTER;
+    this.onUpdate?.({ count: humans, need, waited, leader, canForce: leader && !m.ranked && humans >= 2 });
     if (!leader) return;
-    if (list.length >= need) this.form(list.slice(0, need));
-    else if (canFill) this.form(list.slice(0, need));
+    const { total } = this.pick(list);
+    if (total >= need || canFill) this.form(list);
   }
 
   forceStart() {
     const list = this.queue();
-    if (list.length >= 2) this.form(list.slice(0, needFor(this.mode)));
+    if (list.reduce((n, e) => n + (e.group?.length || 1), 0) >= 2) this.form(list);
   }
 
-  form(members) {
+  form(list) {
     const me = this.app.me();
-    const humans = members.map((x) => ({ id: x.id, name: x.name, elo: x.elo, char: x.char }));
+    const humans = [];
+    for (const { g, team } of this.pick(list).out) for (const x of g) humans.push({ id: x.id, name: x.name, elo: x.elo, char: x.char, ...(team >= 0 ? { team } : {}) });
     const payload = buildMatch({ mode: this.mode, humans, hostId: me.id, fillBots: true, botLevel: 'normal' });
     this.room.send('match', payload);
     this.accept(payload);
@@ -62,6 +82,8 @@ export class Matchmaker {
     if (!payload.players.some((p) => p.id === this.app.me().id)) return;
     this.done = true;
     this.cancel();
+    // Party members aren't in the queue room; the leader passes the match on.
+    this.app.party?.relayMatch(payload);
     this.onMatch(payload);
   }
 

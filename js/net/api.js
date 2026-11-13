@@ -148,10 +148,25 @@ export class Api {
   }
 
   async recordMatch(o) {
-    const { error } = await this.sb.rpc('record_match', {
+    const args = {
       p_match_id: o.matchId, p_mode: o.mode, p_map: o.map, p_ranked: o.ranked, p_online: o.online,
       p_result: o.result, p_kills: o.kills, p_deaths: o.deaths, p_headshots: o.headshots, p_score: o.score, p_elo_change: o.eloChange || 0,
-    });
+    };
+    // Per-match details need the newer database function; older databases just skip them.
+    if (o.details && this.detailsSupported !== false) {
+      const { error } = await this.sb.rpc('record_match', { ...args, p_details: o.details });
+      if (!error) { this.detailsSupported = true; return; }
+      if (error.code !== 'PGRST202') throw friendly(error);
+      this.detailsSupported = false;
+    }
+    const { error } = await this.sb.rpc('record_match', args);
     if (error) throw friendly(error);
+  }
+
+  // Recent history with details for the stats page.
+  async statsHistory(userId, limit = 100) {
+    const { data, error } = await this.sb.from('match_history').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(limit);
+    if (error) throw friendly(error);
+    return data;
   }
 }
