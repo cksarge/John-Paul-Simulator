@@ -280,6 +280,9 @@ export class Game {
     this.hostageView?.update(dt);
     this.training?.update(dt);
     this.pings?.update(dt);
+    // Lifts run on the shared round clock; spawn barriers hold until the round goes live.
+    this.world.clock = -this.state.time;
+    this.world.setBarriers(this.state.phase === 'buy' || this.state.phase === 'warmup');
     this.world.update(dt);
     if (this.isHost && RESPAWN_KINDS.has(this.mode.kind)) this.tickPropRespawn(dt);
     if (this.pendingLeave.size) this.tickPendingLeaves(dt);
@@ -1125,7 +1128,7 @@ export class Game {
     const eye = p.eye(), f = p.forward().setY(0).normalize();
     let best = null, bd = Infinity;
     for (const pr of this.world.props.values()) {
-      if (pr.ch !== 'D' && pr.ch !== 'A') continue;
+      if (pr.ch !== 'D' && pr.ch !== 'A' && pr.ch !== 'J') continue;
       const cx = (pr.x + 0.5) * CELL, cz = (pr.y + 0.5) * CELL;
       const dx = cx - eye.x, dz = cz - eye.z, dist = Math.hypot(dx, dz);
       if (dist > (pr.ch === 'D' ? 2.7 : 2.4)) continue;
@@ -1141,6 +1144,7 @@ export class Game {
     const pr = this.usableProp(p);
     if (!pr) return '';
     if (pr.ch === 'D') return `Press ${pad.label('use')} to ${pr.open ? 'close' : 'open'} the door`;
+    if (pr.ch === 'J') return `Press ${pad.label('use')} to ${this.gatesOf(pr).some((g) => g.open) ? 'close' : 'open'} the gate`;
     const wait = Math.ceil((p.resupplyAt || 0) - performance.now() / 1000);
     return wait > 0 ? `Ammo crate restocking · ${wait}s` : `Press ${pad.label('use')} to resupply ammo`;
   }
@@ -1149,6 +1153,7 @@ export class Game {
     const pr = this.usableProp(p);
     if (!pr) return;
     if (pr.ch === 'D') return this.request('door', { cell: [pr.x, pr.y] }, p);
+    if (pr.ch === 'J') return this.request('gate', { cell: [pr.x, pr.y] }, p);
     const now = performance.now() / 1000;
     if ((p.resupplyAt || 0) > now) return;
     let topped = false;
@@ -1174,28 +1179,52 @@ export class Game {
     this.broadcast('door', { cell, open });
   }
 
-  // A bullet or blade hit a solid: damage the barrel behind it, if any.
-  shootProp(p, point, normal, dmg) {
-    const cell = this.world.cellBehind(point, normal);
-    const pr = this.world.prop(cell[0], cell[1]);
-    if (pr && 'BWk'.includes(pr.ch) && !pr.broken) this.request('prop', { cell, d: Math.round(dmg) }, p);
+  gatesOf(sw) { return [...this.world.props.values()].filter((g) => g.ch === 'P' && g.link === sw); }
+
+  // Host only: a switch opens or closes all of its gates (unless someone is standing in one).
+  hostSwitch(p, cell) {
+    const sw = this.world.prop(cell[0], cell[1]);
+    if (!sw || sw.ch !== 'J' || !p.alive) return;
+    if (Math.hypot(p.pos.x - (sw.x + 0.5) * CELL, p.pos.z - (sw.y + 0.5) * CELL) > 3.2) return;
+    const now = performance.now();
+    if ((sw.busyUntil || 0) > now) return;
+    const gates = this.gatesOf(sw);
+    if (!gates.length) return;
+    const open = !gates.some((g) => g.open);
+    if (!open) for (const g of gates) for (const o of this.players.values()) {
+      if (o.alive && Math.abs(o.pos.x - (g.x + 0.5) * CELL) < 1 + o.radius && Math.abs(o.pos.z - (g.y + 0.5) * CELL) < 1 + o.radius) return;
+    }
+    sw.busyUntil = now + 1500;
+    for (const g of gates) this.broadcast('door', { cell: [g.x, g.y], open });
   }
 
-  // Host only: wood loses hp, shows damage in stages and splinters at zero.
+  // A bullet or blade hit a solid: damage the barrel, wood, cracked wall or grate it hit, if any.
+  shootProp(p, point, normal, dmg) {
+    const W = this.world, cell = W.cellBehind(point, normal);
+    // Hits on the underside or top of a grate catwalk.
+    const above = W.prop(Math.floor(point.x / CELL), Math.floor(point.z / CELL), true) || W.prop(cell[0], cell[1], true);
+    if (above && !above.broken && point.y > 3.6) return this.request('prop', { cell: [above.x, above.y], up: 1, d: Math.round(dmg) }, p);
+    const pr = W.prop(cell[0], cell[1]);
+    if (pr && 'BWkQ'.includes(pr.ch) && !pr.broken) this.request('prop', { cell, d: Math.round(dmg) }, p);
+  }
+
+  // Host only: wood (and cracked walls and grates) lose hp, show damage in stages and break at zero.
   damageWood(pr, dmg) {
     if (pr.broken) return;
     pr.hp -= dmg;
-    if (pr.hp <= 0) return this.broadcast('prop', { cell: [pr.x, pr.y], kind: 'wood' });
+    const up = pr.up ? 1 : 0;
+    if (pr.hp <= 0) return this.broadcast('prop', { cell: [pr.x, pr.y], up, kind: pr.ch === 'Q' ? 'wall' : pr.ch === 'g' ? 'grate' : 'wood' });
     const max = WOOD_HP[pr.ch], st = pr.hp < max * 0.34 ? 2 : pr.hp < max * 0.67 ? 1 : 0;
-    if (st !== pr.stage) this.broadcast('prop', { cell: [pr.x, pr.y], stage: st });
+    if (st !== pr.stage) this.broadcast('prop', { cell: [pr.x, pr.y], up, stage: st });
   }
 
-  // Host only: explosions chew through nearby wood.
+  // Host only: explosions chew through nearby wood, cracked walls and grates.
   blastWood(pos, r, dmg) {
     for (const pr of this.world.props.values()) {
-      if ((pr.ch !== 'W' && pr.ch !== 'k') || pr.broken) continue;
-      const d = Math.hypot(pos.x - (pr.x + 0.5) * CELL, pos.z - (pr.y + 0.5) * CELL);
-      if (d < r + 1) this.damageWood(pr, dmg * 2.2 * (1 - d / (r + 1)));
+      if (!'WkQg'.includes(pr.ch) || pr.broken) continue;
+      const d = Math.hypot(pos.x - (pr.x + 0.5) * CELL, pos.z - (pr.y + 0.5) * CELL, pr.up ? pos.y - 3.9 : 0);
+      const mult = pr.ch === 'Q' ? 4 : 2.2;
+      if (d < r + 1) this.damageWood(pr, dmg * mult * (1 - d / (r + 1)));
     }
   }
 
@@ -1222,28 +1251,41 @@ export class Game {
   }
 
   hostPropRequest(p, d) {
-    const pr = this.world.prop(d.cell?.[0], d.cell?.[1]);
+    const pr = this.world.prop(d.cell?.[0], d.cell?.[1], !!d.up);
     if (!pr || pr.broken) return;
     if (d.glass && pr.ch === 'G') this.broadcast('prop', { cell: d.cell, kind: 'glass' });
     else if (pr.ch === 'B' && d.d > 0) {
       pr.hp -= Math.min(200, d.d);
       if (pr.hp <= 0) this.broadcast('prop', { cell: d.cell, kind: 'barrel', by: p.id });
-    } else if ((pr.ch === 'W' || pr.ch === 'k') && d.d > 0) this.damageWood(pr, Math.min(200, d.d));
+    } else if ((pr.ch === 'W' || pr.ch === 'k' || pr.ch === 'g') && d.d > 0) this.damageWood(pr, Math.min(200, d.d));
+    // Bullets only chip at cracked walls; explosives are what bring them down.
+    else if (pr.ch === 'Q' && d.d > 0) this.damageWood(pr, Math.min(200, d.d) * 0.25);
   }
 
   applyPropBreak(d) {
     if (d.stage !== undefined) {
-      this.world.setStage(d.cell[0], d.cell[1], d.stage);
+      this.world.setStage(d.cell[0], d.cell[1], d.stage, !!d.up);
       sfx.wood(new THREE.Vector3((d.cell[0] + 0.5) * CELL, 1, (d.cell[1] + 0.5) * CELL), true);
       return;
     }
     if (d.restore) {
-      for (const [x, y] of d.restore) { const pr = this.world.prop(x, y); if (pr) this.world.restoreProp(pr); }
+      for (const [x, y, up] of d.restore) { const pr = this.world.prop(x, y, !!up); if (pr) this.world.restoreProp(pr); }
       return;
     }
-    const pr = this.world.breakProp(d.cell[0], d.cell[1]);
+    const pr = this.world.breakProp(d.cell[0], d.cell[1], !!d.up);
     if (!pr) return;
     const pos = new THREE.Vector3((pr.x + 0.5) * CELL, 0, (pr.y + 0.5) * CELL);
+    if (pr.ch === 'Q') {
+      this.effects.splinters(pos.clone().setY(1.5), 3);
+      this.effects.smoke(pos.clone().setY(0.2), 1.6, 2.5);
+      sfx.explosion(pos);
+      return;
+    }
+    if (pr.ch === 'g') {
+      this.effects.splinters(pos.setY(3.9), 2);
+      sfx.glass(pos);
+      return;
+    }
     if (pr.ch === 'G') {
       this.effects.shatter(pos.setY(1.5));
       sfx.glass(pos);
@@ -1276,7 +1318,7 @@ export class Game {
       if (!pr.broken) continue;
       const cx = (pr.x + 0.5) * CELL, cz = (pr.y + 0.5) * CELL;
       if ([...this.players.values()].some((o) => o.alive && Math.abs(o.pos.x - cx) < 1.6 && Math.abs(o.pos.z - cz) < 1.6)) continue;
-      restore.push([pr.x, pr.y]);
+      restore.push([pr.x, pr.y, pr.up ? 1 : 0]);
     }
     if (restore.length) this.broadcast('prop', { restore });
   }
@@ -1315,6 +1357,7 @@ export class Game {
     } else if (type === 'buy') this.hostBuy(p, data.item);
     else if (type === 'fall') { if (p.alive && data.d > 0 && data.d < 250) this.hostDamage(p, p, data.d, 'legs', 'fall'); }
     else if (type === 'door') this.hostToggleDoor(p, data.cell);
+    else if (type === 'gate') this.hostSwitch(p, data.cell);
     else if (type === 'prop') this.hostPropRequest(p, data);
     else if (type === 'plant') this.rules.onPlant(p, data.pos);
     else if (type === 'defuse') this.rules.onDefuse(p);

@@ -136,6 +136,7 @@ export class ReplayViewer {
     this.processEvents(this.t, true);
     this.applyPlayers(step || 0.0001);
     this.applyNades();
+    this.world.clock = this.t;
     this.world.update(step);
     if (step) this.effects.update(step);
     const target = this.targetState();
@@ -181,9 +182,9 @@ export class ReplayViewer {
     const W = this.world;
     if (type === 'door') W.setDoor(d.cell, d.open);
     else if (type === 'prop') {
-      if (d.restore) for (const [x, y] of d.restore) { const pr = W.prop(x, y); if (pr) W.restoreProp(pr); }
-      else if (d.stage !== undefined) W.setStage(d.cell[0], d.cell[1], d.stage);
-      else W.breakProp(d.cell[0], d.cell[1]);
+      if (d.restore) for (const [x, y, up] of d.restore) { const pr = W.prop(x, y, !!up); if (pr) W.restoreProp(pr); }
+      else if (d.stage !== undefined) W.setStage(d.cell[0], d.cell[1], d.stage, !!d.up);
+      else W.breakProp(d.cell[0], d.cell[1], !!d.up);
     } else if (type === 'round') {
       if (!SOLO_KINDS.has(this.mode?.kind) && this.mode?.kind !== 'tdm') W.resetProps();
       this.scores = d.scores || this.scores;

@@ -13,11 +13,18 @@ export const CELL = 2;
 // A second, upper layer (def.upper, see UPPER in grid.js) holds bridges, grate catwalks and tunnel
 // roofs: a slab from UL to UT over a cell whose ground stays open underneath. ('=' in the ground
 // layer is the older way to write a 4 m bridge and still works.)
-const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6, 'D': 6, 'G': 6, 'B': 1.2, 'A': 1.0, 'W': 3.0, 'k': 1.0 };
-export const PROP_CHARS = new Set(['D', 'G', 'B', 'A', 'W', 'k']);
-export const WOOD_HP = { W: 240, k: 120, g: 160 };
-// Cells you may never mantle onto (walls, doors, glass).
-const NO_MANTLE = new Set(['#', 'X', 'D', 'G']);
+// 'Q' cracked wall: solid, but explosives (and a lot of bullets) knock it down.
+// 'P' heavy gate, opened and closed by the nearest 'J' switch (press E at the switch).
+// 'E' elevator: a lift that rides between the floor and the tallest platform beside it.
+// 'Y' spawn barrier: holds everyone in place until the round goes live, then switches off.
+const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6, 'D': 6, 'G': 6, 'B': 1.2, 'A': 1.0, 'W': 3.0, 'k': 1.0, 'Q': 6, 'P': 6, 'J': 1.3, 'Y': 0 };
+export const PROP_CHARS = new Set(['D', 'G', 'B', 'A', 'W', 'k', 'Q', 'P', 'J', 'E']);
+export const WOOD_HP = { W: 240, k: 120, g: 160, Q: 420 };
+// Cells you may never mantle onto (walls, doors, glass, gates).
+const NO_MANTLE = new Set(['#', 'X', 'D', 'G', 'Q', 'P', 'Y']);
+// Lifts: seconds at the bottom, going up, at the top, coming down.
+const LIFT = { wait: 3, move: 2.5 };
+const LIFT_PERIOD = 2 * (LIFT.wait + LIFT.move);
 // Standing height of a body, for walking under bridges.
 const BODY_H = 1.8;
 const RAIL_BITS = [[1, 0, 1], [-1, 0, 2], [0, 1, 4], [0, -1, 8]];
@@ -72,6 +79,24 @@ export class World {
       if (u.grate) this.props.set('u' + x + ',' + y, { x, y, ch: 'g', up: true, open: false, broken: false, hp: WOOD_HP.g, stage: 0, anim: 0 });
     }
     for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) this.updateRails(x, y);
+
+    // Lifts ride up to the tallest platform beside them (4 m if there's none).
+    this.lifts = [];
+    for (const p of this.props.values()) if (p.ch === 'E') {
+      let top = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) top = Math.max(top, platformH(g[p.y + dy]?.[p.x + dx]), this.UT[(p.y + dy) * def.w + p.x + dx] || 0);
+      p.top = top || 4; p.h = 0;
+      this.lifts.push(p);
+    }
+    this.clock = 0;
+    // Each gate answers to the nearest switch.
+    const switches = [...this.props.values()].filter((p) => p.ch === 'J');
+    for (const p of this.props.values()) if (p.ch === 'P' && switches.length) {
+      p.link = switches.reduce((a, b) => (Math.hypot(b.x - p.x, b.y - p.y) < Math.hypot(a.x - p.x, a.y - p.y) ? b : a));
+    }
+    this.barrierCells = [];
+    for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) if (g[y][x] === 'Y') this.barrierCells.push([x, y]);
+    this.barriersOn = false;
 
     // Bomb sites: one rectangle [x0, y0, x1, y1] or a list of them (any shape). x0..z1 is the bounding box.
     this.sites = {};
@@ -144,50 +169,73 @@ export class World {
     this.RH[y * this.w + x] = ch === 'G' ? 0 : h;
   }
 
+  // Cells that aren't real floor even though nothing stands on them (spawn barriers).
+  blocked(x, y) { return this.chars[y]?.[x] === 'Y'; }
+
+  // Spawn barriers: solid to bodies (not bullets) while on.
+  setBarriers(on) {
+    if (on === this.barriersOn) return;
+    this.barriersOn = on;
+    for (const [x, y] of this.barrierCells) this.H[y * this.w + x] = on ? 6 : 0;
+    if (this.barrierView) this.barrierView.visible = on;
+  }
+
+  // Lifts follow a fixed cycle on the shared round clock, so every player sees the same thing.
+  liftHeight(p, t = this.clock) {
+    const ph = ((t % LIFT_PERIOD) + LIFT_PERIOD) % LIFT_PERIOD, { wait, move } = LIFT;
+    const k = ph < wait ? 0 : ph < wait + move ? (ph - wait) / move : ph < 2 * wait + move ? 1 : 1 - (ph - 2 * wait - move) / move;
+    return p.top * (0.5 - 0.5 * Math.cos(Math.PI * k));
+  }
+  isLift(cx, cy) { return this.chars[cy]?.[cx] === 'E'; }
+
   // ───────────── interactive props ─────────────
-  prop(x, y) { return this.props.get(x + ',' + y) || null; }
+  // Props on the upper layer (breakable grates) are keyed separately from the ground cell below.
+  prop(x, y, up = false) { return this.props.get((up ? 'u' : '') + x + ',' + y) || null; }
 
   setDoor([x, y], open) {
     const p = this.prop(x, y);
-    if (!p || p.ch !== 'D') return;
+    if (!p || (p.ch !== 'D' && p.ch !== 'P')) return;
     p.open = open;
-    this.setChar(x, y, open ? '.' : 'D');
+    this.setChar(x, y, open ? '.' : p.ch);
+    p.view?.setOpen?.(open);
   }
 
-  breakProp(x, y) {
-    const p = this.prop(x, y);
-    if (!p || p.broken || !'GBWk'.includes(p.ch)) return null;
+  breakProp(x, y, up = false) {
+    const p = this.prop(x, y, up);
+    if (!p || p.broken || !'GBWkQg'.includes(p.ch)) return null;
     p.broken = true;
-    this.setChar(x, y, '.');
+    if (p.up) { this.setUpper(x, y, '.'); this.railsAround(x, y); } else this.setChar(x, y, '.');
     p.view?.setBroken(true);
     return p;
   }
 
   restoreProp(p) {
-    if (p.ch === 'D') { p.open = false; this.setChar(p.x, p.y, 'D'); return; }
+    if (p.ch === 'D' || p.ch === 'P') { p.open = false; this.setChar(p.x, p.y, p.ch); p.view?.setOpen?.(false); return; }
     if (!p.broken && !p.stage) return;
     p.broken = false; p.hp = WOOD_HP[p.ch] || 60; p.stage = 0;
-    this.setChar(p.x, p.y, p.ch);
+    if (p.up) { this.setUpper(p.x, p.y, p.ch); this.railsAround(p.x, p.y); } else this.setChar(p.x, p.y, p.ch);
     p.view?.setBroken(false);
     p.view?.setStage?.(0);
   }
 
+  railsAround(x, y) { for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (this.up[y + dy]?.[x + dx]) this.updateRails(x + dx, y + dy); }
+
   resetProps() { for (const p of this.props.values()) this.restoreProp(p); }
 
-  propState() { return [...this.props.values()].filter((p) => p.open || p.broken || p.stage).map((p) => [p.x, p.y, p.open ? 1 : 0, p.broken ? 1 : 0, p.stage || 0]); }
+  propState() { return [...this.props.values()].filter((p) => p.open || p.broken || p.stage).map((p) => [p.x, p.y, p.open ? 1 : 0, p.broken ? 1 : 0, p.stage || 0, p.up ? 1 : 0]); }
 
   applyPropState(list) {
     this.resetProps();
-    for (const [x, y, open, broken, stage] of list || []) {
+    for (const [x, y, open, broken, stage, up] of list || []) {
       if (open) this.setDoor([x, y], true);
-      if (broken) this.breakProp(x, y);
-      else if (stage) this.setStage(x, y, stage);
+      if (broken) this.breakProp(x, y, !!up);
+      else if (stage) this.setStage(x, y, stage, !!up);
     }
   }
 
   // Visible damage on wooden props (0 intact … 2 badly damaged).
-  setStage(x, y, stage) {
-    const p = this.prop(x, y);
+  setStage(x, y, stage, up = false) {
+    const p = this.prop(x, y, up);
     if (!p || p.broken) return;
     p.stage = stage;
     p.view?.setStage?.(stage);
@@ -230,6 +278,10 @@ export class World {
   }
 
   update(dt) {
+    for (const p of this.lifts) {
+      p.h = this.liftHeight(p);
+      this.H[p.y * this.w + p.x] = this.RH[p.y * this.w + p.x] = p.h;
+    }
     for (const p of this.props.values()) p.view?.update?.(dt, p);
     this.decor?.update(dt);
   }
@@ -249,7 +301,7 @@ export class World {
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
       const h = this.cellH(cx, cz);
-      if (h > y + 0.001 && h > top) top = h;
+      if (h > y + (this.isLift(cx, cz) ? 0.4 : 0.001) && h > top) top = h;
       // An overhead slab blocks only bodies that overlap it.
       const i = cz * this.w + cx, ut = this.UT[i] || 0;
       if (ut && y < ut - 0.001 && y + bh > this.UL[i] && ut > top) top = ut;
@@ -264,7 +316,7 @@ export class World {
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
       const h = this.cellH(cx, cz);
-      if (h <= y + 0.05 && h > f) f = h;
+      if (h <= y + (this.isLift(cx, cz) ? 0.4 : 0.05) && h > f) f = h;
       const ut = this.UT[cz * this.w + cx] || 0;
       if (ut && ut <= y + 0.05 && ut > f) f = ut;
     }
@@ -405,6 +457,7 @@ export class World {
     const ch = this.chars[cy][cx];
     if (ch === '.' || ch === 'L' || isPlatform(ch)) return this.H[cy * this.w + cx];
     if (ch === 'D') return 0; // bots open doors on their way through
+    if (ch === 'Y' || ch === 'E') return 0; // barriers drop at the start; lifts are boarded at the bottom
     return null;
   }
 
@@ -445,12 +498,13 @@ export class World {
       closed[cur] = 1;
       const cell = cur % N, cx = cell % W, cy = (cell / W) | 0, ch = cur >= N ? this.UT[cell] : this.navH(cx, cy);
       const onLadder = this.chars[cy][cx] === 'L', rail = cur >= N ? this.rails[cell] : 0;
+      const lift = cur < N && this.isLift(cx, cy) ? this.prop(cx, cy) : null;
       for (const [ddx, ddy, cost] of dirs) {
         if (rail && ((ddx > 0 && rail & 1) || (ddx < 0 && rail & 2) || (ddy > 0 && rail & 4) || (ddy < 0 && rail & 8))) continue;
         const nx = cx + ddx, ny = cy + ddy, nh = this.navInto(ch, nx, ny);
         if (nh === null) continue;
         // Up: steps, or a ladder straight onto its platform. Down: any drop (bots accept a little fall damage).
-        const up = nh - ch, ladderUp = onLadder && !(ddx && ddy) && up > 0.55;
+        const up = nh - ch, ladderUp = (onLadder || (lift && nh <= lift.top + 0.01)) && !(ddx && ddy) && up > 0.55;
         if (up > 0.55 && !ladderUp) continue;
         if (ddx && ddy && Math.abs(up) > 0.55) continue;
         if (ddx && ddy) {
@@ -511,7 +565,7 @@ export class World {
     let boxIndex = 0;
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
-      if (ch === '.' || ch === 'L' || seen[y * this.w + x]) continue;
+      if (ch === '.' || ch === 'L' || ch === 'Y' || seen[y * this.w + x]) continue;
       let x1 = x;
       while (x1 + 1 < this.w && this.chars[y][x1 + 1] === ch && !seen[y * this.w + x1 + 1]) x1++;
       let y1 = y;
@@ -534,6 +588,15 @@ export class World {
         else for (let xx = x; xx <= x1; xx++) box(xx, y, xx, y1);
       } else box(x, y, x1, y1);
     }
+    // Spawn barriers: glowing panels, shown while they're up.
+    this.barrierView = new THREE.Group();
+    for (const [x, y] of this.barrierCells) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(CELL, 3, CELL), getBarrierMat());
+      m.position.set((x + 0.5) * CELL, 1.5, (y + 0.5) * CELL);
+      this.barrierView.add(m);
+    }
+    this.barrierView.visible = this.barriersOn;
+    group.add(this.barrierView);
     // Upper layer: bridge decks and tunnel roofs, greedy-merged per kind (grates are props above).
     const useen = new Uint8Array(this.w * this.h);
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
@@ -656,6 +719,11 @@ function addBox(b, x0, y0, z0, x1, y1, z1, name, ch) {
     }
     b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
+}
+
+let barrierMat;
+function getBarrierMat() {
+  return (barrierMat ||= new THREE.MeshBasicMaterial({ color: 0x4ea3ff, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
 }
 
 function siteDecal(letter, s) {

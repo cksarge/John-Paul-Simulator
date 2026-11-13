@@ -241,6 +241,19 @@ function propMat(key) {
     }),
     handle: () => new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.3, metalness: 0.9 }),
     lampOn: () => new THREE.MeshBasicMaterial({ color: 0x60ff90, toneMapped: false }),
+    lampRed: () => new THREE.MeshBasicMaterial({ color: 0xff5040, toneMapped: false }),
+    steel: () => new THREE.MeshStandardMaterial({ color: 0x59606a, roughness: 0.45, metalness: 0.8 }),
+    hazard: () => new THREE.MeshStandardMaterial({
+      map: canvasTex(128, 32, (g) => { g.fillStyle = '#e0b030'; g.fillRect(0, 0, 128, 32); g.fillStyle = '#1a1a1a'; for (let i = -2; i < 10; i++) { g.beginPath(); g.moveTo(i * 16, 32); g.lineTo(i * 16 + 8, 32); g.lineTo(i * 16 + 24, 0); g.lineTo(i * 16 + 16, 0); g.fill(); } }),
+      roughness: 0.6,
+    }),
+    crack: () => new THREE.MeshStandardMaterial({
+      map: canvasTex(256, 256, (g) => {
+        g.clearRect(0, 0, 256, 256); g.strokeStyle = 'rgba(20,18,16,.9)'; g.lineCap = 'round';
+        const r = seeded(29);
+        for (let k = 0; k < 7; k++) { let x = 128, y = 128; g.lineWidth = 4; g.beginPath(); g.moveTo(x, y); for (let i = 0; i < 7; i++) { x += (r() - 0.5) * 60; y += (r() - 0.5) * 60; g.lineTo(x, y); g.lineWidth = Math.max(1, 4 - i * 0.5); } g.stroke(); }
+      }), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, roughness: 1,
+    }),
   };
   propMats[key] = make[key]();
   return propMats[key];
@@ -263,6 +276,76 @@ export function buildProp(world, p, theme) {
   const alongX = solid(p.x - 1, p.y) || solid(p.x + 1, p.y) ? true : !(solid(p.x, p.y - 1) || solid(p.x, p.y + 1));
   const wallMat = getMaterial(theme.wall);
   const view = { root, setBroken() {}, update() {} };
+
+  if (p.ch === 'Q') {
+    // Cracked wall: a full-height block that cracks, then collapses into a rubble heap.
+    const wall = mesh(new THREE.BoxGeometry(CELL, 6, CELL), wallMat, 0, 3, 0);
+    const cracks = [];
+    for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const c = mesh(new THREE.PlaneGeometry(1.9, 1.9), propMat('crack'), sx * (CELL / 2 + 0.01), 1.3, sz * (CELL / 2 + 0.01), false);
+      c.rotation.y = sx ? (sx > 0 ? Math.PI / 2 : -Math.PI / 2) : sz > 0 ? 0 : Math.PI;
+      c.visible = false; cracks.push(c);
+    }
+    const rubble = new THREE.Group();
+    const r = seeded(p.x * 31 + p.y * 7);
+    for (let i = 0; i < 9; i++) {
+      const sz = 0.3 + r() * 0.5, m = mesh(new THREE.BoxGeometry(sz, sz * 0.6, sz), wallMat, (r() - 0.5) * 1.6, sz * 0.3, (r() - 0.5) * 1.6);
+      m.rotation.set(r() * 0.5, r() * 6, r() * 0.5); rubble.add(m);
+    }
+    rubble.visible = false;
+    root.add(wall, rubble, ...cracks);
+    view.setStage = (n) => { cracks.forEach((c, i) => { c.visible = n >= 1; c.scale.setScalar(n >= 2 ? 1.5 : 1); c.position.y = n >= 2 ? 1.6 + (i % 2) * 0.6 : 1.3; }); };
+    view.setBroken = (b) => { wall.visible = !b; rubble.visible = b; cracks.forEach((c) => { c.visible = !b && c.visible; }); };
+    return view;
+  }
+
+  if (p.ch === 'P') {
+    // Heavy gate: a steel shutter that rolls up into the header when its switch is thrown.
+    const top = 3.2;
+    root.add(mesh(new THREE.BoxGeometry(CELL, 6 - top, CELL), wallMat, 0, top + (6 - top) / 2, 0));
+    const shutter = new THREE.Group();
+    shutter.add(mesh(alongX ? new THREE.BoxGeometry(CELL, top, 0.16) : new THREE.BoxGeometry(0.16, top, CELL), propMat('steel'), 0, top / 2, 0));
+    const stripe = mesh(alongX ? new THREE.BoxGeometry(CELL, 0.25, 0.18) : new THREE.BoxGeometry(0.18, 0.25, CELL), propMat('hazard'), 0, 0.2, 0);
+    shutter.add(stripe);
+    root.add(shutter);
+    let open = 0, target = 0;
+    view.setOpen = (o) => { target = o ? 1 : 0; };
+    view.update = (dt) => { open += Math.sign(target - open) * Math.min(Math.abs(target - open), dt * 1.4); shutter.position.y = open * (top - 0.15); shutter.scale.y = 1 - open * 0.95; };
+    return view;
+  }
+
+  if (p.ch === 'J') {
+    // Gate switch: a post with a lever and a lamp (green while its gates are open).
+    root.add(mesh(new THREE.BoxGeometry(0.35, 1.3, 0.35), propMat('steel'), 0, 0.65, 0));
+    const box = mesh(new THREE.BoxGeometry(0.5, 0.45, 0.5), propMat('hazard'), 0, 1.1, 0);
+    const lever = mesh(new THREE.BoxGeometry(0.06, 0.5, 0.06), propMat('handle'), 0.32, 1.25, 0);
+    const lamp = mesh(new THREE.SphereGeometry(0.07, 10, 8), propMat('lampRed'), 0, 1.4, 0, false);
+    root.add(box, lever, lamp);
+    view.update = () => {
+      const open = [...world.props.values()].some((g) => g.ch === 'P' && g.link === p && g.open);
+      lamp.material = propMat(open ? 'lampOn' : 'lampRed');
+      lever.rotation.z = open ? -0.7 : 0.7;
+    };
+    return view;
+  }
+
+  if (p.ch === 'E') {
+    // Lift: a platform with hazard edges on a scissor post, riding with the world's lift height.
+    const deck = new THREE.Group();
+    deck.add(mesh(new THREE.BoxGeometry(CELL - 0.04, 0.2, CELL - 0.04), getMaterial(theme.platform || 'grate'), 0, -0.1, 0));
+    for (const s of [-1, 1]) {
+      deck.add(mesh(new THREE.BoxGeometry(CELL, 0.06, 0.12), propMat('hazard'), 0, 0.02, s * (CELL / 2 - 0.06)));
+      deck.add(mesh(new THREE.BoxGeometry(0.12, 0.06, CELL), propMat('hazard'), s * (CELL / 2 - 0.06), 0.02, 0));
+    }
+    const post = mesh(new THREE.BoxGeometry(0.3, 1, 0.3), propMat('steel'), 0, 0.5, 0);
+    root.add(deck, post);
+    view.update = (dt, pr) => {
+      const h = Math.max(0.02, pr.h || 0);
+      deck.position.y = h;
+      post.scale.y = Math.max(0.01, h - 0.2); post.position.y = Math.max(0.01, h - 0.2) / 2;
+    };
+    return view;
+  }
 
   if (p.ch === 'g') {
     // Breakable grate catwalk overhead: a thin grating in a steel frame that cracks, then drops out.
