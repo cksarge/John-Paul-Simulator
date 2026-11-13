@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { World, CELL } from '../engine/world.js';
+import { World, CELL, WOOD_HP } from '../engine/world.js';
 import { Effects } from '../engine/effects.js';
 import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
@@ -517,12 +517,55 @@ export class Game {
       const add = Math.min(0.9, max) - cur;
       if (add > 0) { const acc = Math.min(add, 12 * max * dt); v.x += wish.x * acc; v.z += wish.z * acc; }
     }
+    if (p.mantle) return this.stepMantle(p, dt);
+    if (p.onGround) p.groundY = p.pos.y;
+    // Ladders: push toward the platform to climb; otherwise slide down slowly.
+    const lad = this.world.ladderAt(p.pos.x, p.pos.z);
+    p.climbing = false;
+    if (lad && p.pos.y < lad.top - 0.02) {
+      if (wish.x * lad.dx + wish.z * lad.dz > 0.4) { p.climbing = true; v.y = 3.6 + 20 * dt; p.onGround = false; }
+      else if (!p.onGround) v.y = Math.max(v.y, -3);
+    }
+    // Mantling: in the air, pushing at a ledge within reach pulls you up onto it.
+    if (!p.onGround && !p.climbing && wish.lengthSq() > 0 && v.y < 5 && this.tryMantle(p, wish)) return;
+    const wasGround = p.onGround;
     this.world.move(p, dt);
+    if (!p.onGround) p.airVy = v.y;
+    else {
+      // Landing hard hurts: anything over ~3 m.
+      if (!wasGround && p.airVy < -11.5 && !p.climbing && !lad) this.fallDamage(p, (-p.airVy - 11.5) * 9);
+      p.airVy = 0;
+    }
     const sp = Math.hypot(v.x, v.z);
     if (p.onGround && sp > 3.6 && !walk && !crouch) {
       p.stepDist += sp * dt;
       if (p.stepDist > 2.4) { p.stepDist = 0; sfx.step(p.isLocal ? null : p.pos, p.isLocal ? 0.6 : 1); }
     }
+  }
+
+  tryMantle(p, wish) {
+    const W = this.world, fx = p.pos.x + wish.x * 0.55, fz = p.pos.z + wish.z * 0.55;
+    const top = W.blockingTop(fx, p.pos.y, fz, p.radius);
+    const from = p.groundY ?? p.pos.y;
+    if (top < 0 || top - p.pos.y < 0.45 || top - p.pos.y > 1.3 || top - from > 2.15) return false;
+    if (!W.canMantle(fx, fz) || W.blockingTop(fx, top, fz, p.radius) >= 0) return false;
+    p.mantle = { from: p.pos.clone(), to: new THREE.Vector3(fx, top, fz), t: 0 };
+    p.vel.set(0, 0, 0);
+    if (p.isLocal) sfx.land(null);
+    return true;
+  }
+
+  stepMantle(p, dt) {
+    const m = p.mantle;
+    m.t = Math.min(1, m.t + dt / 0.32);
+    const up = 1 - Math.pow(1 - Math.min(1, m.t * 1.6), 2), fwd = Math.max(0, (m.t - 0.35) / 0.65);
+    p.pos.set(m.from.x + (m.to.x - m.from.x) * fwd, m.from.y + (m.to.y + 0.02 - m.from.y) * up, m.from.z + (m.to.z - m.from.z) * fwd);
+    if (m.t >= 1) { p.pos.copy(m.to); p.mantle = null; p.onGround = true; p.airVy = 0; }
+  }
+
+  fallDamage(p, d) {
+    if (p.owner !== this.localId || d < 1) return;
+    this.request('fall', { d: Math.round(d) }, p);
   }
 
   // ───────────────────────── combat ─────────────────────────
@@ -565,8 +608,8 @@ export class Game {
     const spread = spreadFor(p);
     const dmgBy = new Map();
     const shots = [];
-    const addHit = (victim, part, dist) => {
-      const d = bulletDamage(w, part, dist);
+    const addHit = (victim, part, dist, mult = 1) => {
+      const d = bulletDamage(w, part, dist) * mult;
       const prev = dmgBy.get(victim) || { d: 0, part: 'legs' };
       prev.d += d;
       if (part === 'head' || (part === 'body' && prev.part === 'legs')) prev.part = part;
@@ -597,6 +640,15 @@ export class Game {
         this.effects.impact(tr.end, tr.normal);
         this.shootProp(p, tr.end, tr.normal, w.damage);
         shots.push([+tr.end.x.toFixed(2), +tr.end.y.toFixed(2), +tr.end.z.toFixed(2), 0, tr.normal.x, tr.normal.y, tr.normal.z]);
+        // Wood doesn't stop bullets: carry on out the far side at reduced damage (one layer only).
+        const pen = this.penetrate(p, tr, dir);
+        if (pen) {
+          if (pen.victim) {
+            addHit(pen.victim, pen.part, tr.dist + pen.dist, pen.mult);
+            this.effects.impact(pen.end, pen.normal, { blood: true });
+            shots.push([+pen.end.x.toFixed(2), +pen.end.y.toFixed(2), +pen.end.z.toFixed(2), 1]);
+          } else if (pen.normal) this.effects.impact(pen.end, pen.normal);
+        }
       } else shots.push([+tr.end.x.toFixed(1), +tr.end.y.toFixed(1), +tr.end.z.toFixed(1), 2]);
       if (i < 3 && !w.silent) this.effects.tracer(this.muzzlePos(p, isLocal), tr.end);
     }
@@ -608,6 +660,19 @@ export class Game {
     this.recoil(p, w, isLocal);
     if (isLocal && w.type === 'sniper' && !w.keepScope) p.ws.scope = 0;
     this.queueShot(p, w.id, shots);
+  }
+
+  // Continues a bullet through a wooden barricade or crate it just hit.
+  penetrate(p, tr, dir) {
+    const W = this.world, [cx, cy] = W.cellBehind(tr.end, tr.normal), pr = W.prop(cx, cy);
+    if (!pr || pr.broken || (pr.ch !== 'W' && pr.ch !== 'k')) return null;
+    const exit = tr.end.clone();
+    for (let i = 0; i < 40; i++) {
+      exit.addScaledVector(dir, 0.1);
+      if (Math.floor(exit.x / CELL) !== cx || Math.floor(exit.z / CELL) !== cy || exit.y > W.rayH(cx, cy)) break;
+    }
+    const tr2 = traceBullet(this, p, exit.addScaledVector(dir, 0.02), dir, Math.max(1, 120 - tr.dist));
+    return { ...tr2, mult: pr.ch === 'W' ? 0.5 : 0.65 };
   }
 
   recoil(p, w, isLocal) {
@@ -857,6 +922,7 @@ export class Game {
     if (this.isHost) {
       this.blastDamage(pos, g, this.players.get(n.id), n.w || n.kind);
       this.chainBarrels(pos, g.radius, n.id);
+      this.blastWood(pos, g.radius, g.damage);
     }
   }
 
@@ -996,7 +1062,25 @@ export class Game {
   shootProp(p, point, normal, dmg) {
     const cell = this.world.cellBehind(point, normal);
     const pr = this.world.prop(cell[0], cell[1]);
-    if (pr && pr.ch === 'B' && !pr.broken) this.request('prop', { cell, d: Math.round(dmg) }, p);
+    if (pr && 'BWk'.includes(pr.ch) && !pr.broken) this.request('prop', { cell, d: Math.round(dmg) }, p);
+  }
+
+  // Host only: wood loses hp, shows damage in stages and splinters at zero.
+  damageWood(pr, dmg) {
+    if (pr.broken) return;
+    pr.hp -= dmg;
+    if (pr.hp <= 0) return this.broadcast('prop', { cell: [pr.x, pr.y], kind: 'wood' });
+    const max = WOOD_HP[pr.ch], st = pr.hp < max * 0.34 ? 2 : pr.hp < max * 0.67 ? 1 : 0;
+    if (st !== pr.stage) this.broadcast('prop', { cell: [pr.x, pr.y], stage: st });
+  }
+
+  // Host only: explosions chew through nearby wood.
+  blastWood(pos, r, dmg) {
+    for (const pr of this.world.props.values()) {
+      if ((pr.ch !== 'W' && pr.ch !== 'k') || pr.broken) continue;
+      const d = Math.hypot(pos.x - (pr.x + 0.5) * CELL, pos.z - (pr.y + 0.5) * CELL);
+      if (d < r + 1) this.damageWood(pr, dmg * 2.2 * (1 - d / (r + 1)));
+    }
   }
 
   breakGlassAlong(a, b, p) {
@@ -1028,10 +1112,15 @@ export class Game {
     else if (pr.ch === 'B' && d.d > 0) {
       pr.hp -= Math.min(200, d.d);
       if (pr.hp <= 0) this.broadcast('prop', { cell: d.cell, kind: 'barrel', by: p.id });
-    }
+    } else if ((pr.ch === 'W' || pr.ch === 'k') && d.d > 0) this.damageWood(pr, Math.min(200, d.d));
   }
 
   applyPropBreak(d) {
+    if (d.stage !== undefined) {
+      this.world.setStage(d.cell[0], d.cell[1], d.stage);
+      sfx.wood(new THREE.Vector3((d.cell[0] + 0.5) * CELL, 1, (d.cell[1] + 0.5) * CELL), true);
+      return;
+    }
     if (d.restore) {
       for (const [x, y] of d.restore) { const pr = this.world.prop(x, y); if (pr) this.world.restoreProp(pr); }
       return;
@@ -1044,6 +1133,11 @@ export class Game {
       sfx.glass(pos);
       return;
     }
+    if (pr.ch === 'W' || pr.ch === 'k') {
+      this.effects.splinters(pos.setY(pr.ch === 'W' ? 1.4 : 0.6), pr.ch === 'W' ? 2.6 : 1);
+      sfx.wood(pos, false);
+      return;
+    }
     pos.y = 0.7;
     this.effects.explosion(pos);
     this.effects.explosion(pos.clone().setY(1.6));
@@ -1052,6 +1146,7 @@ export class Game {
       this.blastDamage(pos, { damage: 120, radius: 5.5 }, this.players.get(d.by) || null, 'barrel');
       this.chainBarrels(pos, 5.5, d.by);
       this.breakGlassAround(pos, 4);
+      this.blastWood(pos, 5.5, 120);
     }
   }
 
@@ -1102,6 +1197,7 @@ export class Game {
       if (!v || !p.alive || data.d <= 0 || data.d > 700) return;
       this.hostDamage(p, v, data.d, data.part, data.w);
     } else if (type === 'buy') this.hostBuy(p, data.item);
+    else if (type === 'fall') { if (p.alive && data.d > 0 && data.d < 250) this.hostDamage(p, p, data.d, 'legs', 'fall'); }
     else if (type === 'door') this.hostToggleDoor(p, data.cell);
     else if (type === 'prop') this.hostPropRequest(p, data);
     else if (type === 'plant') this.rules.onPlant(p, data.pos);
@@ -1261,7 +1357,7 @@ export class Game {
           this.action = null;
           this.spectateIdx = 0;
           this.killer = k;
-          this.hud.center('YOU DIED', k ? `${k.name} · ${itemInfo(d.w)?.name || { fire: 'Incendiary', barrel: 'Exploding barrel' }[d.w] || d.w}${d.hs ? ' · headshot' : ''}` : '', 2.5);
+          this.hud.center('YOU DIED', k ? `${k.name} · ${itemInfo(d.w)?.name || { fire: 'Incendiary', barrel: 'Exploding barrel', fall: 'Fall damage' }[d.w] || d.w}${d.hs ? ' · headshot' : ''}` : '', 2.5);
         }
         if (this.mode.kind === 'bomb' && this.state.bomb?.carrier === v.id) v.hasBomb = false;
         break;

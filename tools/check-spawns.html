@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spawn check</title>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js" } }</script>
+<style>body { font: 14px/1.5 ui-monospace, monospace; background: #111; color: #ddd; padding: 20px; } .bad { color: #ff6b6b; } .ok { color: #6bff9a; }</style>
+</head>
+<body>
+<h1>Spawn sightline + reachability check</h1>
+<p>Every spawn cell of team 0 against every spawn cell of team 1 (jittered ±0.6 m, standing and crouched eyes, head/chest/knees), with doors open and all breakables gone. Must be 0 for every map. Also checks that every spawn cell can path to the other spawn and every bomb site.</p>
+<pre id="out">Running…</pre>
+<script type="module">
+import * as THREE from 'three';
+import { World } from '../js/engine/world.js';
+import { MAPS } from '../js/data/maps.js';
+const out = [];
+let failures = 0;
+for (const [id, def] of Object.entries(MAPS)) {
+  const w = new World(def);
+  for (const p of w.props.values()) { if (p.ch === 'D') w.setDoor([p.x, p.y], true); else if ('GBWk'.includes(p.ch)) w.breakProp(p.x, p.y); }
+  const A = w.spawnCells[0], B = w.spawnCells[1];
+  const offs = [[0, 0], [0.3, 0.3], [-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.6, 0], [-0.6, 0], [0, 0.6], [0, -0.6], [0.6, 0.6], [-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6]];
+  let bad = 0;
+  for (const a of A) for (const b of B) {
+    let seen = false;
+    for (const [ox, oz] of offs) { if (seen) break;
+      for (const [px, pz] of offs) { if (seen) break;
+        const ax = (a.x + 0.5) * 2 + ox, az = (a.y + 0.5) * 2 + oz, bx = (b.x + 0.5) * 2 + px, bz = (b.y + 0.5) * 2 + pz;
+        for (const eh of [1.64, 1.14]) for (const th of [1.8, 1.15, 0.45]) {
+          if (w.lineOfSight(new THREE.Vector3(ax, eh, az), new THREE.Vector3(bx, th, bz)) || w.lineOfSight(new THREE.Vector3(bx, eh, bz), new THREE.Vector3(ax, th, az))) { seen = true; break; }
+        }
+      }
+    }
+    if (seen) bad++;
+  }
+  const targets = [A[0], B[0], ...Object.values(w.sites).map((s) => ({ x: s.cells[0] + 2, y: s.cells[1] + 2 }))];
+  let unreachable = 0;
+  for (const t of targets) for (const s of [...A, ...B]) if (!w.findPath(w.cellCenter(s.x, s.y), w.cellCenter(t.x, t.y))) unreachable++;
+  if (bad || unreachable) failures++;
+  out.push(`<span class="${bad || unreachable ? 'bad' : 'ok'}">${id.padEnd(10)} sightline pairs: ${bad} / ${A.length * B.length}   unreachable: ${unreachable}</span>`);
+}
+out.push('', failures ? `<span class="bad">${failures} map(s) FAILED</span>` : '<span class="ok">ALL MAPS PASS</span>');
+document.getElementById('out').innerHTML = out.join('\n');
+window.checkResult = { failures };
+</script>
+</body>
+</html>

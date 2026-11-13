@@ -1,20 +1,25 @@
 import * as THREE from 'three';
 import { getMaterial, tileSize } from './textures.js';
 import { buildProp, decorate } from './decor.js';
+import { isPlatform, platformH } from './grid.js';
 
 // The world is a grid of CELL-sized columns. Every solid is a column from y=0 to its height,
 // so collision, raycasts and navigation all run directly on the grid.
 export const CELL = 2;
 // Interactive cells: 'D' door (solid while closed) · 'G' glass pane (blocks movement, not sight or
 // bullets; shatters when shot) · 'B' explosive barrel · 'A' ammo crate (press E to refill).
-const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6, 'D': 6, 'G': 6, 'B': 1.2, 'A': 1.0 };
-export const PROP_CHARS = new Set(['D', 'G', 'B', 'A']);
+// 'W' wooden barricade and 'k' wooden crate can be shot apart (bullets also go through them).
+// 'L' is floor with a ladder up the neighbouring platform.
+const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6, 'D': 6, 'G': 6, 'B': 1.2, 'A': 1.0, 'W': 3.0, 'k': 1.0 };
+export const PROP_CHARS = new Set(['D', 'G', 'B', 'A', 'W', 'k']);
+export const WOOD_HP = { W: 240, k: 120 };
+// Cells you may never mantle onto (walls, doors, glass).
+const NO_MANTLE = new Set(['#', 'X', 'D', 'G']);
 const CONTAINER_TINTS = ['#a8432f', '#2f6aa8', '#3d7a45', '#c27a2c', '#7b7f86'];
 
 function heightOf(ch) {
   if (ch in SOLID_H) return SOLID_H[ch];
-  if (ch >= '1' && ch <= '4') return (ch.charCodeAt(0) - 48) * 0.5;
-  return 0;
+  return platformH(ch);
 }
 
 export class World {
@@ -38,7 +43,7 @@ export class World {
     this.props = new Map();
     for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) {
       this.setChar(x, y, g[y][x]);
-      if (PROP_CHARS.has(g[y][x])) this.props.set(x + ',' + y, { x, y, ch: g[y][x], open: false, broken: false, hp: 60, anim: 0 });
+      if (PROP_CHARS.has(g[y][x])) this.props.set(x + ',' + y, { x, y, ch: g[y][x], open: false, broken: false, hp: WOOD_HP[g[y][x]] || 60, stage: 0, anim: 0 });
     }
 
     this.sites = {};
@@ -86,7 +91,7 @@ export class World {
 
   breakProp(x, y) {
     const p = this.prop(x, y);
-    if (!p || p.broken || (p.ch !== 'G' && p.ch !== 'B')) return null;
+    if (!p || p.broken || !'GBWk'.includes(p.ch)) return null;
     p.broken = true;
     this.setChar(x, y, '.');
     p.view?.setBroken(true);
@@ -95,22 +100,50 @@ export class World {
 
   restoreProp(p) {
     if (p.ch === 'D') { p.open = false; this.setChar(p.x, p.y, 'D'); return; }
-    if (!p.broken) return;
-    p.broken = false; p.hp = 60;
+    if (!p.broken && !p.stage) return;
+    p.broken = false; p.hp = WOOD_HP[p.ch] || 60; p.stage = 0;
     this.setChar(p.x, p.y, p.ch);
     p.view?.setBroken(false);
+    p.view?.setStage?.(0);
   }
 
   resetProps() { for (const p of this.props.values()) this.restoreProp(p); }
 
-  propState() { return [...this.props.values()].filter((p) => p.open || p.broken).map((p) => [p.x, p.y, p.open ? 1 : 0, p.broken ? 1 : 0]); }
+  propState() { return [...this.props.values()].filter((p) => p.open || p.broken || p.stage).map((p) => [p.x, p.y, p.open ? 1 : 0, p.broken ? 1 : 0, p.stage || 0]); }
 
   applyPropState(list) {
     this.resetProps();
-    for (const [x, y, open, broken] of list || []) {
+    for (const [x, y, open, broken, stage] of list || []) {
       if (open) this.setDoor([x, y], true);
       if (broken) this.breakProp(x, y);
+      else if (stage) this.setStage(x, y, stage);
     }
+  }
+
+  // Visible damage on wooden props (0 intact … 2 badly damaged).
+  setStage(x, y, stage) {
+    const p = this.prop(x, y);
+    if (!p || p.broken) return;
+    p.stage = stage;
+    p.view?.setStage?.(stage);
+  }
+
+  // Can a body standing at feet height `y` climb onto the cell at (x, z)?
+  canMantle(x, z) {
+    const ch = this.chars[Math.floor(z / CELL)]?.[Math.floor(x / CELL)];
+    return ch !== undefined && !NO_MANTLE.has(ch);
+  }
+
+  // If (x, z) is a ladder cell, the direction [dx, dz] and top height of the platform it climbs.
+  ladderAt(x, z) {
+    const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL);
+    if (this.chars[cy]?.[cx] !== 'L') return null;
+    let best = null;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ch = this.chars[cy + dy]?.[cx + dx];
+      if (ch && isPlatform(ch) && (!best || platformH(ch) > best.top)) best = { dx, dz: dy, top: platformH(ch), cx: cx + dx, cy: cy + dy };
+    }
+    return best;
   }
 
   // Cell of the solid just behind a surface hit (point + normal from raycast).
@@ -255,7 +288,7 @@ export class World {
   navH(cx, cy) {
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return null;
     const ch = this.chars[cy][cx];
-    if (ch === '.' || (ch >= '1' && ch <= '4')) return this.H[cy * this.w + cx];
+    if (ch === '.' || ch === 'L' || isPlatform(ch)) return this.H[cy * this.w + cx];
     if (ch === 'D') return 0; // bots open doors on their way through
     return null;
   }
@@ -285,14 +318,19 @@ export class World {
       if (cur === goal) { found = true; break; }
       closed[cur] = 1;
       const cx = cur % W, cy = (cur / W) | 0, ch = this.navH(cx, cy);
+      const onLadder = this.chars[cy][cx] === 'L';
       for (const [ddx, ddy, cost] of dirs) {
         const nx = cx + ddx, ny = cy + ddy, nh = this.navH(nx, ny);
-        if (nh === null || Math.abs(nh - ch) > 0.55) continue;
+        if (nh === null) continue;
+        // Up: steps, or a ladder straight onto its platform. Down: any drop (bots accept a little fall damage).
+        const up = nh - ch, ladderUp = onLadder && !(ddx && ddy) && up > 0.55;
+        if (up > 0.55 && !ladderUp) continue;
+        if (ddx && ddy && Math.abs(up) > 0.55) continue;
         if (ddx && ddy) {
           const a = this.navH(cx + ddx, cy), b = this.navH(cx, cy + ddy);
           if (a === null || b === null || Math.abs(a - ch) > 0.55 || Math.abs(b - ch) > 0.55) continue;
         }
-        const ni = ny * W + nx, ng = g[cur] + cost;
+        const ni = ny * W + nx, ng = g[cur] + cost + (up < -0.55 ? 1.5 : 0) + (ladderUp ? 2 : 0);
         if (ng < g[ni]) { g[ni] = ng; came[ni] = cur; push(ni, ng + hfn(nx, ny)); }
       }
     }
@@ -403,7 +441,8 @@ export class World {
     const ctx = c.getContext('2d');
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
-      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' ? '#7c8591' : '#959eaa';
+      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : 'Wk'.includes(ch) ? '#7a5a36' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' || ch === 'L' ? '#7c8591'
+        : isPlatform(ch) ? `rgb(${140 + platformH(ch) * 18},${150 + platformH(ch) * 16},${165 + platformH(ch) * 14})` : '#959eaa';
       ctx.fillRect(x * scale, y * scale, scale, scale);
     }
     for (const [k, s] of Object.entries(this.sites)) {

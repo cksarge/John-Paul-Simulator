@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getMaterial } from './textures.js';
+import { isPlatform, platformH } from './grid.js';
 
 // Visual dressing generated from the map grid: trims, contact shadows, floor decals, wall fixtures
 // and lights, scenery beyond the walls and ambient particles. Nothing here affects collision.
@@ -72,7 +73,7 @@ function wallFaces(world) {
       if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) continue;
       const ch = world.chars[ny][nx];
       if (WALLS.has(ch)) continue;
-      const floorY = ch >= '1' && ch <= '4' ? (ch.charCodeAt(0) - 48) * 0.5 : 0;
+      const floorY = platformH(ch);
       out.push({ x, y, nx: dx, nz: dy, tx: Math.abs(dy), tz: Math.abs(dx), cx: (x + 0.5) * CELL + dx, cz: (y + 0.5) * CELL + dy, floorY, open: ch });
     }
   }
@@ -328,6 +329,51 @@ export function buildProp(world, p, theme) {
     remains.visible = false;
     root.add(barrels, remains);
     view.setBroken = (b) => { barrels.visible = !b; remains.visible = b; };
+  } else if (p.ch === 'W' || p.ch === 'k') {
+    // Wooden barricade (full cell, 3 m) or crate (1 m). Damage shows as holes, then it splinters.
+    const wall = p.ch === 'W', h = wall ? 3 : 1;
+    const intact = new THREE.Group();
+    const r = seeded(p.x * 977 + p.y * 31);
+    if (wall) {
+      const planks = 9, ph = h / planks;
+      for (let i = 0; i < planks; i++) {
+        const geo = new THREE.BoxGeometry(CELL - 0.02 - (alongX ? 0 : r() * 0.06), ph - 0.03, CELL - 0.02 - (alongX ? r() * 0.06 : 0));
+        const m = mesh(geo, getMaterial('plank'), 0, ph * i + ph / 2, 0);
+        m.rotation.y = (r() - 0.5) * 0.02;
+        intact.add(m);
+      }
+      for (const s of [-1, 1]) for (const t of [-1, 1]) intact.add(mesh(new THREE.BoxGeometry(0.14, h, 0.14), getMaterial('wood'), s * 0.94, h / 2, t * 0.94));
+      intact.add(mesh(new THREE.BoxGeometry(CELL, 0.12, CELL), getMaterial('trim'), 0, h + 0.06, 0));
+    } else {
+      intact.add(mesh(new THREE.BoxGeometry(CELL * 0.98, h, CELL * 0.98), getMaterial('wood'), 0, h / 2, 0));
+    }
+    // Damage stages: dark splintered holes on both faces.
+    const holes = [new THREE.Group(), new THREE.Group()];
+    const holeMat = new THREE.MeshBasicMaterial({ color: 0x0b0806, side: THREE.DoubleSide });
+    for (let st = 0; st < 2; st++) {
+      for (let i = 0; i < (st ? 7 : 4); i++) {
+        const w = 0.18 + r() * 0.3, hh = 0.12 + r() * 0.25, y = 0.25 + r() * (h - 0.5), s2 = (r() - 0.5) * 1.5;
+        for (const side of [-1, 1]) {
+          const q = new THREE.Mesh(new THREE.PlaneGeometry(w, hh), holeMat);
+          const off = CELL * 0.502 * side;
+          if (alongX) { q.position.set(s2, y, off); } else { q.position.set(off, y, s2); q.rotation.y = Math.PI / 2; }
+          q.rotation.z = r() * 0.8;
+          holes[st].add(q);
+        }
+      }
+      holes[st].visible = false;
+      intact.add(holes[st]);
+    }
+    const debris = new THREE.Group();
+    for (let i = 0; i < (wall ? 10 : 5); i++) {
+      const m = mesh(new THREE.BoxGeometry(0.12 + r() * 0.1, 0.05, 0.6 + r() * 0.9), getMaterial('plank'), (r() - 0.5) * 1.6, 0.03 + r() * 0.05, (r() - 0.5) * 1.6);
+      m.rotation.set((r() - 0.5) * 0.3, r() * 6, (r() - 0.5) * 0.3);
+      debris.add(m);
+    }
+    debris.visible = false;
+    root.add(intact, debris);
+    view.setStage = (n) => { holes[0].visible = n >= 1; holes[1].visible = n >= 2; };
+    view.setBroken = (b) => { intact.visible = !b; debris.visible = b; };
   } else if (p.ch === 'A') {
     const crate = mesh(new THREE.BoxGeometry(1.7, 0.85, 1.1), propMat('ammo'), 0, 0.425, 0);
     crate.rotation.y = alongX ? 0 : Math.PI / 2;
@@ -359,11 +405,11 @@ export function decorate(world, group, theme) {
     const ch = world.chars[y][x];
     if (ch === 'h') trim.box(x * CELL - 0.06, 1.15, y * CELL - 0.06, (x + 1) * CELL + 0.06, 1.24, (y + 1) * CELL + 0.06);
     // Hazard edge on raised platforms where they drop to the floor.
-    if (ch >= '1' && ch <= '4') {
-      const top = (ch.charCodeAt(0) - 48) * 0.5;
+    if (isPlatform(ch)) {
+      const top = platformH(ch);
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const n = world.chars[y + dy]?.[x + dx];
-        if (n !== '.' && !(n >= '1' && n < ch)) continue;
+        if (n !== '.' && n !== 'L' && !(isPlatform(n) && n < ch)) continue;
         const f = { cx: (x + 0.5) * CELL + dx, cz: (y + 0.5) * CELL + dy, nx: dx, nz: dy, tx: Math.abs(dy), tz: Math.abs(dx) };
         trim.faceBox(f, 0, top - 0.12, CELL, 0.12, 0.02);
       }
@@ -393,7 +439,7 @@ export function decorate(world, group, theme) {
   const kinds = (d.decals || ['dirt', 'crack']).map((k) => decalNames.indexOf(k)).filter((i) => i >= 0);
   const decals = new Batch();
   const floorCells = [];
-  for (let y = 1; y < world.h - 1; y++) for (let x = 1; x < world.w - 1; x++) if (world.chars[y][x] === '.' || (world.chars[y][x] >= '1' && world.chars[y][x] <= '4')) floorCells.push([x, y]);
+  for (let y = 1; y < world.h - 1; y++) for (let x = 1; x < world.w - 1; x++) if (world.chars[y][x] === '.' || isPlatform(world.chars[y][x])) floorCells.push([x, y]);
   const nDecals = Math.round(floorCells.length * (d.decalDensity ?? 0.22));
   for (let i = 0; i < nDecals && kinds.length; i++) {
     const [x, y] = floorCells[Math.floor(rand() * floorCells.length)];
@@ -558,6 +604,19 @@ export function decorate(world, group, theme) {
     signs++;
   }
 
+  // ───── ladders ─────
+  const ladder = new Batch(1);
+  for (let y = 1; y < world.h - 1; y++) for (let x = 1; x < world.w - 1; x++) {
+    const L = world.chars[y][x] === 'L' ? world.ladderAt((x + 0.5) * CELL, (y + 0.5) * CELL) : null;
+    if (!L) continue;
+    // Against the platform's face, on the ladder cell's side.
+    const f = { cx: (x + 0.5) * CELL + L.dx, cz: (y + 0.5) * CELL + L.dz, nx: -L.dx, nz: -L.dz, tx: Math.abs(L.dz), tz: Math.abs(L.dx) };
+    const top = L.top + 1.0;
+    for (const sx of [-0.32, 0.32]) ladder.faceBox(f, sx, 0, 0.07, top, 0.07, 0.06);
+    for (let ry = 0.3; ry < top - 0.1; ry += 0.32) ladder.faceBox(f, 0, ry, 0.64, 0.045, 0.045, 0.07);
+  }
+  add(ladder.mesh(new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.4, metalness: 0.85 })));
+
   // ───── lights ─────
   const lights = [];
   const budget = d.lights ?? 4;
@@ -697,9 +756,9 @@ function scenery(world, group, d, rand) {
   }
   if (kind === 'mountains' || kind === 'desert') {
     const snow = kind === 'mountains';
-    ring(90, 220, 14, (x, z) => {
-      const r = 50 + rand() * 80, h = snow ? 40 + rand() * 70 : 18 + rand() * 30;
-      const geo = snow ? new THREE.ConeGeometry(r, h, 9, 5) : new THREE.CylinderGeometry(r * 0.75, r, h, 9, 3);
+    ring(130, 260, 16, (x, z) => {
+      const r = 34 + rand() * 46, h = snow ? 34 + rand() * 46 : 14 + rand() * 22;
+      const geo = snow ? new THREE.ConeGeometry(r, h, 14, 6) : new THREE.CylinderGeometry(r * 0.75, r, h, 12, 3);
       const p = geo.attributes.position, col = [];
       for (let i = 0; i < p.count; i++) {
         const y = p.getY(i);

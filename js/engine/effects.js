@@ -164,6 +164,15 @@ export class Effects {
     }
   }
 
+  splinters(pos, spread = 1) {
+    for (let i = 0; i < 26 * spread; i++) {
+      const v = new THREE.Vector3((Math.random() - 0.5) * 6, Math.random() * 4, (Math.random() - 0.5) * 6);
+      const at = pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread));
+      this.sprite(this.sparkTex, at, 0.08 + Math.random() * 0.1, 0.9, { vel: v, grav: 14, color: 0x8a6438 });
+    }
+    for (let i = 0; i < 4 * spread; i++) this.sprite(this.dustTex, pos.clone(), 1.2, 1.4, { vel: new THREE.Vector3((Math.random() - 0.5), 0.6, (Math.random() - 0.5)), grow: 1.5, color: 0xa08a6a });
+  }
+
   shatter(pos) {
     for (let i = 0; i < 26; i++) {
       const v = new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 2.5, (Math.random() - 0.5) * 5);

@@ -167,6 +167,11 @@ export const sfx = {
     noise(dst, t, 0.45, { type: 'bandpass', freq: 380, freqEnd: 260, q: 1.5, gain: 0.7 });
     tone(dst, t + 0.4, 0.08, { type: 'triangle', freq: 160, gain: 0.5 });
   },
+  wood(pos, small) {
+    if (!ctx) return; const dst = out(pos, small ? 0.5 : 1, 60); if (!dst) return; const t = ctx.currentTime;
+    noise(dst, t, small ? 0.12 : 0.5, { type: 'bandpass', freq: small ? 900 : 600, freqEnd: 250, q: 1.2, gain: 0.9 });
+    if (!small) for (let i = 0; i < 4; i++) noise(dst, t + 0.05 + i * 0.06, 0.08, { type: 'bandpass', freq: 1600 + Math.random() * 1200, q: 3, gain: 0.5 });
+  },
   glass(pos) {
     if (!ctx) return; const dst = out(pos, 0.8, 60); if (!dst) return; const t = ctx.currentTime;
     for (let i = 0; i < 6; i++) tone(dst, t + i * 0.025 + Math.random() * 0.02, 0.15, { type: 'sine', freq: 2500 + Math.random() * 3500, gain: 0.25 });

@@ -299,7 +299,7 @@ export class Hud {
     const e = document.createElement('div');
     const lp = this.g.local;
     e.className = 'kf' + ((k && k === lp) || v === lp ? ' mine' : '');
-    const wname = itemInfo(w)?.name || { bomb: 'Charge', barrel: 'Exploding barrel' }[w] || w;
+    const wname = itemInfo(w)?.name || { bomb: 'Charge', barrel: 'Exploding barrel', fire: 'Incendiary', fall: 'Fall' }[w] || w;
     e.innerHTML = `${k && k !== v ? `<span class="${cls(k)}">${esc(k.name)}</span>` : ''}<span class="w">${esc(wname)}</span>${hs ? '<span class="hs">◉ HS</span>' : ''}<span class="${cls(v)}">${esc(v.name)}</span>`;
     this.el.kf.prepend(e);
     while (this.el.kf.children.length > 6) this.el.kf.lastChild.remove();
