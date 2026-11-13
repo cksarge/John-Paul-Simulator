@@ -1101,8 +1101,13 @@ export class UI {
       saveSettings(s);
       setVolume(s.volume);
       applyPadSettings(s);
+      // In the menus the 3D backdrop owns the camera's zoom; keep it so a settings change doesn't
+      // snap it out to the in-game field of view and ease back in. In a match, the new FOV applies.
+      const cam = app.engine.camera, menuFov = app.game ? null : cam.fov;
       if (graphics) app.engine.applySettings(s);
-      else { app.engine.camera.fov = s.fov; app.engine.vmCamera.fov = s.viewmodelFov; app.engine.camera.updateProjectionMatrix(); app.engine.vmCamera.updateProjectionMatrix(); }
+      else { cam.fov = s.fov; app.engine.vmCamera.fov = s.viewmodelFov; app.engine.vmCamera.updateProjectionMatrix(); }
+      if (menuFov !== null) cam.fov = menuFov;
+      cam.updateProjectionMatrix();
     };
     const GRAPHICS = new Set(['renderScale', 'shadows', 'aa', 'bloom', 'ao']);
     root.querySelectorAll('[data-seg]').forEach((g) => {
