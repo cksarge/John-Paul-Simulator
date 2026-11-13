@@ -313,7 +313,8 @@ export class Rules {
     const kind = this.mode.kind, s = this.s;
     if (RESPAWN_KINDS.has(kind)) {
       if (s.phase !== 'live') return;
-      this.respawnQueue.set(victim.id, kind === 'gungame' ? 1.5 : 2.5);
+      // Humans wait long enough to watch the kill cam; bots come straight back.
+      this.respawnQueue.set(victim.id, victim.isBot ? (kind === 'gungame' ? 1.5 : 2.5) : (kind === 'gungame' ? 3.6 : 4.2));
       const valid = killer && killer !== victim;
       if (kind === 'ffa' && valid && killer.kills >= this.mode.killsToWin) this.finish(killer.id, 'kills');
       if (kind === 'tdm' && valid && killer.team !== victim.team) {

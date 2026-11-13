@@ -20,7 +20,7 @@ export const PRESETS = {
 export const DEFAULT_SETTINGS = {
   preset: 'high', ...PRESETS.high,
   fov: 90, viewmodelFov: 70, sens: 1.0, scopedSens: 0.8, invertY: false,
-  volume: 0.7, showFps: true, maxFps: 0, keepLoadout: false,
+  volume: 0.7, showFps: true, maxFps: 0, keepLoadout: false, killcam: true, menuScene: true,
   crosshairColor: '#3dff8f', crosshairSize: 6, crosshairGap: 4, crosshairThick: 2, crosshairDot: false,
 };
 

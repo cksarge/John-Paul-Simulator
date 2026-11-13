@@ -215,6 +215,31 @@ class App {
     });
   }
 
+  // ───────────── replays ─────────────
+  storeReplay(data) {
+    import('./game/replaystore.js').then((m) => m.saveReplay(data)).then((id) => { this.lastReplayId = id; })
+      .catch((e) => console.warn('Replay not saved', e));
+  }
+
+  async watchReplay(id) {
+    const { loadReplay } = await import('./game/replaystore.js');
+    const data = await loadReplay(id);
+    if (!data) { this.ui.toast('That replay is no longer available', 'bad'); return; }
+    if (this.game) { this.game.destroy(); this.game = null; }
+    const { ReplayViewer } = await import('./game/replay.js');
+    this.ui.hide();
+    this.setStatus('watching a replay');
+    this.replay = new ReplayViewer(this, data);
+    await this.replay.start();
+  }
+
+  exitReplay() {
+    this.replay = null;
+    this.gameEl.classList.add('hidden');
+    this.setStatus('menu');
+    this.ui.showMenu('replays');
+  }
+
   exitGame() {
     this.game = null;
     this.gameEl.classList.add('hidden');

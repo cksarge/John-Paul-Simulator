@@ -257,7 +257,7 @@ export class UI {
     this.cleanup();
     this.tab = tab;
     const app = this.app, p = app.profile;
-    const tabs = [['play', 'Play'], ['operators', 'Operators'], ['armory', 'Armory'], ['leaderboard', 'Leaderboard'], ['profile', 'Profile'], ['settings', 'Settings']];
+    const tabs = [['play', 'Play'], ['operators', 'Operators'], ['armory', 'Armory'], ['leaderboard', 'Leaderboard'], ['replays', 'Replays'], ['profile', 'Profile'], ['settings', 'Settings']];
     const lvl = levelFor(p?.xp || 0);
     this.root.innerHTML = `<div class="screen"><div class="menu-bg"></div>
       <div class="topbar">
@@ -272,7 +272,7 @@ export class UI {
     this.root.querySelectorAll('.nav button').forEach((b) => { b.onclick = () => this.showMenu(b.dataset.t); });
     this.root.querySelector('#chip').onclick = () => (p ? this.showMenu('profile') : this.showAuth());
     const el = this.root.querySelector('#tab');
-    ({ play: () => this.renderPlay(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el), leaderboard: () => this.renderLeaderboard(el), profile: () => this.renderProfile(el), settings: () => this.renderSettings(el) })[tab]();
+    ({ play: () => this.renderPlay(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el), leaderboard: () => this.renderLeaderboard(el), replays: () => this.renderReplays(el), profile: () => this.renderProfile(el), settings: () => this.renderSettings(el) })[tab]();
   }
 
   // ───────────────────────── play ─────────────────────────
@@ -631,6 +631,22 @@ export class UI {
     }; });
   }
 
+  // ───────────────────────── replays ─────────────────────────
+  async renderReplays(el) {
+    el.innerHTML = `<div class="row"><h2>Replays</h2><span class="muted small">Your last 8 matches are saved in this browser automatically.</span></div><div class="panel" id="rp-list"><span class="muted">Loading…</span></div>`;
+    const body = el.querySelector('#rp-list');
+    try {
+      const { listReplays, deleteReplay } = await import('../game/replaystore.js');
+      const list = await listReplays();
+      if (!list.length) { body.innerHTML = '<span class="muted">No replays yet — finish a match and it will show up here.</span>'; return; }
+      body.innerHTML = `<table class="tbl"><tr><th>Result</th><th>Mode</th><th>Map</th><th class="num">Length</th><th class="num">Kills</th><th class="num">When</th><th></th></tr>
+        ${list.map((r) => `<tr><td class="res-${r.result}">${esc((r.result || '').toUpperCase())}</td><td>${esc(MODES[r.mode]?.name || r.mode)}</td><td>${esc(MAPS[r.map]?.name || r.map)}</td><td class="num">${Math.floor(r.duration / 60)}:${String(Math.floor(r.duration % 60)).padStart(2, '0')}</td><td class="num">${r.kills}</td><td class="num muted">${ago(new Date(r.savedAt).toISOString())}</td>
+          <td class="num"><button class="btn small primary" data-watch="${esc(r.id)}">Watch</button> <button class="btn small" data-del="${esc(r.id)}">✕</button></td></tr>`).join('')}</table>`;
+      body.querySelectorAll('[data-watch]').forEach((b) => { b.onclick = () => this.app.watchReplay(b.dataset.watch); });
+      body.querySelectorAll('[data-del]').forEach((b) => { b.onclick = async () => { await deleteReplay(b.dataset.del); this.renderReplays(el); }; });
+    } catch (e) { body.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  }
+
   // ───────────────────────── leaderboard ─────────────────────────
   async renderLeaderboard(el, kind = 'elo') {
     const app = this.app;
@@ -741,6 +757,7 @@ export class UI {
         <span>Mouse sensitivity</span>${range('sens', 0.1, 4, 0.05, (v) => (+v).toFixed(2))}
         <span>Scoped sensitivity</span>${range('scopedSens', 0.2, 2, 0.05, (v) => (+v).toFixed(2))}
         <span>Invert mouse Y</span>${toggle('invertY')}
+        <span>Kill cam</span>${toggle('killcam')}
         <span>Master volume</span>${range('volume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')}
       </div>
       <h2 style="margin-top:22px">Crosshair</h2>

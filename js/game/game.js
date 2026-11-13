@@ -13,6 +13,8 @@ import { Rules } from './rules.js';
 import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
 import { EMOTES, KILL_FX } from '../data/skins.js';
+import { Recorder, WORLD_EVENTS, unpack } from './recorder.js';
+import { SpectatorCam } from './spectatorcam.js';
 import {
   switchSlot, cycleSlot, startReload, tickWeapon, ready, spreadFor, applySpread, traceBullet, tracePierce, bulletDamage, bestSlot, hasSlot,
   reloadTime, maxNades, nadeLimit,
@@ -83,6 +85,8 @@ export class Game {
     eng.setupEnvironment(scene, this.mapDef.theme, this.world.size);
     eng.setScene(scene);
     this.effects = new Effects(scene);
+    this.rec = new Recorder(this);
+    this.specCam = new SpectatorCam(eng.camera, this.world);
     this.viewmodel = new Viewmodel(eng.vmScene);
     this.bombMesh = buildGun('bomb');
     this.bombMesh.scale.setScalar(2.2);
@@ -191,8 +195,8 @@ export class Game {
     const inp = this.input;
     if (!this.ended && !inp.locked && !inp.typing && (!this.hud.overlayOpen() || this.hud.overlay === 'score') && now - inp.lockRequestedAt > 1600) this.hud.showPause();
     try {
-      if (!(this.paused && !this.online)) this.update(dt, now);
-      this.updateCamera(dt);
+      if (!(this.paused && !this.online)) { this.update(dt, now); this.rec.tick(dt); }
+      if (this.killcam) this.updateKillcam(dt); else this.updateCamera(dt);
       this.engine.render();
     } catch (e) {
       console.error(e);
@@ -281,7 +285,7 @@ export class Game {
     this.punch += (0 - this.punch) * Math.min(1, dt * 5);
 
     if (!p.alive) {
-      if (!ui && (inp.clicked('left') || inp.pressed('Space'))) this.spectateIdx++;
+      if (!ui && (inp.clicked('left') || inp.pressed('Space'))) { if (this.killcam) this.endKillcam(); else this.spectateIdx++; }
       this.handleUiKeys(p, ui);
       return;
     }
@@ -1289,6 +1293,7 @@ export class Game {
 
   onEvent(type, d) {
     const s = this.state, lp = this.local;
+    if (this.rec && WORLD_EVENTS.has(type)) this.rec.event(type, d);
     switch (type) {
       case 'phase':
         s.phase = d.phase; s.time = d.time;
@@ -1352,6 +1357,9 @@ export class Game {
         const fx = k && k !== v ? k.char?.killfx : null;
         if (fx && fx !== 'none' && KILL_FX[fx]) this.effects.killFx(fx, v.pos.clone().setY(v.pos.y + 1), KILL_FX[fx].color);
         if (k?.isLocal && k !== v) { this.hud.hitmarker(d.hs, true); }
+        if (v.isLocal && k && k !== v && this.settings.killcam !== false && this.state.phase !== 'over') {
+          this.killcam = { killer: k.id, delay: 0.7, pos: this.rec.t - 2.8, end: this.rec.t + 0.6, w: d.w, hs: d.hs, revived: new Set() };
+        }
         if (v.isLocal) {
           this.viewmodel.setWeapon(null);
           this.action = null;
@@ -1365,6 +1373,7 @@ export class Game {
       case 'respawn': {
         const p = this.players.get(d.id);
         if (!p) break;
+        if (p.isLocal) this.endKillcam();
         this.spawnPlayer(p, d.at, true, true);
         this.giveSpawnLoadout(p, d.at);
         break;
@@ -1484,6 +1493,7 @@ export class Game {
 
   applyRound(d) {
     const s = this.state;
+    this.endKillcam();
     s.round = d.round; s.time = d.time; s.scores = d.scores; s.phase = d.phase || 'buy'; s.bomb = d.bomb;
     this.effects.clearRound();
     this.clearNades();
@@ -1817,6 +1827,66 @@ export class Game {
     setListener(cam.position, f);
   }
 
+  // ───────────────────────── kill cam ─────────────────────────
+  // Replays the last few seconds through the killer's eyes. Live state keeps running underneath;
+  // only the camera and player models are driven from the recording.
+  updateKillcam(dt) {
+    const kc = this.killcam;
+    if (kc.delay > 0) { kc.delay -= dt; this.updateCamera(dt); return; }
+    const killer = this.players.get(kc.killer);
+    if (!kc.started) {
+      kc.started = true;
+      this.hud.killcam({ killer, weapon: kc.w, hs: kc.hs, hp: this.rec.sample(kc.killer, this.rec.t)?.hp });
+      kc.cursor = this.rec.events.findIndex((e) => e.t > kc.pos);
+    }
+    const prev = kc.pos;
+    kc.pos += dt;
+    if (kc.pos >= kc.end || !killer) return this.endKillcam();
+    // Shots and impacts from the recording.
+    const ev = this.rec.events;
+    while (kc.cursor >= 0 && kc.cursor < ev.length && ev[kc.cursor].t <= kc.pos) {
+      const e = ev[kc.cursor++];
+      if (e.t <= prev || e.k !== 'fx' || !['tracer', 'muzzle', 'impact', 'beam'].includes(e.n)) continue;
+      this.rec.raw[e.n](...e.a.map((a) => unpack(a, new Map())));
+    }
+    for (const p of this.players.values()) {
+      const m = p.model, st = this.rec.sample(p.id, kc.pos);
+      if (!m) continue;
+      if (p.tag) p.tag.visible = false;
+      if (!st || !st.alive || p.id === kc.killer) { m.root.visible = false; continue; }
+      if (m.dead) { m.revive(); kc.revived.add(p.id); }
+      m.root.visible = true;
+      m.root.position.copy(st.pos);
+      m.root.rotation.y = st.yaw;
+      m.setWeapon(st.weapon);
+      m.update(dt, { speed: st.speed, crouch: st.crouch, pitch: st.pitch, onGround: true, firing: false });
+    }
+    const ks = this.rec.sample(kc.killer, kc.pos);
+    if (ks) {
+      this.specCam.mode = 'pov';
+      this.specCam.update(dt, ks);
+      const cam = this.engine.camera;
+      if (cam.fov !== this.settings.fov) { cam.fov = this.settings.fov; cam.updateProjectionMatrix(); }
+      if (this.viewmodel.id !== ks.weapon) this.viewmodel.setWeapon(ks.weapon, killer.char);
+      this.viewmodel.update(dt, { speed: ks.speed, onGround: true, lookDX: 0, lookDY: 0, reload: -1, scoped: false, drawTime: 0.01 });
+      const f = new THREE.Vector3(); cam.getWorldDirection(f);
+      setListener(cam.position, f);
+    }
+  }
+
+  endKillcam() {
+    if (!this.killcam) return;
+    const kc = this.killcam;
+    this.killcam = null;
+    this.hud.killcam(null);
+    if (!this.local?.alive) this.viewmodel.setWeapon(null);
+    // Models revived for the replay go back to lying where they fell.
+    for (const id of kc.revived) {
+      const p = this.players.get(id);
+      if (p && !p.alive && p.model) { p.model.die(1); p.model.deathT = 1; }
+    }
+  }
+
   // ───────────────────────── end ─────────────────────────
   async onEnd(d) {
     if (this.ended) return;
@@ -1831,6 +1901,11 @@ export class Game {
     } else if (d.winner >= 0 && lp) result = d.winner === lp.team ? 'win' : 'loss';
     if (d.reason === 'host-left' && d.winner === -2) result = 'draw';
     const myStats = lp ? { k: lp.kills, d: lp.deaths, hs: lp.hs } : { k: 0, d: 0, hs: 0 };
+    this.endKillcam();
+    this.app.storeReplay?.(this.rec.serialize({
+      matchId: this.matchId, mode: this.mode.id, map: this.mapDef.id, date: Date.now(), localId: this.localId,
+      result, scores: d.scores, online: this.online,
+    }));
     let eloChange = 0;
     const score = this.mode.kind === 'ffa' ? `${myStats.k} kills`
       : this.mode.kind === 'gungame' ? `Weapon ${Math.min((lp?.gg || 0) + 1, GUN_GAME_ORDER.length)}/${GUN_GAME_ORDER.length}`
@@ -1871,6 +1946,7 @@ export class Game {
 
   destroy() {
     this.running = false;
+    this.rec?.unwrap();
     this.input?.dispose();
     this.hud?.unmount();
     this.net?.leave();

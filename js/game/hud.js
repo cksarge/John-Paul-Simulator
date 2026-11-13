@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { WEAPONS, GRENADES, BUY_MENU, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
 import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText, econFor } from '../data/modes.js';
 import { RARITIES, KINDS } from '../data/skins.js';
-import { itemSwatch, emoteName } from '../ui/cards.js';
+import { itemSwatch, emoteName, cardImage } from '../ui/cards.js';
 import { spreadFor } from './combat.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -52,6 +52,7 @@ export class Hud {
       </div>
       <div class="chat"></div>
       <div class="emote-wheel hidden"></div>
+      <div class="killcam hidden"></div>
       <div class="ovl"></div>`;
     const q = (s) => r.querySelector(s);
     this.el = {
@@ -59,7 +60,7 @@ export class Hud {
       ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), blind: q('.blind'), scope: q('.scope'),
       center: q('.center-msg'), goal: q('.goal-pill'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
       money: q('.money'), hp: q('.hp'), ar: q('.ar'), slots: q('.slots'), wname: q('.weapon-name'), ammo: q('.ammo .hud-num'),
-      chat: q('.chat'), ovl: q('.ovl'), wheel: q('.emote-wheel'),
+      chat: q('.chat'), ovl: q('.ovl'), wheel: q('.emote-wheel'), killcam: q('.killcam'),
     };
     this.radarImg = this.g.world.radarCanvas(8);
     this.buildCrosshair();
@@ -238,6 +239,21 @@ export class Hud {
     setTimeout(() => ln.remove(), 9500);
   }
 
+  // Kill cam banner: who killed you, with what, and their calling card. null hides it.
+  killcam(info) {
+    const el = this.el.killcam;
+    this.root.classList.toggle('in-killcam', !!info);
+    if (!info) { el.classList.add('hidden'); return; }
+    const k = info.killer;
+    const wname = itemInfo(info.weapon)?.name || info.weapon;
+    el.innerHTML = `<div class="kc-tag"><i></i>KILL CAM</div>
+      <div class="kc-card" style="background-image:url(${cardImage(k?.char?.card || 'standard')})">
+        <div class="kc-text"><span>KILLED BY</span><b>${esc(k?.name || '')}</b><em>${esc(wname)}${info.hs ? ' · headshot' : ''}${info.hp ? ` · ${info.hp} HP left` : ''}</em></div>
+      </div>
+      <div class="kc-skip">Space · skip</div>`;
+    el.classList.remove('hidden');
+  }
+
   // Emote wheel while G is held. `list` null hides it.
   emoteWheel(list, sel = 0) {
     const el = this.el.wheel;
@@ -320,9 +336,15 @@ export class Hud {
       <div class="elo" style="margin:10px 0;font-family:var(--display);font-size:22px">${g.mode.ranked && g.app.user ? 'Updating rating…' : ''}</div>
       <div class="drop"></div></div>
       <table class="tbl"><tr><th>Player</th>${!SOLO_KINDS.has(g.mode.kind) ? '<th>Team</th>' : ''}<th class="num">K</th><th class="num">D</th><th class="num">HS</th><th class="num">DMG</th></tr>${rows}</table>
-      <div class="row" style="justify-content:center;margin-top:16px"><button class="btn primary" data-a="menu">Back to menu</button></div>
+      <div class="row" style="justify-content:center;margin-top:16px"><button class="btn" data-a="replay">Watch replay</button><button class="btn primary" data-a="menu">Back to menu</button></div>
     </div></div>`;
     this.el.ovl.querySelector('[data-a=menu]').onclick = () => this.g.leave();
+    this.el.ovl.querySelector('[data-a=replay]').onclick = () => {
+      const app = this.g.app;
+      this.g.destroy();
+      app.game = null;
+      setTimeout(() => (app.lastReplayId ? app.watchReplay(app.lastReplayId) : app.exitGame()), 150);
+    };
   }
 
   showDrop(item) {
