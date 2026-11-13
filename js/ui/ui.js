@@ -366,7 +366,13 @@ export class UI {
     const el = this.root.querySelector('#online-list');
     if (!el) return;
     this.root.querySelector('#online-count').textContent = `(${list.length})`;
-    el.innerHTML = list.length ? list.map((p) => `<div class="o"><span class="dot ${p.status !== 'menu' ? 'busy' : ''}"></span><span>${esc(p.name)}</span><span class="spacer"></span>${rankBadge(p.elo)}</div>`).join('') : '<span class="muted small">Nobody else is online.</span>';
+    const meId = this.app.me().id;
+    el.innerHTML = list.length ? list.map((p) => {
+      const watch = p.match && !p.match.ranked && p.id !== meId;
+      const status = p.match ? `${MODES[p.match.mode]?.short || ''} · ${MAPS[p.match.map]?.name || ''}` : p.status !== 'menu' ? p.status : '';
+      return `<div class="o"><span class="dot ${p.status !== 'menu' ? 'busy' : ''}"></span><span>${esc(p.name)}</span>${status ? `<span class="muted small">${esc(status)}</span>` : ''}<span class="spacer"></span>${watch ? `<button class="btn small" data-watch="${esc(p.id)}">Watch</button>` : rankBadge(p.elo)}</div>`;
+    }).join('') : '<span class="muted small">Nobody else is online.</span>';
+    el.querySelectorAll('[data-watch]').forEach((b) => { b.onclick = () => { const p = list.find((x) => x.id === b.dataset.watch); if (p?.match) this.app.spectate(p.match); }; });
   }
 
   profileSummary() {

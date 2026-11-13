@@ -42,7 +42,9 @@ export class Game {
     this.net = opts.net || null;
     this.online = !!this.net;
     this.localId = opts.localId;
-    this.rejoin = !!opts.rejoin;
+    this.rejoin = !!opts.rejoin || !!opts.spectator;
+    // Spectators join a running match with no player of their own; everything arrives in the snapshot.
+    this.spectator = !!opts.spectator;
     // A rejoining player learns the current host from the snapshot (it may have changed).
     this.hostId = this.rejoin ? null : opts.hostId || opts.localId;
     this.isHost = this.hostId === this.localId;
@@ -113,7 +115,7 @@ export class Game {
     } else {
       this.helloT = 0;
       if (this.rejoin) {
-        this.hud.center('RECONNECTING', 'Syncing with the match…', 14);
+        this.hud.center(this.spectator ? 'JOINING AS SPECTATOR' : 'RECONNECTING', 'Syncing with the match…', 14);
         setTimeout(() => {
           if (this.gotSnap || this.ended) return;
           this.app.clearActiveMatch?.();
@@ -214,6 +216,7 @@ export class Game {
     }
     const lp = this.local;
     if (lp) this.updateLocal(dt, lp);
+    else if (this.spectator) this.spectatorInput();
     for (const [id, brain] of this.brains) {
       const p = this.players.get(id);
       if (p) { brain.update(dt); tickWeapon(p, dt, p.triggerHeld); }
@@ -1421,6 +1424,7 @@ export class Game {
   teamName(team) {
     if (this.mode.kind === 'bomb') return team === 0 ? 'ATTACKERS' : 'DEFENDERS';
     const lp = this.local;
+    if (!lp && this.mode.teamSize !== 1) return 'TEAM ' + (team + 1);
     if (this.mode.teamSize === 1) {
       const p = [...this.players.values()].find((q) => q.team === team);
       return p ? p.name.toUpperCase() : 'TEAM ' + (team + 1);
@@ -1614,7 +1618,7 @@ export class Game {
         p.gg = st2.gg; p.alive = st2.alive; p.hp = st2.hp;
         if (st2.alive) p.snapTo(st2.pos[0], st2.pos[1], st2.pos[2], st2.yaw);
       }
-      this.hud.center('RECONNECTED', `${this.mode.name} · ${this.mapDef.name}`, 2.5);
+      this.hud.center(this.spectator ? 'SPECTATING' : 'RECONNECTED', `${this.mode.name} · ${this.mapDef.name}`, 2.5);
       this.rejoin = false;
     }
   }
@@ -1797,6 +1801,13 @@ export class Game {
       const w = lp.weapon;
       if (lp.ws.scope > 0 && w?.scope) fov = w.scope[lp.ws.scope - 1];
       this.spectateTarget = null;
+    } else if (this.spectator) {
+      const pool = [...this.players.values()].filter((p) => p.alive);
+      const t = pool.length ? pool[((this.spectateIdx % pool.length) + pool.length) % pool.length] : null;
+      this.spectateTarget = t;
+      const inp = this.input;
+      this.specCam.update(dt, t ? { pos: t.pos, yaw: t.yaw, pitch: t.pitch, crouch: t.crouch } : null, { keys: inp.keys, dx: inp.mouse.dx, dy: inp.mouse.dy, locked: inp.locked });
+      for (const p of this.players.values()) if (p.model && p === t) p.model.root.visible = this.specCam.mode !== 'pov';
     } else {
       const alive = [...this.players.values()].filter((p) => p.alive && (SOLO_KINDS.has(this.mode.kind) || !lp || p.team === lp.team));
       const pool = alive.length ? alive : [...this.players.values()].filter((p) => p.alive);
@@ -1825,6 +1836,16 @@ export class Game {
     if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
     const f = new THREE.Vector3(); cam.getWorldDirection(f);
     setListener(cam.position, f);
+  }
+
+  // Spectator controls: click/Space next player, Q previous, V camera mode, Tab scores.
+  spectatorInput() {
+    const inp = this.input, ui = this.hud.overlayOpen() || !inp.locked;
+    this.hud.setScoreboard(inp.keys.has('Tab'));
+    if (ui) return;
+    if (this.specCam.mode !== 'free' && (inp.clicked('left') || inp.pressed('Space'))) this.spectateIdx++;
+    if (inp.pressed('KeyQ')) this.spectateIdx--;
+    if (inp.pressed('KeyV')) this.specCam.cycle();
   }
 
   // ───────────────────────── kill cam ─────────────────────────
@@ -1891,7 +1912,7 @@ export class Game {
   async onEnd(d) {
     if (this.ended) return;
     this.ended = true;
-    this.app.clearActiveMatch?.();
+    if (!this.spectator) this.app.clearActiveMatch?.();
     this.state.phase = 'over';
     this.input.unlock();
     const lp = this.local;
@@ -1900,6 +1921,7 @@ export class Game {
       result = d.winner === this.localId ? 'win' : 'loss';
     } else if (d.winner >= 0 && lp) result = d.winner === lp.team ? 'win' : 'loss';
     if (d.reason === 'host-left' && d.winner === -2) result = 'draw';
+    if (this.spectator) result = 'over';
     const myStats = lp ? { k: lp.kills, d: lp.deaths, hs: lp.hs } : { k: 0, d: 0, hs: 0 };
     this.endKillcam();
     this.app.storeReplay?.(this.rec.serialize({
@@ -1912,6 +1934,7 @@ export class Game {
         : `${d.scores[lp?.team ?? 0]}-${d.scores[1 - (lp?.team ?? 0)]}`;
     (result === 'win' ? sfx.win : result === 'loss' ? sfx.lose : sfx.roundStart)();
     this.hud.showResults({ result, reason: d.reason, scores: d.scores, stats: d.stats || this.statsPayload(), eloChange: null, score });
+    if (this.spectator) return;
     if (d.reason !== 'host-left') this.app.awardDrop?.(result, this.online).then((item) => this.hud.showDrop(item)).catch((e) => console.warn('Drop failed', e));
     const api = this.app.api;
     if (api && this.app.user) {
@@ -1939,7 +1962,7 @@ export class Game {
 
   leave() {
     // Leaving a ranked match is a forfeit, so there's nothing to rejoin.
-    if (this.ended || this.mode.ranked) this.app.clearActiveMatch?.();
+    if (!this.spectator && (this.ended || this.mode.ranked)) this.app.clearActiveMatch?.();
     this.destroy();
     this.app.exitGame();
   }

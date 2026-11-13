@@ -3,6 +3,7 @@ import { UI } from './ui/ui.js';
 import { Game } from './game/game.js';
 import { OPERATORS, sanitizeChar } from './data/characters.js';
 import { Room, buildMatch } from './net/realtime.js';
+import { MODES } from './data/modes.js';
 import { initAudio } from './engine/audio.js';
 import { normalizeInventory, rollDrop, addToInventory, KINDS } from './data/skins.js';
 
@@ -156,7 +157,14 @@ class App {
     return this.presence.members().filter((m) => m.id && m.name).sort((a, b) => (b.elo || 0) - (a.elo || 0));
   }
 
-  setStatus(status) { this.presence?.track({ status }); }
+  // `match` (when in a match) lets friends see what you're playing and spectate it.
+  setStatus(status, match = null) { this.presence?.track({ status, match }); }
+
+  // Watch someone else's live match as a spectator.
+  spectate(match) {
+    if (!match?.id) return;
+    this.startOnline({ matchId: match.id, mode: match.mode, map: match.map, hostId: null, players: [], botLevel: 'normal' }, { spectator: true });
+  }
 
   startOffline(o) {
     const me = this.me();
@@ -164,14 +172,14 @@ class App {
     this.runGame(payload, null);
   }
 
-  async startOnline(payload, { rejoin = false } = {}) {
+  async startOnline(payload, { rejoin = false, spectator = false } = {}) {
     const me = this.me();
-    const title = rejoin ? 'Reconnecting' : 'Match found';
+    const title = spectator ? 'Joining as spectator' : rejoin ? 'Reconnecting' : 'Match found';
     this.ui.root.innerHTML = `<div class="screen"><div class="menu-bg"></div><div class="content" style="display:grid;place-items:center"><div style="text-align:center"><div class="queue-pulse"></div><h2>${title}</h2><p class="muted">Connecting to ${payload.players.filter((p) => !p.isBot).length} player(s)…</p></div></div></div>`;
     try {
-      const net = new Room(this.api.sb, 'jps-match-' + payload.matchId, me, { name: me.name });
+      const net = new Room(this.api.sb, 'jps-match-' + payload.matchId, me, { name: me.name, spectator });
       await net.connect();
-      this.runGame(payload, net, { rejoin });
+      this.runGame(payload, net, { rejoin, spectator });
     } catch (e) {
       this.ui.toast('Could not join match: ' + e.message, 'bad');
       this.ui.showMenu('play');
@@ -202,12 +210,14 @@ class App {
     if (r) this.startOnline(r.payload, { rejoin: true });
   }
 
-  runGame(payload, net, { rejoin = false } = {}) {
+  runGame(payload, net, { rejoin = false, spectator = false } = {}) {
     this.ui.hide();
     this.gameEl.classList.remove('hidden');
-    this.setStatus('in match');
-    if (net) this.saveActiveMatch(payload);
-    this.game = new Game(this, { ...payload, net, localId: this.me().id, rejoin });
+    const m = MODES[payload.mode];
+    if (spectator) this.setStatus('spectating');
+    else this.setStatus('in match', net ? { id: payload.matchId, mode: payload.mode, map: payload.map, ranked: !!m?.ranked } : null);
+    if (net && !spectator) this.saveActiveMatch(payload);
+    this.game = new Game(this, { ...payload, net, localId: this.me().id, rejoin, spectator });
     this.game.start().catch((e) => {
       console.error(e);
       this.ui.toast('Failed to start match: ' + e.message, 'bad');

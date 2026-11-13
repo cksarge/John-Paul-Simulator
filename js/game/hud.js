@@ -21,7 +21,7 @@ export class Hud {
 
   mount() {
     const r = this.root;
-    r.classList.remove('hidden');
+    r.classList.remove('hidden', 'spectator-hud', 'in-killcam');
     r.innerHTML = `
       <div class="radar"><canvas width="200" height="200"></canvas></div>
       <div class="fps hidden"></div>
@@ -325,7 +325,7 @@ export class Hud {
   // ───────────── results ─────────────
   showResults({ result, reason, scores, stats, score }) {
     this.overlay = 'results';
-    const g = this.g, title = { win: 'VICTORY', loss: 'DEFEAT', draw: 'DRAW' }[result];
+    const g = this.g, title = { win: 'VICTORY', loss: 'DEFEAT', draw: 'DRAW', over: 'MATCH OVER' }[result];
     const color = result === 'win' ? 'var(--good)' : result === 'loss' ? 'var(--bad)' : 'var(--muted)';
     const reasonText = { forfeit: 'Opponent forfeited', 'host-left': 'The host left the match', kills: 'Kill limit reached', time: 'Time limit reached', gungame: 'Got a kill with every weapon', score: '' }[reason] || '';
     const rows = [...stats].sort((a, b) => b.k - a.k).map((s) => `<tr class="${s.id === g.localId ? 'me' : ''}"><td>${esc(s.name)}</td>${!SOLO_KINDS.has(g.mode.kind) ? `<td style="color:var(--${TEAM_CLASS[s.team]})">${g.mode.kind === 'bomb' ? (s.team === 0 ? 'ATK' : 'DEF') : 'T' + (s.team + 1)}</td>` : ''}<td class="num">${s.k}</td><td class="num">${s.d}</td><td class="num">${s.hs}</td><td class="num">${s.dmg}</td></tr>`).join('');
@@ -366,7 +366,16 @@ export class Hud {
 
   // ───────────── per-frame ─────────────
   update(dt) {
-    const g = this.g, p = g.local, el = this.el, s = g.state;
+    const g = this.g, el = this.el, s = g.state;
+    // Spectators see the HUD of whoever they are watching.
+    const p = g.local || (g.spectator ? g.spectateTarget : null);
+    if (g.spectator) {
+      this.root.classList.add('spectator-hud');
+      const t = g.spectateTarget;
+      const html = `<span class="spec-tag">SPECTATING</span>${t ? `<b>${esc(t.name)}</b>` : '<b>No one alive</b>'}<span class="muted small">Click / Space next · Q previous · V camera (${{ follow: 'third person', pov: 'first person', free: 'free' }[g.specCam.mode]}) · Tab scores · Esc leave</span>`;
+      if (html !== this.specHtml) { this.specHtml = html; el.spec.innerHTML = html; }
+      el.spec.classList.remove('hidden');
+    }
     this.t += dt;
     if (this.centerT > 0) { this.centerT -= dt; if (this.centerT <= 0) el.center.style.opacity = 0; }
     if (this.infoT > 0) { this.infoT -= dt; if (this.infoT <= 0) this.showInfoLine(); }
@@ -437,7 +446,11 @@ export class Hud {
     el.ar.querySelector('.hud-label').textContent = p.helmet ? 'Armor + Helmet' : 'Armor';
     el.money.textContent = econFor(g.mode) ? `$${p.money}` : '';
     el.bomb.classList.toggle('hidden', !p.hasBomb);
-    if (w) {
+    if (g.spectator) {
+      // Remote players' ammo isn't synced, so just show what they're holding.
+      el.wname.textContent = itemInfo(p.remoteWeapon || p.weaponId)?.name || '';
+      el.ammo.innerHTML = '';
+    } else if (w) {
       el.wname.textContent = w.name;
       const a = p.ammo[w.id];
       el.ammo.innerHTML = a ? `${a.mag}<span> / ${a.reserve}</span>` : '';
@@ -453,8 +466,8 @@ export class Hud {
 
     // Spectate
     const st = g.spectateTarget;
-    el.spec.classList.toggle('hidden', p.alive || !st || s.phase === 'over');
-    if (!p.alive && st) el.spec.innerHTML = `Spectating <b>${esc(st.name)}</b> · ${st.hp} HP <span class="muted small">(click to switch)</span>`;
+    if (!g.spectator) el.spec.classList.toggle('hidden', p.alive || !st || s.phase === 'over');
+    if (!g.spectator && !p.alive && st) el.spec.innerHTML = `Spectating <b>${esc(st.name)}</b> · ${st.hp} HP <span class="muted small">(click to switch)</span>`;
 
     // Contextual hints: recomputed every tick and shown whenever no timed message is up.
     let hint = '';
@@ -469,7 +482,7 @@ export class Hud {
   }
 
   drawRadar() {
-    const g = this.g, p = g.local, c = this.el.radar, ctx = c.getContext('2d');
+    const g = this.g, p = g.local || (g.spectator ? g.spectateTarget : null), c = this.el.radar, ctx = c.getContext('2d');
     if (!p) return;
     const center = g.spectateTarget && !p.alive ? g.spectateTarget : p;
     const S = 8 / 2; // radar px per metre (radarCanvas uses 8 px per 2 m cell)

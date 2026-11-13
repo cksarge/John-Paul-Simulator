@@ -395,3 +395,8 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .rp-marks { position: absolute; left: 0; right: 0; top: -8px; height: 6px; pointer-events: none; }
 .rp-marks i { position: absolute; width: 3px; height: 8px; background: #ff4d4d; transform: translateX(-1px); }
 .rp-help { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; font-size: 12px; color: rgba(255,255,255,.55); pointer-events: none; }
+
+#hud.spectator-hud .hud-bottom-right .slots, #hud.spectator-hud .money, #hud.spectator-hud .crosshair { display: none; }
+#hud.spectator-hud .spectate { bottom: 150px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.spec-tag { font-family: var(--display); letter-spacing: 4px; font-weight: 700; font-size: 12px; color: var(--accent); }
+.spectate b { font-family: var(--display); font-size: 26px; }
