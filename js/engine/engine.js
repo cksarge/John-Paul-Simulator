@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS = {
   padSens: 1.0, padInvertY: false, padDeadzone: 0.15, padVibration: true, offlineMode: false,
   volume: 0.7, showFps: true, maxFps: 0, keepLoadout: false, killcam: true, menuScene: true,
   crosshairColor: '#3dff8f', crosshairSize: 6, crosshairGap: 4, crosshairThick: 2, crosshairDot: false,
+  colorblind: 'off', soundCues: false, toggleCrouch: false, toggleWalk: false, reduceFlash: false, reduceMotion: false, hudScale: 1,
 };
 
 const SHADOW_SIZE = { off: 0, low: 1024, high: 2048, ultra: 4096 };
@@ -73,7 +74,9 @@ export class Engine {
     const phi = THREE.MathUtils.degToRad(90 - theme.sky.elevation), th = THREE.MathUtils.degToRad(theme.sky.azimuth);
     const sunDir = new THREE.Vector3().setFromSphericalCoords(1, phi, th);
     u.sunPosition.value.copy(sunDir);
-    scene.add(sky);
+    // Fog hides the sky completely: a flat background in the fog colour instead of the sky dome.
+    if (theme.hideSky) scene.background = new THREE.Color(theme.fog);
+    else scene.add(sky);
 
     // Image-based lighting from the same sky.
     const envScene = new THREE.Scene();
@@ -94,9 +97,14 @@ export class Engine {
     const [skyC, groundC, hi] = theme.hemi;
     scene.add(new THREE.HemisphereLight(skyC, groundC, hi));
 
+    // At night the sun is below the horizon; the light comes from the moon (theme.light) instead.
+    const lightDir = theme.light
+      ? new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - theme.light.elevation), THREE.MathUtils.degToRad(theme.light.azimuth))
+      : sunDir;
     const sun = new THREE.DirectionalLight(theme.sun, theme.sunIntensity);
     const center = new THREE.Vector3(size.x / 2, 0, size.z / 2);
-    sun.position.copy(center).addScaledVector(sunDir, 120);
+    sun.position.copy(center).addScaledVector(lightDir, 120);
+    if (theme.stars) scene.add(starField(center));
     sun.target.position.copy(center);
     scene.add(sun, sun.target);
     const half = Math.max(size.x, size.z) * 0.72;
@@ -106,7 +114,7 @@ export class Engine {
     sun.shadow.normalBias = 0.04;
     this.sun = sun;
     this.vmSun.color.set(theme.sun);
-    this.vmSun.position.copy(sunDir);
+    this.vmSun.position.copy(lightDir);
     this.renderer.toneMappingExposure = theme.exposure;
     this.applyShadows();
     return sun;
@@ -205,4 +213,19 @@ export class Engine {
     if (this.composer) { this.composer.dispose(); this.composer = null; }
     this.sun = null;
   }
+}
+
+// A dome of stars for night maps.
+function starField(center) {
+  const n = 1800, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const v = new THREE.Vector3().setFromSphericalCoords(450, Math.acos(Math.random() * 0.97), Math.random() * Math.PI * 2);
+    pos.set([v.x, v.y, v.z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xdfe8ff, size: 2, sizeAttenuation: false, fog: false, toneMapped: false }));
+  pts.position.copy(center);
+  pts.frustumCulled = false;
+  return pts;
 }

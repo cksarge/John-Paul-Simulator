@@ -4,6 +4,7 @@ import { Game } from './game/game.js';
 import { OPERATORS, sanitizeChar } from './data/characters.js';
 import { Room, buildMatch } from './net/realtime.js';
 import { MODES } from './data/modes.js';
+import { MAPS } from './data/maps.js';
 import { MenuScene } from './ui/menuscene.js';
 import { PartyManager } from './net/party.js';
 import { initAudio } from './engine/audio.js';
@@ -11,6 +12,9 @@ import { pad, PadNav, isTouchOnly, applyPadSettings, padHelp } from './engine/ga
 import { normalizeInventory, rollDrop, addToInventory, KINDS } from './data/skins.js';
 import { applySeasonRows, currentSeason, seasonById, seasonTrack, tierFor, rankedReward, RANKED_REWARD_WINS } from './data/seasons.js';
 import { normalizeProgress, applyMatch } from './data/challenges.js';
+import { applyAccess } from './ui/access.js';
+import { loadLocalMaps, setFeatured, registerRow, isCustom } from './data/custommaps.js';
+import { normalizeAchievements, mergeAchievements, applyMatchAchievements, checkUnlocks } from './data/achievements.js';
 
 const boot = document.getElementById('boot');
 const bootBar = boot.querySelector('.boot-bar div');
@@ -21,6 +25,9 @@ class App {
   async init() {
     step(10, 'Loading settings');
     this.settings = loadSettings();
+    applyAccess(this.settings);
+    // Community maps saved on this device (downloads and the last known featured maps).
+    loadLocalMaps();
     step(30, 'Starting renderer');
     this.gameEl = document.getElementById('game');
     this.engine = new Engine(this.gameEl, this.settings);
@@ -45,6 +52,7 @@ class App {
     this.inventory = this.loadLocalInventory();
     this.sessionStart = Date.now();
     this.challenges = this.loadLocalChallenges();
+    this.achievements = this.loadLocalAchievements();
     this.ui = new UI(this);
     addEventListener('pointerdown', () => initAudio(), { once: true });
     applyPadSettings(this.settings);
@@ -60,6 +68,8 @@ class App {
       return;
     }
     import('./net/offline.js').then((m) => m.syncOffline(this.settings.offlineMode)).catch(() => null);
+    this.refreshFeatured();
+    setInterval(() => this.refreshFeatured(), 10 * 60 * 1000);
     let session = null;
     try { session = this.api ? await this.api.session() : null; } catch { session = null; }
     if (location.hash || location.search) history.replaceState(null, '', location.pathname);
@@ -190,6 +200,10 @@ class App {
     else this.api.saveCharacter(this.user.id, this.char).catch(() => null);
     localStorage.setItem('jps_char', JSON.stringify(this.char));
     this.challenges = normalizeProgress(profile.challenges);
+    // Achievements earned as a guest on this device carry over to the account.
+    this.achievements = mergeAchievements(profile.achievements, this.loadLocalAchievements());
+    try { localStorage.removeItem('jps_achievements'); } catch { /* ignore */ }
+    this.checkAchievements();
     // Check for a ban before appearing in the online list.
     await this.pollStatus();
     if (this.banned) return;
@@ -203,6 +217,7 @@ class App {
     this.user = null; this.profile = null; this.isAdmin = false; this.muted = null;
     this.inventory = this.loadLocalInventory();
     this.challenges = this.loadLocalChallenges();
+    this.achievements = this.loadLocalAchievements();
     this.pollStatus();
     this.ui.showMenu('play');
   }
@@ -213,7 +228,9 @@ class App {
     await this.api?.signOut();
     clearInterval(this.statusTimer);
     this.user = null; this.profile = null; this.isAdmin = false; this.muted = null; this.banned = null;
+    this.friends = []; this.friendsLoaded = false; this.friendsSeen = false; this.friendRequestCount = 0;
     this.inventory = this.loadLocalInventory();
+    this.achievements = this.loadLocalAchievements();
     this.ui.showAuth();
   }
 
@@ -222,6 +239,7 @@ class App {
     try { this.profile = await this.api.profile(this.user.id) || this.profile; } catch { /* keep old */ }
     this.presence?.track({ elo: this.profile.elo });
     this.grantSeasonRewards();
+    this.checkAchievements();
   }
 
   // ───────────── account status: moderation, admin gifts, announcements ─────────────
@@ -243,6 +261,7 @@ class App {
       applySeasonRows(await this.api.seasons());
     }
     this.isAdmin = st.admin === true;
+    if (st.friend_requests !== undefined && (st.friend_requests !== this.friendRequestCount || !this.friendsLoaded)) this.loadFriends();
     this.muted = st.muted_until ? { until: st.muted_until, reason: st.mute_reason } : null;
     const banned = st.banned_until ? { until: st.banned_until, reason: st.ban_reason } : null;
     const kickKey = 'jps_kick_' + this.user.id, lastKick = Number(localStorage.getItem(kickKey) || 0), kickAt = st.kick_at ? Date.parse(st.kick_at) : 0;
@@ -364,6 +383,47 @@ class App {
     this.api.saveChallenges(this.user.id, this.challenges).catch(() => null);
   }
 
+  // ───────────── achievements ─────────────
+  loadLocalAchievements() {
+    try { return normalizeAchievements(JSON.parse(localStorage.getItem('jps_achievements') || 'null')); }
+    catch { return normalizeAchievements(null); }
+  }
+
+  async saveAchievements() {
+    const local = () => { try { localStorage.setItem('jps_achievements', JSON.stringify(this.achievements)); } catch { /* ignore */ } };
+    // Until the database has the achievements column, signed-in progress is kept on this device too.
+    if (this.user) return this.api.saveAchievements(this.user.id, this.achievements).catch((e) => { if (e.missing) local(); else console.warn('Achievements not saved', e); });
+    local();
+  }
+
+  announceAchievements(list) {
+    if (list.length > 2) { this.ui.toast(`${list.length} achievements unlocked: ${list.map((d) => `${d.icon} ${d.name}`).join(', ')}`, 'good', null, 8000); return; }
+    for (const d of list) this.ui.toast(`Achievement unlocked: ${d.icon} ${d.name}. ${d.desc}`, 'good', null, 6000);
+  }
+
+  // Unlocks anything reached through profile totals (level, kills…) or counters set elsewhere.
+  checkAchievements() {
+    const got = checkUnlocks(this.achievements, this.profile);
+    if (got.length) { this.announceAchievements(got); this.saveAchievements(); }
+  }
+
+  // Called after every finished match (not the training range).
+  trackAchievements(m) {
+    this.achievements = normalizeAchievements(this.achievements);
+    const got = applyMatchAchievements(this.achievements, m, this.profile);
+    this.announceAchievements(got);
+    this.saveAchievements();
+    return got;
+  }
+
+  // Sets a counter that only goes up (e.g. number of friends) and unlocks what it reaches.
+  bumpAchievementStat(stat, value) {
+    if ((this.achievements.c[stat] || 0) >= value) return;
+    this.achievements.c[stat] = value;
+    this.checkAchievements();
+    this.saveAchievements();
+  }
+
   async saveChar(c) {
     this.char = c;
     try { localStorage.setItem('jps_char', JSON.stringify(c)); } catch { /* ignore */ }
@@ -380,13 +440,71 @@ class App {
     if (this.presence) {
       this.party = new PartyManager(this);
       this.party.attach(this.presence);
+      this.presence.on('friend', (d) => { if (d.to === this.user?.id) this.loadFriends(); });
+      this.presence.onSync(() => this.ui.friendsChanged?.());
       this.ui.renderParty?.();
     }
+  }
+
+  // ───────────── friends ─────────────
+  // The list comes from the database (my_friends); online status comes from the presence room.
+  async loadFriends() {
+    if (!this.user || !this.api) return;
+    let list;
+    try { list = await this.api.friends(); } catch (e) { if (!e.missing) console.warn('Friends unavailable', e); this.friendsMissing = !!e.missing; return; }
+    const before = new Set((this.friends || []).filter((f) => f.incoming && f.status === 'pending').map((f) => f.id));
+    this.friends = list || [];
+    this.friendsLoaded = true;
+    const incoming = this.friends.filter((f) => f.incoming && f.status === 'pending');
+    this.friendRequestCount = incoming.length;
+    for (const f of incoming) if (!before.has(f.id) && this.friendsSeen) this.ui.toast(`${f.username} sent you a friend request`, 'good', [{ label: 'Accept', primary: true, fn: () => this.respondFriend(f.id, true) }, { label: 'Decline', fn: () => this.respondFriend(f.id, false) }], 15000);
+    this.friendsSeen = true;
+    this.bumpAchievementStat('friends', this.friends.filter((f) => f.status === 'accepted').length);
+    this.ui.friendsChanged?.();
+  }
+
+  friendStatus(id) { return (this.friends || []).find((f) => f.id === id) || null; }
+
+  async addFriend(id, name) {
+    try {
+      const r = await this.api.friendRequest(id);
+      this.ui.toast(r === 'accepted' ? `You and ${name} are now friends` : r === 'already' ? `${name} is already your friend` : `Friend request sent to ${name}`, 'good');
+      // Let them know straight away if they're online; otherwise they see it on their next status check.
+      this.presence?.send('friend', { to: id });
+    } catch (e) { this.ui.toast(e.missing ? 'Friends need the latest database update (supabase/schema.sql)' : e.message, 'bad'); }
+    await this.loadFriends();
+  }
+
+  async respondFriend(id, accept) {
+    try { await this.api.friendRespond(id, accept); if (accept) this.presence?.send('friend', { to: id }); } catch (e) { this.ui.toast(e.message, 'bad'); }
+    await this.loadFriends();
+  }
+
+  async removeFriend(id) {
+    try { await this.api.friendRemove(id); this.presence?.send('friend', { to: id }); } catch (e) { this.ui.toast(e.message, 'bad'); }
+    await this.loadFriends();
   }
 
   onlinePlayers() {
     if (!this.presence) return [];
     return this.presence.members().filter((m) => m.id && m.name).sort((a, b) => (b.elo || 0) - (a.elo || 0));
+  }
+
+  // ───────────── community maps ─────────────
+  // Featured maps load for everyone at start-up (and every 10 minutes) and join the queues' rotation.
+  async refreshFeatured() {
+    if (!this.api) return;
+    try { setFeatured(await this.api.featuredMaps()); } catch (e) { if (!e.missing) console.warn('Featured maps unavailable', e); return; }
+    // Show newly featured maps in the bot-match map list if it's open.
+    if (this.ui.tab === 'play' && !this.ui.lobby && !this.game) this.ui.renderPlay(this.ui.root.querySelector('#tab'));
+  }
+
+  // Makes sure a map is available here, downloading a community map by id if needed.
+  async ensureMap(id) {
+    if (MAPS[id]) return true;
+    if (!isCustom(id) || !this.api) return false;
+    try { const row = await this.api.customMap(Number(String(id).slice(2))); if (row) { registerRow(row); return true; } } catch (e) { console.warn('Map download failed', e); }
+    return false;
   }
 
   // `match` (when in a match) lets friends see what you're playing and spectate it.
@@ -395,18 +513,21 @@ class App {
   // Watch someone else's live match as a spectator.
   spectate(match) {
     if (!match?.id) return;
-    this.startOnline({ matchId: match.id, mode: match.mode, map: match.map, hostId: null, players: [], botLevel: 'normal' }, { spectator: true });
+    this.startOnline({ matchId: match.id, mode: match.mode, map: match.map, variant: match.variant, hostId: null, players: [], botLevel: 'normal' }, { spectator: true });
   }
 
   startOffline(o) {
     const me = this.me();
-    const payload = buildMatch({ mode: o.mode, map: o.map, humans: [{ id: me.id, name: me.name, elo: me.elo, char: me.char }], hostId: me.id, fillBots: true, botLevel: o.botLevel });
+    const payload = buildMatch({ mode: o.mode, map: o.map, variant: o.variant || 'day', humans: [{ id: me.id, name: me.name, elo: me.elo, char: me.char }], hostId: me.id, fillBots: true, botLevel: o.botLevel });
     this.runGame(payload, null);
   }
 
   async startOnline(payload, { rejoin = false, spectator = false } = {}) {
     if (this.banned) return;
     const me = this.me();
+    // A match on a community map carries the map, so everyone can play it.
+    if (payload.mapRow) { try { registerRow(payload.mapRow); } catch { /* falls through to the download below */ } }
+    if (!(await this.ensureMap(payload.map))) { this.ui.toast('That match is on a map that couldn’t be downloaded', 'bad'); this.ui.showMenu('play'); return; }
     const title = spectator ? 'Joining as spectator' : rejoin ? 'Reconnecting' : 'Match found';
     this.ui.root.innerHTML = `<div class="screen"><div class="menu-bg"></div><div class="content" style="display:grid;place-items:center"><div style="text-align:center"><div class="queue-pulse"></div><h2>${title}</h2><p class="muted">Connecting to ${payload.players.filter((p) => !p.isBot).length} player(s)…</p></div></div></div>`;
     try {
@@ -448,7 +569,7 @@ class App {
     this.gameEl.classList.remove('hidden');
     const m = MODES[payload.mode];
     if (spectator) this.setStatus('spectating');
-    else this.setStatus('in match', net ? { id: payload.matchId, mode: payload.mode, map: payload.map, ranked: !!m?.ranked } : null);
+    else this.setStatus('in match', net ? { id: payload.matchId, mode: payload.mode, map: payload.map, variant: payload.variant, ranked: !!m?.ranked } : null);
     if (net && !spectator) this.saveActiveMatch(payload);
     this.game = new Game(this, { ...payload, net, localId: this.me().id, rejoin, spectator });
     this.game.start().catch((e) => {
@@ -500,7 +621,7 @@ class App {
     this.ui.hide();
     this.setStatus('watching a replay');
     this.replay = new ReplayViewer(this, data);
-    await this.replay.start();
+    try { await this.replay.start(); } catch (e) { this.replay = null; this.ui.toast(e.message, 'bad'); this.ui.showMenu('replays'); }
   }
 
   exitReplay() {
@@ -514,7 +635,10 @@ class App {
     this.game = null;
     this.gameEl.classList.add('hidden');
     this.setStatus('menu');
-    this.refreshProfile().finally(() => this.ui.showMenu('play'));
+    // Testing a map from the workshop comes back to it.
+    const tab = this.returnTab || 'play';
+    this.returnTab = null;
+    this.refreshProfile().finally(() => this.ui.showMenu(tab));
   }
 }
 

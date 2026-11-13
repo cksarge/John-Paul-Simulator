@@ -131,6 +131,11 @@ alter table public.profiles add column if not exists season_peak   int not null 
 -- Challenge progress is tracked by the client (like match stats); claims are checked by claim_challenge.
 alter table public.profiles add column if not exists challenges    jsonb not null default '{}'::jsonb;
 grant update (challenges) on public.profiles to authenticated;
+-- Achievements (js/data/achievements.js): tracked by the client like challenges. Badges only, no rewards.
+alter table public.profiles add column if not exists achievements jsonb not null default '{}'::jsonb;
+alter table public.profiles drop constraint if exists achievements_size;
+alter table public.profiles add constraint achievements_size check (pg_column_size(achievements) <= 16000);
+grant update (achievements) on public.profiles to authenticated;
 
 -- Ranked results an admin has voided are kept, flagged, so the match can't be reported again.
 alter table public.ranked_matches add column if not exists voided boolean not null default false;
@@ -297,7 +302,8 @@ begin
     'warnings', (select coalesce(json_agg(json_build_object('id', w.id, 'message', w.message, 'at', w.created_at) order by w.id), '[]') from warnings w where w.user_id = uid and not w.seen),
     'grants', (select coalesce(json_agg(json_build_object('id', g.id, 'kind', g.kind, 'item', g.item, 'revoke', g.revoke) order by g.id), '[]') from item_grants g where g.user_id = uid and not g.applied),
     'season', current_season(),
-    'admin', is_admin()
+    'admin', is_admin(),
+    'friend_requests', (select count(*) from friends where friend_id = uid and status = 'pending')
   );
 end;
 $$;
@@ -372,6 +378,159 @@ begin
           case when p_evidence is not null and pg_column_size(p_evidence) <= 16000 then p_evidence end)
   on conflict (reporter, target, match_id) do update set reason = excluded.reason, note = excluded.note, evidence = excluded.evidence;
 end;
+$$;
+
+-- ───────────── friends ─────────────
+-- One row per pair: user_id sent the request, friend_id received it. Private: only changed and
+-- read through the functions below.
+create table if not exists public.friends (
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  friend_id   uuid not null references public.profiles(id) on delete cascade,
+  status      text not null default 'pending' check (status in ('pending', 'accepted')),
+  created_at  timestamptz not null default now(),
+  accepted_at timestamptz,
+  primary key (user_id, friend_id),
+  check (user_id <> friend_id)
+);
+create index if not exists friends_friend_idx on public.friends (friend_id);
+alter table public.friends enable row level security;
+revoke all on public.friends from anon, authenticated;
+
+-- Sends a friend request, or accepts theirs if they already asked you. Returns 'sent', 'accepted' or 'already'.
+create or replace function public.friend_request(p_to uuid)
+returns text language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); r friends%rowtype;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
+  if p_to = uid then raise exception 'you can''t add yourself'; end if;
+  if not exists (select 1 from profiles where id = p_to) then raise exception 'player not found'; end if;
+  select * into r from friends where (user_id = uid and friend_id = p_to) or (user_id = p_to and friend_id = uid) for update;
+  if found then
+    if r.status = 'accepted' then return 'already'; end if;
+    if r.user_id = uid then return 'sent'; end if;
+    update friends set status = 'accepted', accepted_at = now() where user_id = p_to and friend_id = uid;
+    return 'accepted';
+  end if;
+  if (select count(*) from friends where (user_id = uid or friend_id = uid) and status = 'accepted') >= 200 then raise exception 'friends list is full (200)'; end if;
+  if (select count(*) from friends where user_id = uid and created_at > now() - interval '1 day') >= 30 then raise exception 'daily friend request limit reached'; end if;
+  insert into friends (user_id, friend_id) values (uid, p_to);
+  return 'sent';
+end;
+$$;
+
+create or replace function public.friend_respond(p_from uuid, p_accept boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  if p_accept then
+    update friends set status = 'accepted', accepted_at = now() where user_id = p_from and friend_id = uid and status = 'pending';
+  else
+    delete from friends where user_id = p_from and friend_id = uid and status = 'pending';
+  end if;
+end;
+$$;
+
+-- Unfriends, or cancels a request you sent.
+create or replace function public.friend_remove(p_id uuid)
+returns void language sql security definer set search_path = public as $$
+  delete from friends where (user_id = auth.uid() and friend_id = p_id) or (user_id = p_id and friend_id = auth.uid());
+$$;
+
+-- Your friends and pending requests, with what the friends list shows about each player.
+create or replace function public.my_friends()
+returns json language sql stable security definer set search_path = public as $$
+  select coalesce(json_agg(json_build_object(
+    'id', p.id, 'username', p.username, 'elo', p.elo, 'xp', p.xp, 'last_seen', p.last_seen,
+    'card', p.character ->> 'card', 'status', f.status, 'incoming', f.friend_id = auth.uid(), 'since', coalesce(f.accepted_at, f.created_at)
+  ) order by p.username), '[]')
+  from friends f join profiles p on p.id = case when f.user_id = auth.uid() then f.friend_id else f.user_id end
+  where auth.uid() is not null and (f.user_id = auth.uid() or f.friend_id = auth.uid());
+$$;
+
+-- ───────────── custom maps (map editor) ─────────────
+-- Up to 5 per account. `data` is the grid ({w, h, rows, spawns, sites, theme}); the game cleans it
+-- again before use (js/data/custommaps.js). Featured slots 1-2 are small maps, 3-4 large; players
+-- like maps and the admin picks which ones fill the slots. Everyone can read maps; changes go
+-- through the functions below.
+create table if not exists public.custom_maps (
+  id            bigint generated always as identity primary key,
+  owner         uuid not null references public.profiles(id) on delete cascade,
+  name          text not null check (char_length(name) between 3 and 24),
+  description   text check (char_length(description) <= 120),
+  size          text not null check (size in ('small', 'large')),
+  data          jsonb not null check (pg_column_size(data) <= 24000),
+  likes         int not null default 0,
+  featured_slot int check (featured_slot between 1 and 4),
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index if not exists custom_maps_owner_idx on public.custom_maps (owner);
+create index if not exists custom_maps_likes_idx on public.custom_maps (likes desc);
+create unique index if not exists custom_maps_slot_idx on public.custom_maps (featured_slot) where featured_slot is not null;
+alter table public.custom_maps enable row level security;
+revoke all on public.custom_maps from anon, authenticated;
+grant select on public.custom_maps to anon, authenticated;
+drop policy if exists "maps are public" on public.custom_maps;
+create policy "maps are public" on public.custom_maps for select using (true);
+
+create table if not exists public.map_likes (
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  map_id     bigint not null references public.custom_maps(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, map_id)
+);
+alter table public.map_likes enable row level security;
+revoke all on public.map_likes from anon, authenticated;
+
+-- Creates (p_id null) or updates one of your maps. Returns its id. Editing a featured map takes it
+-- out of its slot until the admin approves it again.
+create or replace function public.save_custom_map(p_id bigint, p_name text, p_description text, p_size text, p_data jsonb)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); new_id bigint; w int; h int;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
+  if p_name !~ '^[A-Za-z0-9 _''-]{3,24}$' then raise exception 'map names are 3-24 letters, numbers, spaces, - or _'; end if;
+  if p_size not in ('small', 'large') then raise exception 'invalid map size'; end if;
+  if p_data is null or pg_column_size(p_data) > 24000 then raise exception 'map is too big'; end if;
+  w := (p_data ->> 'w')::int; h := (p_data ->> 'h')::int;
+  if w is null or h is null or w < 14 or h < 10 or w > 52 or h > 48 or jsonb_array_length(p_data -> 'rows') <> h then raise exception 'invalid map grid'; end if;
+  if p_id is null then
+    if (select count(*) from custom_maps where owner = uid) >= 5 then raise exception 'you can upload up to 5 maps. Delete one first.'; end if;
+    insert into custom_maps (owner, name, description, size, data) values (uid, p_name, left(p_description, 120), p_size, p_data) returning id into new_id;
+    return new_id;
+  end if;
+  update custom_maps set name = p_name, description = left(p_description, 120), size = p_size, data = p_data, featured_slot = null, updated_at = now()
+  where id = p_id and owner = uid;
+  if not found then raise exception 'map not found'; end if;
+  return p_id;
+end;
+$$;
+
+create or replace function public.delete_custom_map(p_id bigint)
+returns void language sql security definer set search_path = public as $$
+  delete from custom_maps where id = p_id and owner = auth.uid();
+$$;
+
+-- Likes or unlikes a map. Returns its new like count.
+create or replace function public.like_custom_map(p_id bigint, p_like boolean)
+returns int language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); n int;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
+  if p_like then insert into map_likes (user_id, map_id) values (uid, p_id) on conflict do nothing;
+  else delete from map_likes where user_id = uid and map_id = p_id; end if;
+  update custom_maps set likes = (select count(*) from map_likes where map_id = p_id) where id = p_id returning likes into n;
+  return coalesce(n, 0);
+end;
+$$;
+
+create or replace function public.my_map_likes()
+returns bigint[] language sql stable security definer set search_path = public as $$
+  select coalesce(array_agg(map_id), '{}') from map_likes where user_id = auth.uid();
 $$;
 
 -- ───────────── challenges ─────────────
@@ -760,6 +919,35 @@ begin
 end;
 $$;
 
+-- Puts a map in a featured slot (1-2 small, 3-4 large), replacing whatever was there, or takes it
+-- out (p_slot null).
+create or replace function public.admin_feature_map(p_id bigint, p_slot int)
+returns void language plpgsql security definer set search_path = public as $$
+declare sz text;
+begin
+  perform admin_guard();
+  select size into sz from custom_maps where id = p_id;
+  if not found then raise exception 'map not found'; end if;
+  if p_slot is not null then
+    if p_slot not between 1 and 4 then raise exception 'slots are 1-4'; end if;
+    if (p_slot <= 2) <> (sz = 'small') then raise exception 'slots 1-2 are for small maps, 3-4 for large maps'; end if;
+    update custom_maps set featured_slot = null where featured_slot = p_slot and id <> p_id;
+  end if;
+  update custom_maps set featured_slot = p_slot where id = p_id;
+  perform admin_log(case when p_slot is null then 'unfeature_map' else 'feature_map' end, p_id::text, json_build_object('slot', p_slot)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_delete_map(p_id bigint)
+returns void language plpgsql security definer set search_path = public as $$
+declare m custom_maps%rowtype;
+begin
+  perform admin_guard();
+  delete from custom_maps where id = p_id returning * into m;
+  perform admin_log('delete_map', p_id::text, json_build_object('name', m.name, 'owner', m.owner)::jsonb);
+end;
+$$;
+
 -- ───────────── function permissions ─────────────
 -- Internal helpers are not callable from the app at all.
 revoke all on function public.ensure_season(uuid) from public, anon, authenticated;
@@ -783,6 +971,9 @@ begin
   foreach f in array array[
     'my_status()', 'ack_status(bigint[], bigint[])', 'commend_player(uuid, text, text)',
     'report_player(uuid, text, text, text, text, jsonb)', 'claim_challenge(text)',
+    'friend_request(uuid)', 'friend_respond(uuid, boolean)', 'friend_remove(uuid)', 'my_friends()',
+    'save_custom_map(bigint, text, text, text, jsonb)', 'delete_custom_map(bigint)', 'like_custom_map(bigint, boolean)', 'my_map_likes()',
+    'admin_feature_map(bigint, int)', 'admin_delete_map(bigint)',
     'admin_overview()', 'admin_reports(text, int)', 'admin_resolve_report(bigint, text, text)', 'admin_player(uuid)',
     'admin_ban(uuid, int, text)', 'admin_unban(uuid)', 'admin_mute(uuid, int, text)', 'admin_unmute(uuid)',
     'admin_kick(uuid, text)', 'admin_warn(uuid, text)', 'admin_rename(uuid, text)', 'admin_set_stats(uuid, jsonb)',

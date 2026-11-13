@@ -819,14 +819,46 @@ function waterMaterial() {
   return mat;
 }
 
+// Rain: short streaks that fall fast and slant slightly in the wind.
+function makeRain(world) {
+  const N = 9000, W = world.size.x, D = world.size.z, H = 18, LEN = 0.9, WIND = 1.6;
+  const pos = new Float32Array(N * 6), speed = new Float32Array(N);
+  const r = seeded(13);
+  for (let i = 0; i < N; i++) {
+    const x = r() * W, y = r() * H, z = r() * D;
+    pos.set([x, y, z, x - WIND * 0.03, y + LEN, z], i * 6);
+    speed[i] = 16 + r() * 6;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xc8d4e2, transparent: true, opacity: 0.5, depthWrite: false }));
+  lines.frustumCulled = false;
+  return {
+    points: lines,
+    update(dt) {
+      for (let i = 0; i < N; i++) {
+        const k = i * 6, dy = speed[i] * dt;
+        let y = pos[k + 1] - dy, x = pos[k] + WIND * dt;
+        if (y < 0) { y += H; x = Math.random() * W; pos[k + 2] = pos[k + 5] = Math.random() * D; }
+        if (x > W) x -= W;
+        pos[k] = x; pos[k + 1] = y; pos[k + 3] = x - WIND * 0.03; pos[k + 4] = y + LEN;
+      }
+      geo.attributes.position.needsUpdate = true;
+    },
+  };
+}
+
 function makeParticles(world, kind, soft) {
-  const N = { snow: 2200, dust: 700, embers: 500, fireflies: 260 }[kind] || 500;
+  if (kind === 'rain') return makeRain(world);
+  const blizzard = kind === 'blizzard';
+  if (blizzard) kind = 'snow';
+  const N = { snow: blizzard ? 5000 : 2200, dust: 700, embers: 500, fireflies: 260 }[kind] || 500;
   const W = world.size.x, D = world.size.z, H = kind === 'snow' ? 16 : 7;
   const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), ph = new Float32Array(N);
   const r = seeded(7);
   for (let i = 0; i < N; i++) {
     pos[i * 3] = r() * W; pos[i * 3 + 1] = r() * H; pos[i * 3 + 2] = r() * D; ph[i] = r() * 10;
-    if (kind === 'snow') { vel[i * 3 + 1] = -(0.8 + r() * 0.8); }
+    if (kind === 'snow') { vel[i * 3 + 1] = -(0.8 + r() * 0.8) * (blizzard ? 2.2 : 1); if (blizzard) vel[i * 3] = 3 + r() * 2; }
     else if (kind === 'embers') { vel[i * 3 + 1] = 0.6 + r() * 1.2; }
     else { vel[i * 3] = (r() - 0.5) * 0.2; vel[i * 3 + 1] = (r() - 0.5) * 0.05; vel[i * 3 + 2] = (r() - 0.5) * 0.2; }
   }

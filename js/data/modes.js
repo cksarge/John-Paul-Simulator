@@ -4,6 +4,14 @@ const SMALL = ['vault', 'courtyard', 'foundry', 'outpost'];
 const LARGE = ['dustline', 'harbor', 'canopy', 'frostbite'];
 const ALL = [...SMALL, ...LARGE];
 
+// Featured community maps join the rotation like official maps (js/data/custommaps.js).
+export function addMapToPools(id, size) {
+  for (const pool of size === 'large' ? [LARGE, ALL] : [SMALL, ALL]) if (!pool.includes(id)) pool.push(id);
+}
+export function removeMapFromPools(id) {
+  for (const pool of [SMALL, LARGE, ALL]) { const i = pool.indexOf(id); if (i >= 0) pool.splice(i, 1); }
+}
+
 // Game modes. `teamSize` is players per team (ffa-style modes use `maxPlayers`).
 // kind: 'rounds' | 'bomb' | 'retake' | 'hostage' (round based) · 'ffa' | 'tdm' | 'gungame' (respawn based)
 //       'training' (the offline range, no opponents)

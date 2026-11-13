@@ -3,8 +3,8 @@ import { World, CELL, WOOD_HP } from '../engine/world.js';
 import { Effects } from '../engine/effects.js';
 import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
-import { sfx, setListener, initAudio, setVolume } from '../engine/audio.js';
-import { MAPS } from '../data/maps.js';
+import { sfx, setListener, initAudio, setVolume, onSoundCue } from '../engine/audio.js';
+import { MAPS, withVariant, SIGHT } from '../data/maps.js';
 import { MODES, RESPAWN_KINDS, SOLO_KINDS, BOMB_KINDS, SIDED_KINDS, goalText, econFor } from '../data/modes.js';
 import { HostageView } from './hostage.js';
 import { sanitizeChar } from '../data/characters.js';
@@ -44,7 +44,10 @@ export class Game {
     this.opts = opts;
     this.mode = MODES[opts.mode];
     this.econ = econFor(this.mode);
-    this.mapDef = MAPS[opts.map];
+    // Night and weather only change the look (and how far bots can see); the layout is the same.
+    this.variant = opts.variant || 'day';
+    this.mapDef = withVariant(MAPS[opts.map], this.variant);
+    this.sightRange = SIGHT[this.variant] || SIGHT.day;
     this.net = opts.net || null;
     this.online = !!this.net;
     this.localId = opts.localId;
@@ -65,7 +68,9 @@ export class Game {
     this.decoys = [];
     this.nadeSeq = 0;
     // Detailed personal stats for the stats page (weapons, accuracy, head-to-head, where you died).
-    this.myStats = { shots: 0, hits: 0, weapons: {}, victims: {}, killers: {}, deaths: [], nades: 0, plants: 0, defuses: 0, rescues: 0 };
+    // multi: most kills within 5 s · streak: most kills without dying · long: longest kill (m).
+    this.myStats = { shots: 0, hits: 0, weapons: {}, victims: {}, killers: {}, deaths: [], nades: 0, plants: 0, defuses: 0, rescues: 0, multi: 0, streak: 0, long: 0 };
+    this.killTimes = []; this.killRun = 0;
     this.punch = 0;
     this.lookDX = 0; this.lookDY = 0;
     this.outShots = new Map();
@@ -93,6 +98,11 @@ export class Game {
     this.world = new World(this.mapDef);
     this.world.build(scene);
     eng.setupEnvironment(scene, this.mapDef.theme, this.world.size);
+    // Night maps give you a flashlight (only you see its light).
+    if (this.mapDef.theme.flashlight) {
+      this.flashlight = new THREE.SpotLight(0xfff2d8, 0, 34, 0.42, 0.55, 1.5);
+      scene.add(this.flashlight, this.flashlight.target);
+    }
     eng.setScene(scene);
     this.effects = new Effects(scene);
     this.rec = new Recorder(this);
@@ -121,6 +131,7 @@ export class Game {
     };
     this.hud = new Hud(this);
     this.hud.mount();
+    onSoundCue((kind, pos) => this.hud.soundCue(kind, pos));
     this.pings = new Pings(this);
     initAudio();
     setVolume(this.settings.volume);
@@ -372,9 +383,14 @@ export class Game {
       if (wish.lengthSq() > 0) wish.normalize();
     }
     const wasGround = p.onGround, prevVy = p.vel.y;
+    // Settings → Toggle crouch / Toggle walk: a press flips the state instead of holding the key.
+    if (!ui && s.toggleCrouch && (inp.pressed('ControlLeft') || inp.pressed('KeyC'))) this.crouchOn = !this.crouchOn;
+    if (!ui && s.toggleWalk && (inp.pressed('ShiftLeft') || inp.pressed('ShiftRight'))) this.walkOn = !this.walkOn;
+    const crouchKey = s.toggleCrouch ? !!this.crouchOn : k('ControlLeft') || k('KeyC');
+    const walkKey = s.toggleWalk ? !!this.walkOn : k('ShiftLeft') || k('ShiftRight');
     this.movePlayer(p, wish, dt, {
-      walk: k('ShiftLeft') || k('ShiftRight') || (!!stickMove && stickMove.m < 0.6),
-      crouch: k('ControlLeft') || k('KeyC') || acting,
+      walk: walkKey || (!!stickMove && stickMove.m < 0.6),
+      crouch: crouchKey || acting,
       jump: !frozen && !acting && !ui && inp.pressed('Space'),
     });
     if (!wasGround && p.onGround && prevVy < -4) sfx.land(null);
@@ -399,7 +415,7 @@ export class Game {
     this.viewmodel.update(dt, {
       speed: Math.hypot(p.vel.x, p.vel.z), onGround: p.onGround, lookDX: this.lookDX, lookDY: this.lookDY,
       reload: p.ws.reloadT >= 0 && w ? p.ws.reloadT / reloadTime(p, w) : -1, scoped: p.ws.scope > 0,
-      drawTime: w?.draw || 0.4, hidden: this.emoteT > 0,
+      drawTime: w?.draw || 0.4, hidden: this.emoteT > 0, calm: !!s.reduceMotion,
     });
   }
 
@@ -1564,7 +1580,7 @@ export class Game {
     p.model?.revive();
     p.ws.cooldown = 0; p.ws.reloadT = -1; p.ws.drawT = 0; p.ws.scope = 0; p.ws.spray = 0;
     this.brains.get(p.id)?.reset();
-    if (p.isLocal) { this.punch = 0; this.viewmodel.setWeapon(p.weaponId, p.char); }
+    if (p.isLocal) { this.punch = 0; this.crouchOn = false; this.walkOn = false; this.viewmodel.setWeapon(p.weaponId, p.char); }
   }
 
   // Loadout given on spawn in respawn modes.
@@ -1892,6 +1908,7 @@ export class Game {
   updateCamera(dt) {
     const cam = this.engine.camera, lp = this.local, s = this.settings;
     let fov = s.fov;
+    if (this.flashlight) this.flashlight.intensity = 0;
     if (lp && lp.alive && this.emoteT > 0) {
       // Emoting: swing the camera round to look at your own operator.
       this.emoteCamT = (this.emoteCamT || 0) + dt;
@@ -1917,6 +1934,12 @@ export class Game {
       cam.position.copy(lp.eye());
       cam.rotation.order = 'YXZ';
       cam.rotation.set(lp.pitch + this.punch, lp.yaw, 0);
+      if (this.flashlight) {
+        const fl = this.flashlight, cp = Math.cos(lp.pitch);
+        fl.intensity = 40;
+        fl.position.copy(cam.position);
+        fl.target.position.set(cam.position.x - Math.sin(lp.yaw) * cp, cam.position.y + Math.sin(lp.pitch), cam.position.z - Math.cos(lp.yaw) * cp);
+      }
       const w = lp.weapon;
       if (lp.ws.scope > 0 && w?.scope) fov = w.scope[lp.ws.scope - 1];
       this.spectateTarget = null;
@@ -1980,7 +2003,14 @@ export class Game {
       const ws = (st.weapons[d.w] ||= { k: 0, s: 0, h: 0, hs: 0 });
       ws.k++; if (d.hs) ws.hs++;
       const e = (st.victims[key(v)] ||= { n: v.isBot ? 'Bots' : (v.baseName || v.name), c: 0 }); e.c++;
+      const now = performance.now() / 1000;
+      this.killTimes = this.killTimes.filter((t) => now - t < 5);
+      this.killTimes.push(now);
+      st.multi = Math.max(st.multi, this.killTimes.length);
+      st.streak = Math.max(st.streak, ++this.killRun);
+      st.long = Math.max(st.long, Math.round(k.pos.distanceTo(v.pos)));
     }
+    if (v === lp) { this.killRun = 0; this.killTimes = []; }
     if (v === lp && k && k !== lp) {
       const e = (st.killers[key(k)] ||= { n: k.isBot ? 'Bots' : (k.baseName || k.name), c: 0 }); e.c++;
     }
@@ -2105,7 +2135,7 @@ export class Game {
     const myStats = lp ? { k: lp.kills, d: lp.deaths, hs: lp.hs } : { k: 0, d: 0, hs: 0 };
     this.endKillcam();
     this.app.storeReplay?.(this.rec.serialize({
-      matchId: this.matchId, mode: this.mode.id, map: this.mapDef.id, date: Date.now(), localId: this.localId,
+      matchId: this.matchId, mode: this.mode.id, map: this.mapDef.id, mapRow: this.opts.mapRow || null, variant: this.variant, date: Date.now(), localId: this.localId,
       result, scores: d.scores, online: this.online,
     }));
     let eloChange = 0;
@@ -2117,11 +2147,17 @@ export class Game {
     const highlight = d.reason !== 'host-left' && d.reason !== 'forfeit' && this.settings.killcam !== false ? this.findHighlight() : null;
     if (highlight) setTimeout(() => this.playHighlight(highlight, () => this.hud.showResults(results)), 1200);
     else this.hud.showResults(results);
-    if (this.spectator) return;
+    // Spectators and map-editor test matches don't count: no stats, drops, challenges or achievements.
+    if (this.spectator || this.mapDef.id === 'draft') return;
     this.app.recordLocalStats?.({ mode: this.mode.id, map: this.mapDef.id, result, online: this.online, k: myStats.k, d: myStats.d, hs: myStats.hs, details: this.myStats });
     if (this.mode.kind !== 'training' && d.reason !== 'host-left') {
       const ms = this.myStats, knife = Object.entries(ms.weapons).reduce((a, [w, v]) => a + (isKnife(w) ? v.k : 0), 0);
       this.app.trackChallenges?.({ mode: this.mode.id, result, online: this.online, k: myStats.k, hs: myStats.hs, dmg: Math.round(lp?.damage || 0), weapons: ms.weapons, nades: ms.nades, plants: ms.plants, defuses: ms.defuses, rescues: ms.rescues, knife });
+      this.app.trackAchievements?.({
+        mode: this.mode.id, map: this.mapDef.id, variant: this.variant, result, online: this.online, k: myStats.k, d: myStats.d, hs: myStats.hs,
+        weapons: ms.weapons, nades: ms.nades, plants: ms.plants, defuses: ms.defuses, rescues: ms.rescues, knife, multi: ms.multi, streak: ms.streak, long: ms.long,
+        party: this.app.party?.inParty ? this.app.party.size : 1,
+      });
     }
     if (d.reason !== 'host-left') this.app.awardDrop?.(result, this.online).then((item) => this.hud.showDrop(item)).catch((e) => console.warn('Drop failed', e));
     const api = this.app.api;
@@ -2157,6 +2193,7 @@ export class Game {
 
   destroy() {
     this.running = false;
+    onSoundCue(null);
     this.rec?.unwrap();
     this.input?.dispose();
     this.hud?.unmount();

@@ -295,3 +295,59 @@ export const MAPS = {
     },
   },
 };
+
+// ───────────────────────── conditions (night and weather) ─────────────────────────
+// Every map can be played in any condition. The layout never changes, only the look: sky, light,
+// fog and particles. The condition travels in the match payload so every player sees the same one.
+export const VARIANTS = {
+  day: { name: 'Standard' },
+  night: { name: 'Night' },
+  rain: { name: 'Rain' },
+  fog: { name: 'Fog' },
+};
+const SNOWY = (def) => def.theme.decor?.particles === 'snow';
+export const variantName = (def, v) => (v === 'rain' && def && SNOWY(def) ? 'Blizzard' : VARIANTS[v]?.name || 'Standard');
+
+// How far bots can spot someone in each condition (metres).
+export const SIGHT = { day: 75, night: 38, rain: 55, fog: 30 };
+
+// Quick play rolls a condition for casual modes; ranked always plays the standard look.
+export function rollVariant(ranked) {
+  if (ranked) return 'day';
+  const r = Math.random();
+  return r < 0.55 ? 'day' : r < 0.7 ? 'night' : r < 0.85 ? 'rain' : 'fog';
+}
+
+// The map definition with its theme changed for a condition (the original is left untouched).
+export function withVariant(def, v) {
+  if (!def || !v || v === 'day' || !VARIANTS[v]) return def;
+  const t = def.theme, d = t.decor || {};
+  let theme;
+  if (v === 'night') {
+    theme = {
+      ...t,
+      sky: { elevation: -8, azimuth: t.sky.azimuth, turbidity: 2, rayleigh: 0.4 },
+      light: { elevation: 42, azimuth: t.sky.azimuth + 60 }, stars: true, flashlight: true,
+      fog: 0x070a10, fogDensity: Math.max(0.008, t.fogDensity * 1.6), sun: 0x8ea6ff, sunIntensity: 0.45, hemi: [0x34426a, 0x0c0d10, 0.35], exposure: 0.62,
+      decor: { ...d, night: true, lights: Math.min(12, (d.lights || 4) + 4), lampIntensity: 22, particles: d.particles === 'dust' ? 'fireflies' : d.particles },
+    };
+  } else if (v === 'rain') {
+    const snow = SNOWY(def);
+    theme = {
+      ...t,
+      sky: { ...t.sky, turbidity: 20, rayleigh: 0.12, elevation: Math.max(8, t.sky.elevation * 0.6) },
+      fog: snow ? 0xd8e0ea : 0x6b737c, fogDensity: Math.max(t.fogDensity * 2.2, snow ? 0.018 : 0.012), sun: snow ? 0xe8eef8 : 0xc8d0dc,
+      sunIntensity: t.sunIntensity * 0.4, hemi: [snow ? 0xdde6f2 : 0x9aa6b6, 0x3a3e44, 0.9], exposure: t.exposure * 0.85,
+      decor: { ...d, particles: snow ? 'blizzard' : 'rain', puddles: !snow || d.puddles },
+    };
+  } else {
+    theme = {
+      ...t,
+      sky: { ...t.sky, turbidity: 14, rayleigh: 0.8 },
+      hideSky: true, fog: 0xa9b0b6, fogDensity: Math.max(0.045, t.fogDensity * 7), sun: 0xe6e8ea, sunIntensity: t.sunIntensity * 0.55,
+      hemi: [0xc8cdd2, 0x55585c, 1.0], exposure: t.exposure,
+      decor: { ...d, particles: d.particles === 'snow' ? 'snow' : 'dust' },
+    };
+  }
+  return { ...def, variant: v, theme };
+}

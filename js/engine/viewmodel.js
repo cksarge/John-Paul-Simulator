@@ -118,17 +118,18 @@ export class Viewmodel {
     return { rx, ry, rz: rz + spin, pos };
   }
 
-  // st: {speed, onGround, lookDX, lookDY, reload (0..1 or -1), scoped, crouch, dt}
+  // st: {speed, onGround, lookDX, lookDY, reload (0..1 or -1), scoped, crouch, calm, dt}
   update(dt, st) {
     if (!this.holder) return;
     this.root.visible = !st.scoped && !st.hidden;
     this.drawT = Math.min(1, this.drawT + dt / (st.drawTime || 0.6));
     const draw = 1 - Math.pow(1 - this.drawT, 3);
-    const moving = st.onGround ? Math.min(1, st.speed / 5) : 0;
+    // Reduce motion (st.calm) keeps the weapon still: no bob while moving and no sway when turning.
+    const moving = st.onGround && !st.calm ? Math.min(1, st.speed / 5) : 0, swayK = st.calm ? 0 : 0.0006;
     this.bobT += dt * (6 + st.speed * 1.2);
     const bobX = Math.sin(this.bobT) * 0.012 * moving, bobY = Math.abs(Math.cos(this.bobT)) * 0.012 * moving;
-    this.sway.x += (THREE.MathUtils.clamp(-st.lookDX * 0.0006, -0.04, 0.04) - this.sway.x) * Math.min(1, dt * 10);
-    this.sway.y += (THREE.MathUtils.clamp(st.lookDY * 0.0006, -0.04, 0.04) - this.sway.y) * Math.min(1, dt * 10);
+    this.sway.x += (THREE.MathUtils.clamp(-st.lookDX * swayK, -0.04, 0.04) - this.sway.x) * Math.min(1, dt * 10);
+    this.sway.y += (THREE.MathUtils.clamp(st.lookDY * swayK, -0.04, 0.04) - this.sway.y) * Math.min(1, dt * 10);
     this.kick += (0 - this.kick) * Math.min(1, dt * 14);
     this.kickRot += (0 - this.kickRot) * Math.min(1, dt * 12);
     const airY = st.onGround ? 0 : -0.015;

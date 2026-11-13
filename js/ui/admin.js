@@ -5,6 +5,7 @@
 import { KINDS } from '../data/skins.js';
 import { MODES, rankBadge } from '../data/modes.js';
 import { MAPS } from '../data/maps.js';
+import { FEATURED_SLOTS, registerRow } from '../data/custommaps.js';
 import { REPORT_REASONS, COMMENDS, esc, banUntil, isActive } from './social.js';
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
@@ -12,7 +13,7 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const REASON = Object.fromEntries(REPORT_REASONS.map(([k, l]) => [k, l.split(' (')[0]]));
 const DURATIONS = [[60, '1 hour'], [1440, '1 day'], [10080, '7 days'], [43200, '30 days'], [0, 'Permanent']];
-const SECTIONS = [['overview', 'Overview'], ['reports', 'Reports'], ['players', 'Players'], ['moderated', 'Bans & mutes'], ['live', 'Online now'], ['announce', 'Announcements'], ['settings', 'Game switches'], ['audit', 'Audit log']];
+const SECTIONS = [['overview', 'Overview'], ['reports', 'Reports'], ['players', 'Players'], ['moderated', 'Bans & mutes'], ['live', 'Online now'], ['maps', 'Maps'], ['announce', 'Announcements'], ['settings', 'Game switches'], ['audit', 'Audit log']];
 
 // Small form dialog. fields: [{id, label, type: 'text'|'textarea'|'select'|'number', options, value}]. Resolves to values or null.
 function ask(ui, title, fields, { confirm = 'Confirm', danger = false, note = '' } = {}) {
@@ -138,6 +139,9 @@ export class AdminPanel {
     if (!p) { box.innerHTML = '<p class="m-empty">Player not found.</p>'; return; }
     const banned = isActive(m.banned_until), muted = isActive(m.muted_until);
     const commends = COMMENDS.map(([k, l, i]) => `${i} ${l} ${d.commends?.[k] || 0}`).join(' · ');
+    // Live status from the online list; you can spectate any match they're in (ranked included).
+    const live = this.app.onlinePlayers().find((o) => o.id === p.id);
+    const liveText = !live ? 'Offline' : live.match ? `In a match: ${MODES[live.match.mode]?.name || live.match.mode} on ${MAPS[live.match.map]?.name || live.match.map}` : `Online (${live.status || 'menu'})`;
     box.innerHTML = `<div class="adm-player">
       <div class="row"><h3 class="m-h2">${esc(p.username)}</h3>${rankBadge(p.elo)}${d.is_admin ? '<span class="admin-badge">Admin</span>' : ''}${banned ? `<span class="tag bad">Banned ${esc(banUntil(m.banned_until))}</span>` : ''}${muted ? `<span class="tag warn">Muted ${esc(banUntil(m.muted_until))}</span>` : ''}</div>
       <div class="m-sub">Joined ${when(p.created_at)} · last seen ${when(p.last_seen)} · id ${esc(p.id)}</div>
@@ -147,6 +151,7 @@ export class AdminPanel {
         <div><b>${p.wins}–${p.losses}</b><span>Online W–L</span></div><div><b>${p.kills}/${p.deaths}</b><span>Kills / deaths</span></div>
         <div><b>${p.headshots}</b><span>Headshots</span></div><div><b>${(p.xp || 0).toLocaleString()}</b><span>XP (season ${(p.pass_xp || 0).toLocaleString()})</span></div></div>
       <div class="m-sub">Commends: ${commends} · Reports against: ${d.reports_against.length} · Reports filed: ${d.reports_filed}</div>
+      <div class="row" style="gap:8px;align-items:center"><span class="tag ${live ? 'ok' : ''}">${esc(liveText)}</span>${live?.match?.id && p.id !== this.app.user?.id ? '<button class="btn tiny primary" data-watch>Spectate match</button>' : ''}</div>
       ${d.is_admin ? '<p class="m-sub">Admins can’t be banned, muted, kicked or warned.</p>' : ''}
       <div class="row ar-actions">
         ${d.is_admin ? '' : `${banned ? `<button class="btn tiny" data-act="unban" data-u="${p.id}">Unban</button>` : `<button class="btn tiny danger" data-act="ban" data-u="${p.id}">Ban</button>`}
@@ -165,6 +170,7 @@ export class AdminPanel {
       ${d.seasons.length ? `<h4 class="m-h3">Past seasons</h4>${d.seasons.map((s) => `<div class="m-sub">${esc(s.season_id.toUpperCase())}: ${s.final_elo} final, ${s.peak_elo} peak, ${s.wins}–${s.losses}, ${s.pass_xp.toLocaleString()} season XP</div>`).join('')}` : ''}
     </div>`;
     this.bindActions(box, () => this.showPlayer(id));
+    box.querySelector('[data-watch]')?.addEventListener('click', () => this.app.spectate(live.match));
     box.querySelectorAll('[data-void]').forEach((b) => { b.onclick = async () => {
       const v = await ask(this.ui, 'Void ranked result', [], { confirm: 'Void it', danger: true, note: `Reverses both players' rating change and win/loss for match ${b.dataset.void}.` });
       if (!v) return;
@@ -247,6 +253,41 @@ export class AdminPanel {
     this.bindPlayerLinks(this.body);
     this.bindActions(this.body);
     this.body.querySelectorAll('[data-spec]').forEach((b) => { b.onclick = () => this.app.spectate(list.find((m) => m.id === b.dataset.spec)?.match); });
+  }
+
+  // ───────────── community maps ─────────────
+  // Featured slots (1-2 small, 3-4 large) are filled from the most-liked maps. Play-test before featuring:
+  // featured maps go to every player and into every queue, ranked included.
+  async maps() {
+    const list = await this.app.api.communityMaps({ sort: 'likes' });
+    const slots = FEATURED_SLOTS.map(([n, size]) => ({ n, size, m: list.find((x) => x.featured_slot === n) }));
+    this.body.innerHTML = `<p class="m-sub">Featured maps load on every player's device and join every queue's rotation, ranked included. Play-test a map before featuring it. Editing a featured map removes it from its slot until you feature it again.</p>
+      <h3 class="m-h3">Featured slots</h3>
+      <table class="tbl">${slots.map((s) => `<tr><td>Slot ${s.n} · ${s.size}</td><td>${s.m ? `<b>${esc(s.m.name)}</b> <span class="m-sub">by ${esc(s.m.profiles?.username || '?')} · ♥ ${s.m.likes}</span>` : '<span class="m-sub">Empty</span>'}</td>
+        <td class="rate">${s.m ? `<button class="btn tiny" data-unfeature="${s.m.id}">Remove</button>` : ''}</td></tr>`).join('')}</table>
+      <h3 class="m-h3">Most liked</h3>
+      ${list.length ? `<table class="tbl"><tr><th>Map</th><th>Size</th><th class="num">Likes</th><th>Uploaded</th><th></th></tr>${list.map((m) => `<tr><td><b>${esc(m.name)}</b><br><span class="m-sub">by <a href="#" data-player="${esc(m.owner)}">${esc(m.profiles?.username || '?')}</a>${m.description ? ' · ' + esc(m.description) : ''}</span></td>
+        <td>${m.size}</td><td class="num">${m.likes}</td><td class="m-sub">${when(m.created_at)}</td>
+        <td class="rate"><button class="btn tiny" data-test="${m.id}">Play-test</button>${FEATURED_SLOTS.filter(([, sz]) => sz === m.size).map(([n]) => `<button class="btn tiny ${m.featured_slot === n ? 'primary' : ''}" data-feature="${m.id}" data-slot="${n}" ${m.featured_slot === n ? 'disabled' : ''}>Slot ${n}</button>`).join('')}
+        <button class="btn tiny danger" data-delmap="${m.id}" data-name="${esc(m.name)}">Delete</button></td></tr>`).join('')}</table>` : '<p class="m-empty">No community maps yet.</p>'}`;
+    this.bindPlayerLinks(this.body);
+    const after = () => { this.app.refreshFeatured(); this.refresh(); };
+    this.body.querySelectorAll('[data-feature]').forEach((b) => { b.onclick = async () => { await this.call('feature_map', { p_id: +b.dataset.feature, p_slot: +b.dataset.slot }, `Featured in slot ${b.dataset.slot}`); after(); }; });
+    this.body.querySelectorAll('[data-unfeature]').forEach((b) => { b.onclick = async () => { await this.call('feature_map', { p_id: +b.dataset.unfeature, p_slot: null }, 'Removed from featured'); after(); }; });
+    this.body.querySelectorAll('[data-delmap]').forEach((b) => { b.onclick = async () => {
+      const ok = await ask(this.ui, `Delete ${b.dataset.name}?`, [], { confirm: 'Delete map', danger: true, note: 'This removes it for everyone, including anyone who downloaded it later. It can’t be undone.' });
+      if (!ok) return;
+      await this.call('delete_map', { p_id: +b.dataset.delmap }, 'Map deleted');
+      after();
+    }; });
+    this.body.querySelectorAll('[data-test]').forEach((b) => { b.onclick = async () => {
+      const row = await this.app.api.customMap(+b.dataset.test);
+      if (!row) return;
+      let def;
+      try { def = registerRow(row); } catch (e) { this.ui.toast(`This map can't be played: ${e.message}`, 'bad'); return; }
+      this.app.returnTab = 'admin';
+      this.app.startOffline({ mode: def.size === 'large' ? 'bomb' : 'tdm', map: def.id, variant: 'day', botLevel: 'normal' });
+    }; });
   }
 
   // ───────────── announcements ─────────────

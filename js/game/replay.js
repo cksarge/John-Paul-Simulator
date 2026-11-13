@@ -4,7 +4,8 @@ import { Effects } from '../engine/effects.js';
 import { Viewmodel } from '../engine/viewmodel.js';
 import { CharacterModel, buildGun } from '../engine/models.js';
 import { sfx, setListener, initAudio, setVolume } from '../engine/audio.js';
-import { MAPS } from '../data/maps.js';
+import { MAPS, withVariant } from '../data/maps.js';
+import { registerRow } from '../data/custommaps.js';
 import { MODES, SOLO_KINDS, TEAM_CLASS } from '../data/modes.js';
 import { itemInfo, nadeDef } from '../data/weapons.js';
 import { pad, BTN } from '../engine/gamepad.js';
@@ -41,9 +42,12 @@ export class ReplayViewer {
     eng.clearScene();
     const scene = new THREE.Scene();
     this.scene = scene;
-    this.world = new World(MAPS[this.data.map]);
+    if (!MAPS[this.data.map] && this.data.mapRow) { try { MAPS[this.data.map] = registerRow(this.data.mapRow); } catch { /* handled below */ } }
+    if (!MAPS[this.data.map]) throw new Error('This replay is on a community map that’s no longer on this device.');
+    const def = withVariant(MAPS[this.data.map], this.data.variant);
+    this.world = new World(def);
     this.world.build(scene);
-    eng.setupEnvironment(scene, MAPS[this.data.map].theme, this.world.size);
+    eng.setupEnvironment(scene, def.theme, this.world.size);
     eng.setScene(scene);
     this.effects = new Effects(scene);
     this.viewmodel = new Viewmodel(eng.vmScene);

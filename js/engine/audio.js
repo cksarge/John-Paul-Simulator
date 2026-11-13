@@ -18,6 +18,11 @@ export function initAudio() {
 
 export function setVolume(v) { volume = v; if (master) master.gain.value = v; }
 
+// Settings → Show sounds on screen: the HUD hears about every sound that has a position.
+let cueHook = null;
+export function onSoundCue(fn) { cueHook = fn; }
+const cue = (kind, pos) => { if (pos && cueHook) cueHook(kind, pos); };
+
 export function setListener(pos, forward) {
   if (!ctx) return;
   const L = ctx.listener;
@@ -106,6 +111,7 @@ const GUN = {
 
 export const sfx = {
   shot(weapon, pos) {
+    cue('shot', pos);
     if (!ctx) return;
     const s = GUN[weapon]; if (!s) return;
     const dst = out(pos, s.gain, 140); if (!dst) return;
@@ -123,11 +129,13 @@ export const sfx = {
     noise(dst, t + 0.02, s.len * 2.2, { type: 'bandpass', freq: 500, gain: 0.12, attack: 0.02 });
   },
   knife(pos) {
+    cue('knife', pos);
     if (!ctx) return; const dst = out(pos, 0.5, 20); if (!dst) return;
     noise(dst, ctx.currentTime, 0.15, { type: 'bandpass', freq: 3500, freqEnd: 1200, gain: 0.6, q: 2 });
   },
   dryFire() { if (!ctx) return; const d = out(null, 0.4); tone(d, ctx.currentTime, 0.04, { type: 'square', freq: 1800, gain: 0.3 }); },
   reload(pos) {
+    cue('reload', pos);
     if (!ctx) return; const dst = out(pos, 0.5, 20); if (!dst) return;
     const t = ctx.currentTime;
     noise(dst, t + 0.1, 0.06, { type: 'bandpass', freq: 2500, q: 3, gain: 0.7 });
@@ -135,6 +143,7 @@ export const sfx = {
     noise(dst, t + 0.75, 0.07, { type: 'bandpass', freq: 3000, q: 4, gain: 0.8 });
   },
   step(pos, loud = 1) {
+    cue('step', pos);
     if (!ctx) return; const dst = out(pos, 0.35 * loud, 30); if (!dst) return;
     noise(dst, ctx.currentTime, 0.09, { type: 'lowpass', freq: 600 + Math.random() * 300, gain: 0.8 });
   },
@@ -147,40 +156,46 @@ export const sfx = {
   hurt() { if (!ctx) return; const d = out(null, 0.5); noise(d, ctx.currentTime, 0.18, { freq: 300, gain: 0.8 }); },
   impact(pos) { if (!ctx) return; const dst = out(pos, 0.25, 25); if (!dst) return; noise(dst, ctx.currentTime, 0.05, { type: 'bandpass', freq: 2200 + Math.random() * 1500, q: 2, gain: 0.7 }); },
   explosion(pos) {
+    cue('explosion', pos);
     if (!ctx) return; const dst = out(pos, 1.4, 200); if (!dst) return; const t = ctx.currentTime;
     noise(dst, t, 1.4, { freq: 1200, freqEnd: 60, gain: 1 });
     tone(dst, t, 0.8, { type: 'sine', freq: 90, freqEnd: 30, gain: 1 });
   },
   flash(pos) {
+    cue('flash', pos);
     if (!ctx) return; const dst = out(pos, 1.1, 150); if (!dst) return; const t = ctx.currentTime;
     noise(dst, t, 0.35, { type: 'highpass', freq: 2500, freqEnd: 900, gain: 1 });
     tone(dst, t, 0.3, { type: 'sine', freq: 140, freqEnd: 50, gain: 0.8 });
   },
   ringing() { if (!ctx) return; const d = out(null, 0.18); tone(d, ctx.currentTime, 2.5, { type: 'sine', freq: 3800, gain: 0.25, attack: 0.05 }); },
   fire(pos) {
+    cue('fire', pos);
     if (!ctx) return; const dst = out(pos, 0.8, 60); if (!dst) return; const t = ctx.currentTime;
     noise(dst, t, 0.4, { type: 'bandpass', freq: 900, freqEnd: 300, gain: 0.9 });
     noise(dst, t + 0.1, 2.5, { type: 'lowpass', freq: 500, gain: 0.35, attack: 0.3 });
   },
   door(pos) {
+    cue('door', pos);
     if (!ctx) return; const dst = out(pos, 0.5, 30); if (!dst) return; const t = ctx.currentTime;
     noise(dst, t, 0.45, { type: 'bandpass', freq: 380, freqEnd: 260, q: 1.5, gain: 0.7 });
     tone(dst, t + 0.4, 0.08, { type: 'triangle', freq: 160, gain: 0.5 });
   },
   wood(pos, small) {
+    cue('wood', pos);
     if (!ctx) return; const dst = out(pos, small ? 0.5 : 1, 60); if (!dst) return; const t = ctx.currentTime;
     noise(dst, t, small ? 0.12 : 0.5, { type: 'bandpass', freq: small ? 900 : 600, freqEnd: 250, q: 1.2, gain: 0.9 });
     if (!small) for (let i = 0; i < 4; i++) noise(dst, t + 0.05 + i * 0.06, 0.08, { type: 'bandpass', freq: 1600 + Math.random() * 1200, q: 3, gain: 0.5 });
   },
   glass(pos) {
+    cue('glass', pos);
     if (!ctx) return; const dst = out(pos, 0.8, 60); if (!dst) return; const t = ctx.currentTime;
     for (let i = 0; i < 6; i++) tone(dst, t + i * 0.025 + Math.random() * 0.02, 0.15, { type: 'sine', freq: 2500 + Math.random() * 3500, gain: 0.25 });
     noise(dst, t, 0.3, { type: 'highpass', freq: 4000, gain: 0.6 });
   },
   pickup() { if (!ctx) return; const d = out(null, 0.3); const t = ctx.currentTime; noise(d, t, 0.06, { type: 'bandpass', freq: 2000, q: 3, gain: 0.6 }); noise(d, t + 0.12, 0.06, { type: 'bandpass', freq: 2600, q: 3, gain: 0.6 }); },
-  smoke(pos) { if (!ctx) return; const dst = out(pos, 0.6, 50); if (!dst) return; noise(dst, ctx.currentTime, 2.0, { type: 'highpass', freq: 1500, freqEnd: 600, gain: 0.5, attack: 0.1 }); },
+  smoke(pos) { cue('smoke', pos); if (!ctx) return; const dst = out(pos, 0.6, 50); if (!dst) return; noise(dst, ctx.currentTime, 2.0, { type: 'highpass', freq: 1500, freqEnd: 600, gain: 0.5, attack: 0.1 }); },
   bounce(pos) { if (!ctx) return; const dst = out(pos, 0.3, 30); if (!dst) return; tone(dst, ctx.currentTime, 0.05, { type: 'triangle', freq: 700, gain: 0.5 }); },
-  beep(pos) { if (!ctx) return; const dst = out(pos, 0.5, 120); if (!dst) return; tone(dst, ctx.currentTime, 0.12, { type: 'square', freq: 1950, gain: 0.35 }); },
+  beep(pos) { cue('beep', pos); if (!ctx) return; const dst = out(pos, 0.5, 120); if (!dst) return; tone(dst, ctx.currentTime, 0.12, { type: 'square', freq: 1950, gain: 0.35 }); },
   plantDone(pos) { if (!ctx) return; const dst = out(pos, 0.6, 120); if (!dst) return; const t = ctx.currentTime; for (let i = 0; i < 3; i++) tone(dst, t + i * 0.09, 0.07, { type: 'square', freq: 1500, gain: 0.3 }); },
   click() { if (!ctx) return; tone(out(null, 0.2), ctx.currentTime, 0.03, { type: 'square', freq: 2400, gain: 0.3 }); },
   buy() { if (!ctx) return; const d = out(null, 0.3); const t = ctx.currentTime; tone(d, t, 0.06, { freq: 900, gain: 0.4 }); tone(d, t + 0.06, 0.08, { freq: 1350, gain: 0.4 }); },

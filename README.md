@@ -16,6 +16,11 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 - **Kill cams and replays:** dying shows the last few seconds through your killer's eyes. Your last 8 matches are saved in the browser and can be rewatched from any player's view or a free camera, with a timeline and kill markers.
 - **Offline:** every mode against bots (Easy / Normal / Hard / Elite). Bots throw grenades, open doors and can be flashed.
 - **Offline play (opt-in):** Settings → Offline play saves the game (about 3.5 MB) with a service worker (`sw.js`) so bot matches and the Training Range work with no internet. It's off by default; turning it off removes the saved copy. While online the game always loads fresh files, so updates still arrive.
+- **Conditions:** every map can be played at night (stars, lit windows, lamps and a flashlight), in rain (a blizzard on the snow maps) or in fog. Pick them for bot matches and custom lobbies; casual queues sometimes roll one, ranked always plays the standard look. Bots can't see as far at night, in rain or in fog.
+- **Map workshop:** a map editor (Workshop tab) for small maps and large maps with bomb sites: paint walls, cover, platforms, catwalks, ladders, doors, glass, barrels, ammo and wood, place spawns and sites, mirror for fair symmetric maps, and check that the spawns can't see each other and everything is reachable. Test against bots, then upload (5 maps per account). Players browse, like and download community maps; a match on a community map carries the map, so everyone in it can play. **Featured maps:** 4 slots (2 small, 2 large) chosen from the most-liked maps and approved in the admin panel. They load on every device and join every queue's rotation, ranked included.
+- **Friends:** add friends by username or from the online list, accept or decline requests, see who's online and what they're playing, invite them to your party or watch their match.
+- **Achievements:** 34 badges (bronze, silver, gold) for kills, multi-kills, streaks, long shots, weapons, objectives, every mode, map and condition, and more, on the Stats tab and on profiles. Bot matches count; guests keep progress on their device until they sign in.
+- **Accessibility:** colour-blind modes (red-green and blue-yellow) for team, enemy, health and win/loss colours, with enemies shown as diamonds on the radar; on-screen arrows for sounds (gunfire, footsteps, explosions, the charge, doors, glass); toggle crouch and walk; reduced flashing; reduced motion; HUD size.
 - **Maps:** small: Vault, Courtyard, Foundry, Outpost · large (with bomb sites): Dustline, Harbor, Canopy, Frostbite. Quick play rotates each mode through its whole map pool. Spawn zones are walled so the two teams can never see each other at a round start, and respawns wait until a spot with no enemy in view is free.
 - **Interactive maps:** sliding doors (E), breakable glass, explosive barrels that chain, and ammo crates (E to resupply). Every map has its own dressing: trims, lights, signs pointing to bomb sites, pipes, furnaces, vines, puddles, weather particles and scenery beyond the walls.
 - **Operators:** 8 presets, each with a perk (less recoil, faster movement, radar sense, faster snipers, free kevlar, extra grenades, faster plant/defuse, blast resistance, faster reloads). The custom operator picks any perk.
@@ -32,7 +37,7 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 
 ## One-time Supabase setup
 
-**1. Database:** SQL Editor → New query → paste all of `supabase/schema.sql` → **Run**. (Safe to re-run; re-run it after updates, e.g. to add the `inventory` column for the Armory.)
+**1. Database:** SQL Editor → New query → paste all of `supabase/schema.sql` → **Run**. (Safe to re-run; re-run it after updates, e.g. to add the `inventory` column for the Armory, or the friends, achievements and custom map tables.)
 
 **2. URLs:** Authentication → URL Configuration
 - **Site URL:** `https://jpsim.carterscoding.com/`

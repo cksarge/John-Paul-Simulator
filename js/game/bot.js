@@ -53,7 +53,7 @@ export class BotBrain {
     const eye = this.p.eye(), dst = o.eye().setY(o.eyeY() - 0.35);
     const d = dst.clone().sub(eye);
     const dist = d.length();
-    if (dist > 75) return false;
+    if (dist > (this.g.sightRange || 75)) return false;
     const fwd = new THREE.Vector3(-Math.sin(this.p.yaw), 0, -Math.cos(this.p.yaw));
     const flat = new THREE.Vector3(d.x, 0, d.z).normalize();
     const ang = Math.acos(THREE.MathUtils.clamp(fwd.dot(flat), -1, 1));

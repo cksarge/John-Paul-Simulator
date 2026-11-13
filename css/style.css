@@ -320,13 +320,27 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .flash { position: absolute; inset: 0; background: radial-gradient(circle, transparent 40%, rgba(160,0,0,.45)); opacity: 0; transition: opacity .5s; }
 .flash.on { opacity: 1; transition: none; }
 .blind { position: absolute; inset: 0; background: #fffdf6; opacity: 0; pointer-events: none; z-index: 5; }
+/* Accessibility: reduce flashing turns the flashbang white-out into a dark blur and the damage flash into a gentle fade. */
+.reduce-flash .blind { background: rgba(8,10,14,.97); backdrop-filter: blur(14px); }
+.reduce-flash .flash.on { opacity: .55; transition: opacity .25s; }
+/* Show sounds on screen: labelled arrows around the crosshair. */
+.snd-cues { position: absolute; inset: 0; pointer-events: none; }
+.snd { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 2px; transition: opacity .6s; }
+.snd.fade { opacity: 0; }
+.snd i { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 13px solid currentColor; filter: drop-shadow(0 1px 2px #000); }
+.snd span { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; background: rgba(10,12,16,.7); color: #e7ebef; white-space: nowrap; }
+.snd-shot, .snd-explosion, .snd-beep, .snd-fire, .snd-flash { color: var(--bad); }
+.snd-step, .snd-reload, .snd-knife { color: #e7ebef; }
+.snd-door, .snd-glass, .snd-wood, .snd-smoke { color: #ffd23f; }
+/* HUD size: scales the corner panels, scores, radar, killfeed, chat and messages. */
+.hud-bottom-left, .hud-bottom-right, .money, .bomb-icon, .killfeed, .radar, .chat, .topscore, .goal-pill, .alive-row, .center-msg, .info-msg, .spectate, .progress { zoom: var(--hud-scale, 1); }
 .radar { position: absolute; left: 18px; top: 18px; width: 200px; height: 200px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); background: rgba(10,12,16,.55); overflow: hidden; }
 .radar canvas { width: 100%; height: 100%; }
 .scope { position: absolute; inset: 0; background: radial-gradient(circle at center, transparent 0, transparent 34vh, #000 34.2vh); }
 .scope::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: #000; }
 .scope::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: #000; }
 .spectate { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); background: rgba(10,12,16,.75); padding: 8px 18px; border-radius: 4px; font-family: var(--display); font-size: 18px; letter-spacing: 1.5px; }
-.fps { position: absolute; top: 4px; left: 230px; font-family: var(--mono); font-size: 11px; color: #9f9; text-shadow: 0 1px 2px #000; }
+.fps { position: absolute; top: 4px; left: calc(30px + 200px * var(--hud-scale, 1)); font-family: var(--mono); font-size: 11px; color: #9f9; text-shadow: 0 1px 2px #000; }
 .bomb-icon { position: absolute; left: 28px; bottom: 140px; font-family: var(--display); font-weight: 700; color: var(--bad); letter-spacing: 2px; font-size: 14px; background: rgba(10,12,16,.7); padding: 4px 10px; border-radius: 3px; }
 
 .chat { position: absolute; left: 20px; bottom: 180px; width: 380px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
@@ -396,7 +410,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .rp-feed .w { color: var(--muted); } .rp-feed .hs { color: #ff6b6b; }
 .rp-players { position: absolute; left: 16px; top: 72px; display: flex; flex-direction: column; gap: 3px; max-height: 60vh; overflow-y: auto; }
 .rp-p { padding: 4px 10px; background: rgba(10,12,16,.65); border-left: 3px solid #666; cursor: pointer; min-width: 150px; }
-.rp-p.t { border-left-color: #e8833a; } .rp-p.ct { border-left-color: #4ea3ff; }
+.rp-p.t { border-left-color: var(--t); } .rp-p.ct { border-left-color: var(--ct); }
 .rp-p.sel { background: rgba(242,163,58,.25); outline: 1px solid var(--accent); }
 .rp-target { position: absolute; left: 50%; bottom: 112px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; text-shadow: 0 2px 6px #000; pointer-events: none; }
 .rp-target b { font-family: var(--display); font-size: 26px; letter-spacing: 1px; }

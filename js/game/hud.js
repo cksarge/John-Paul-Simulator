@@ -8,6 +8,16 @@ import { DRILLS } from './training.js';
 import { buildCrosshair, layoutCrosshair } from '../ui/crosshair.js';
 import { pad, padHelp } from '../engine/gamepad.js';
 import { censor } from '../data/profanity.js';
+import { palette } from '../ui/access.js';
+import { variantName } from '../data/maps.js';
+
+// "Show sounds on screen": what each sound is called and how far away it still gets a marker,
+// most important first (one marker per direction shows the most important sound from there).
+const SOUND_CUES = {
+  explosion: ['Explosion', 120], shot: ['Gunfire', 70], beep: ['Charge', 60], flash: ['Flashbang', 60], fire: ['Fire', 40], knife: ['Knife', 14],
+  glass: ['Glass', 40], wood: ['Wood breaking', 40], door: ['Door', 26], smoke: ['Smoke', 40], step: ['Footsteps', 22], reload: ['Reloading', 14],
+};
+const CUE_RANK = Object.fromEntries(Object.keys(SOUND_CUES).map((k, i) => [k, i]));
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtTime = (t) => { t = Math.max(0, Math.ceil(t)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
@@ -36,6 +46,7 @@ export class Hud {
       <div class="crosshair"></div>
       <div class="hitmarker"></div>
       <div class="dmg-ind"></div>
+      <div class="snd-cues"></div>
       <div class="flash"></div>
       <div class="blind"></div>
       <div class="scope hidden"></div>
@@ -64,14 +75,17 @@ export class Hud {
       ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), blind: q('.blind'), scope: q('.scope'),
       center: q('.center-msg'), goal: q('.goal-pill'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
       money: q('.money'), hp: q('.hp'), ar: q('.ar'), slots: q('.slots'), wname: q('.weapon-name'), ammo: q('.ammo .hud-num'),
-      chat: q('.chat'), ovl: q('.ovl'), wheel: q('.emote-wheel'), killcam: q('.killcam'),
+      chat: q('.chat'), ovl: q('.ovl'), wheel: q('.emote-wheel'), killcam: q('.killcam'), cues: q('.snd-cues'),
     };
+    this.cues = new Map();
     this.radarImg = this.g.world.radarCanvas(8);
     this.buildCrosshair();
     this.el.fps.classList.toggle('hidden', !this.g.settings.showFps);
   }
 
   unmount() {
+    for (const c of this.cues?.values() || []) clearTimeout(c.timer);
+    this.cues?.clear();
     this.root.innerHTML = '';
     this.root.classList.add('hidden');
   }
@@ -96,8 +110,9 @@ export class Hud {
   showClickToPlay() {
     this.overlay = 'start';
     const m = this.g.mode, map = this.g.mapDef;
+    const cond = this.g.variant && this.g.variant !== 'day' ? ' · ' + variantName(map, this.g.variant) : '';
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel pause" style="text-align:center">
-      <h3>${esc(m.name)} · ${esc(map.name)}</h3>
+      <h3>${esc(m.name)} · ${esc(map.name)}${esc(cond)}</h3>
       <h1 style="margin:0">Ready up</h1>
       <p class="muted small">${pad.active ? padHelp().split(' In menus')[0] : 'WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy (1-3 presets) · F rebuy · K keep loadout · E doors, ammo, plant/defuse · Tab scores · 1-5 weapons'}</p>
       <p class="goal-tag" style="margin:0">${esc(goalText(m))}</p>
@@ -327,6 +342,40 @@ export class Hud {
     }
   }
 
+  // Settings → Show sounds on screen: a labelled arrow around the crosshair pointing at the sound.
+  // Directions snap to 8 sectors; each sector has one marker showing its most important recent sound.
+  soundCue(kind, pos) {
+    const g = this.g, lp = g.local?.alive ? g.local : g.spectateTarget, cue = SOUND_CUES[kind];
+    if (!g.settings.soundCues || !cue || !lp || !pos || g.ended || !this.el) return;
+    const dx = pos.x - lp.pos.x, dz = pos.z - lp.pos.z, dist = Math.hypot(dx, dz);
+    if (dist < 1.5 || dist > cue[1]) return;
+    // Same angle convention as the damage indicator: 0 is straight ahead.
+    const sector = ((Math.round(-(Math.atan2(-dx, -dz) - lp.yaw) / (Math.PI / 4)) % 8) + 8) % 8, a = sector * (Math.PI / 4);
+    this.cues ||= new Map();
+    let c = this.cues.get(sector);
+    if (c && !c.el.classList.contains('fade') && CUE_RANK[c.kind] < CUE_RANK[kind]) return;
+    if (!c) {
+      const el = document.createElement('div');
+      el.innerHTML = '<i></i><span></span>';
+      this.el.cues.appendChild(el);
+      c = { el };
+      this.cues.set(sector, c);
+      const R = 160;
+      el.style.left = `calc(50% + ${(Math.sin(a) * R).toFixed(1)}px)`;
+      el.style.top = `calc(50% + ${(-Math.cos(a) * R).toFixed(1)}px)`;
+      el.querySelector('i').style.transform = `rotate(${a.toFixed(3)}rad)`;
+    }
+    c.kind = kind;
+    c.el.className = 'snd snd-' + kind;
+    c.el.querySelector('span').textContent = cue[0];
+    const key = sector;
+    clearTimeout(c.timer);
+    c.timer = setTimeout(() => {
+      c.el.classList.add('fade');
+      c.timer = setTimeout(() => { c.el.remove(); this.cues.delete(key); }, 600);
+    }, kind === 'step' ? 500 : 1100);
+  }
+
   killfeed(k, v, w, hs) {
     const cls = (p) => (SOLO_KINDS.has(this.g.mode.kind) ? 'ffa' : TEAM_CLASS[p.team]);
     const e = document.createElement('div');
@@ -534,7 +583,16 @@ export class Hud {
     ctx.globalAlpha = 0.9;
     ctx.drawImage(this.radarImg, 0, 0);
     ctx.globalAlpha = 1;
-    const eye = p.eye();
+    const eye = p.eye(), pal = palette(g.settings);
+    // Enemies are diamonds in colour-blind mode, so they don't rely on colour alone.
+    const enemyDot = (x, z) => {
+      const r = 6 / zoom * 0.6;
+      ctx.fillStyle = pal.enemy;
+      ctx.beginPath();
+      if (g.settings.colorblind && g.settings.colorblind !== 'off') { const d = r * 1.35; ctx.moveTo(x, z - d); ctx.lineTo(x + d, z); ctx.lineTo(x, z + d); ctx.lineTo(x - d, z); ctx.closePath(); }
+      else ctx.arc(x, z, r, 0, Math.PI * 2);
+      ctx.fill();
+    };
     for (const o of g.players.values()) {
       if (!o.alive || o === center) continue;
       const friendly = !SOLO_KINDS.has(g.mode.kind) && o.team === p.team;
@@ -546,14 +604,14 @@ export class Hud {
         visible = o._radarT > 0;
       }
       if (!visible) continue;
-      ctx.fillStyle = friendly ? (o.team === 0 ? '#e8833a' : '#4ea3ff') : '#ff4040';
+      if (!friendly) { enemyDot(o.pos.x * S, o.pos.z * S); continue; }
+      ctx.fillStyle = o.team === 0 ? pal.t : pal.ct;
       ctx.beginPath(); ctx.arc(o.pos.x * S, o.pos.z * S, 6 / zoom * 0.6, 0, Math.PI * 2); ctx.fill();
     }
     // Decoys look like an enemy firing.
     for (const d of g.decoys || []) {
       if (!p.alive || d.firingT <= 0 || (!SOLO_KINDS.has(g.mode.kind) && d.team === p.team) || d.owner === p.id) continue;
-      ctx.fillStyle = '#ff4040';
-      ctx.beginPath(); ctx.arc(d.pos.x * S, d.pos.z * S, 6 / zoom * 0.6, 0, Math.PI * 2); ctx.fill();
+      enemyDot(d.pos.x * S, d.pos.z * S);
     }
     const b = g.state.bomb || {};
     g.pings?.drawRadar(ctx, S);

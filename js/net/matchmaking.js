@@ -141,7 +141,7 @@ export class Lobby {
   constructor(app, code, isHost, { onChange, onStart, onClosed }) {
     this.app = app; this.code = code; this.isHost = isHost;
     this.onChange = onChange; this.onStart = onStart; this.onClosed = onClosed;
-    this.cfg = { mode: 'bomb', map: 'dustline', botLevel: 'normal', fillBots: true, hostId: isHost ? app.me().id : null, name: '' };
+    this.cfg = { mode: 'bomb', map: 'dustline', variant: 'day', botLevel: 'normal', fillBots: true, hostId: isHost ? app.me().id : null, name: '' };
     this.bans = new BanFilter(app);
   }
 
@@ -202,7 +202,7 @@ export class Lobby {
     const banned = await this.bans.verify(this.members().map((x) => x.id));
     if (banned.size) { this.onChange?.(); return; }
     const humans = this.members().map((x) => ({ id: x.id, name: x.name, elo: x.elo, char: x.char, team: x.team }));
-    const payload = buildMatch({ mode: this.cfg.mode, map: this.cfg.map, humans, hostId: me.id, fillBots: this.cfg.fillBots, botLevel: this.cfg.botLevel });
+    const payload = buildMatch({ mode: this.cfg.mode, map: this.cfg.map, variant: this.cfg.variant || 'day', humans, hostId: me.id, fillBots: this.cfg.fillBots, botLevel: this.cfg.botLevel });
     this.started = true;
     this.room.send('start', payload);
     setTimeout(() => this.onStart(payload), 150);

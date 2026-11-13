@@ -2,7 +2,7 @@ import { MODES, rankBadge, rankFor, levelFor, RANKS, SOLO_KINDS, SIDED_KINDS, ne
 import { PERKS, OPERATORS, CHAR_OPTIONS, sanitizeChar } from '../data/characters.js';
 import { WEAPONS, CLASS_NAMES, itemInfo } from '../data/weapons.js';
 import { RARITIES, KINDS, owns } from '../data/skins.js';
-import { MAPS } from '../data/maps.js';
+import { MAPS, VARIANTS, variantName } from '../data/maps.js';
 import { PRESETS, saveSettings } from '../engine/engine.js';
 import { World } from '../engine/world.js';
 import { Matchmaker, Lobby, listLobbies } from '../net/matchmaking.js';
@@ -17,9 +17,12 @@ import { renderSeason } from './season.js';
 import { buildCrosshair, layoutCrosshair } from './crosshair.js';
 import { offlineSupported, enableOffline, disableOffline } from '../net/offline.js';
 import { AdminPanel } from './admin.js';
+import { Workshop } from './workshop.js';
 import { commendDialog, reportDialog, showBanned, showWarnings, bannerHTML, COMMENDS } from './social.js';
 import { seasonById, fmtDate } from '../data/seasons.js';
 import { censor } from '../data/profanity.js';
+import { PALETTES, applyAccess } from './access.js';
+import { ACHIEVEMENTS, TIERS, MAX_POINTS, normalizeAchievements, progressOf, points } from '../data/achievements.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
@@ -28,7 +31,8 @@ const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s <
 const QUAD_MODES = ['ranked', 'duo', 'bomb', 'tdm'];
 const MORE_MODES = ['hostage', 'retake', 'duel', 'gungame', 'ffa'];
 const OFFLINE_MODES = ['duel', 'duo', 'bomb', 'hostage', 'retake', 'tdm', 'gungame', 'ffa'];
-const PLAY_MAPS = Object.values(MAPS).filter((m) => !m.training);
+// Official maps, then featured community maps, then maps downloaded to this device (the test draft never).
+const playMaps = () => Object.values(MAPS).filter((m) => !m.training && m.id !== 'draft').sort((a, b) => (!!a.custom - !!b.custom) || (!!b.featured - !!a.featured));
 const RESEND_COOLDOWN = 60; // seconds between auth emails (matches Supabase's default per-user limit)
 const COOLDOWN_KEY = 'jps_email_sent_at';
 const NAV = [
@@ -38,11 +42,12 @@ const NAV = [
   ['armory', 'Armory', 'Finishes, outfits, cards, effects, emotes'],
   ['stats', 'Stats', 'Your record, weapons and rivals'],
   ['replays', 'Replays', 'Rewatch your recent matches'],
+  ['workshop', 'Workshop', 'Build, share and download maps'],
   ['leaderboard', 'Leaderboard', 'Top players'],
   ['settings', 'Settings', 'Graphics, controls and audio'],
 ];
-const FOCUS = { play: 'play', season: 'operator', operators: 'operator', armory: 'weapon', stats: 'stats', replays: 'stats', leaderboard: 'play', settings: 'play', admin: 'stats' };
-const WIDE = new Set(['season', 'stats', 'replays', 'leaderboard', 'settings', 'admin']);
+const FOCUS = { play: 'play', season: 'operator', operators: 'operator', armory: 'weapon', stats: 'stats', replays: 'stats', workshop: 'stats', leaderboard: 'play', settings: 'play', admin: 'stats' };
+const WIDE = new Set(['season', 'stats', 'replays', 'workshop', 'leaderboard', 'settings', 'admin']);
 const ADMIN_NAV = ['admin', 'Admin', 'Reports, players and game switches'];
 const ARMORY_KINDS = [['finish', 'Finishes'], ['outfit', 'Outfits'], ['card', 'Calling cards'], ['effect', 'Kill effects'], ['emote', 'Emotes']];
 const WHEEL = ['Up', 'Right', 'Down', 'Left'];
@@ -71,7 +76,7 @@ export class UI {
     this.source = 'online';
     this.onlineMode = 'ranked';
     this.allModes = false;
-    this.offline = { mode: 'bomb', map: 'dustline', botLevel: 'normal' };
+    this.offline = { mode: 'bomb', map: 'dustline', variant: 'day', botLevel: 'normal' };
     this.armoryKind = 'finish';
     this.armoryWeapon = 'ar7';
     this.emoteSlot = 0;
@@ -211,7 +216,7 @@ export class UI {
       <section class="m-panel auth-panel">${tabs}${views[mode]}</section>
     </div>`;
     this.tab = null;
-    const maps = Object.keys(MAPS);
+    const maps = Object.keys(MAPS).filter((id) => !MAPS[id].custom && !MAPS[id].training);
     this.stage(maps[new Date().getDate() % maps.length], 'auth');
     const $ = (sel) => this.root.querySelector(sel);
     const api = this.app.api;
@@ -372,7 +377,7 @@ export class UI {
     const el = this.root.querySelector('#tab');
     ({
       play: () => this.renderPlay(el), season: () => renderSeason(this, el), admin: () => (this.adminPanel ||= new AdminPanel(this)).render(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el),
-      stats: () => this.renderStats(el), replays: () => this.renderReplays(el), leaderboard: () => this.renderLeaderboard(el), settings: () => this.renderSettings(el),
+      stats: () => this.renderStats(el), replays: () => this.renderReplays(el), workshop: () => (this.workshop ||= new Workshop(this)).render(el), leaderboard: () => this.renderLeaderboard(el), settings: () => this.renderSettings(el),
     })[tab]();
   }
 
@@ -440,34 +445,100 @@ export class UI {
       } else slots.push(`<button class="slot open" data-invite title="Invite a friend">+</button>`);
     }
     const inv = party.invites.length;
-    el.innerHTML = `${slots.join('')}${party.inParty ? '<button class="btn small ghost" data-leave>Leave</button>' : ''}${inv ? `<button class="btn small primary" data-invites>${inv} invite${inv > 1 ? 's' : ''}</button>` : ''}`;
-    el.querySelectorAll('[data-invite]').forEach((b) => { b.onclick = () => this.friendsDrawer(); });
+    el.innerHTML = `<button class="btn small" data-friends></button>${slots.join('')}${party.inParty ? '<button class="btn small ghost" data-leave>Leave</button>' : ''}${inv ? `<button class="btn small primary" data-invites>${inv} invite${inv > 1 ? 's' : ''}</button>` : ''}`;
+    el.querySelectorAll('[data-invite]').forEach((b) => { b.onclick = () => this.friendsDrawer('online'); });
+    el.querySelector('[data-friends]').onclick = () => this.friendsDrawer('friends');
+    this.renderFriendsButton();
     el.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); party.kick(b.dataset.kick); }; });
     el.querySelector('[data-leave]')?.addEventListener('click', () => party.leave());
     el.querySelector('[data-invites]')?.addEventListener('click', () => { for (const i of [...party.invites]) this.partyInvite(i); });
   }
 
-  // Online players: invite to party or watch their match.
-  friendsDrawer() {
-    const m = this.modal(`<div class="row"><h2 class="m-h2">Online now</h2><span class="spacer"></span><button class="btn small" data-x>Close</button></div><div class="friends" id="fr"></div>`, 'drawer');
+  // Friends (saved in the database), everyone online now, and friend requests. Invite to your party,
+  // watch a friend's match, add or remove friends.
+  friendsDrawer(tab = this.friendsTab || 'friends') {
+    this.friendsTab = tab;
+    const m = this.modal(`<div class="row"><h2 class="m-h2">Friends</h2><span class="spacer"></span><button class="btn small" data-x>Close</button></div>
+      <div class="m-switch" id="fr-tabs"></div><div class="friends" id="fr"></div>`, 'drawer');
     m.querySelector('[data-x]').onclick = () => m.remove();
+    const app = this.app;
     const draw = () => {
-      if (!m.isConnected) return clearInterval(timer);
-      const list = this.app.onlinePlayers(), meId = this.app.me().id, party = this.app.party;
+      if (!m.isConnected) { clearInterval(timer); this.drawFriends = null; return; }
+      const meId = app.me().id, party = app.party, online = new Map(app.onlinePlayers().map((p) => [p.id, p]));
       const inParty = new Set(party?.inParty ? party.members().map((x) => x.id) : []);
+      const friends = (app.friends || []).filter((f) => f.status === 'accepted');
+      const requests = (app.friends || []).filter((f) => f.status === 'pending');
+      const incoming = requests.filter((f) => f.incoming).length;
+      m.querySelector('#fr-tabs').innerHTML = [['friends', `Friends (${friends.length})`], ['online', 'Online now'], ['requests', `Requests${incoming ? ` (${incoming})` : ''}`]]
+        .map(([k, l]) => `<button data-ft="${k}" class="${this.friendsTab === k ? 'on' : ''}">${l}</button>`).join('');
+      m.querySelectorAll('[data-ft]').forEach((b) => { b.onclick = () => { this.friendsTab = b.dataset.ft; draw(); }; });
+      const statusOf = (p) => (p.match ? `${MODES[p.match.mode]?.name || 'In a match'} on ${MAPS[p.match.map]?.name || ''}${p.match.variant && p.match.variant !== 'day' ? ` (${variantName(MAPS[p.match.map], p.match.variant)})` : ''}` : p.status === 'menu' ? 'In the menu' : p.status || 'Online');
+      const actions = (id, p) => `${p?.match && !p.match.ranked ? `<button class="btn small" data-watch="${esc(id)}">Watch</button>` : ''}
+        ${p ? (inParty.has(id) ? '<span class="m-tagline">In your party</span>' : `<button class="btn small primary" data-inv="${esc(id)}">Invite</button>`) : ''}`;
       const box = m.querySelector('#fr');
-      const others = list.filter((p) => p.id !== meId);
-      box.innerHTML = others.length ? others.map((p) => {
-        const status = p.match ? `${MODES[p.match.mode]?.name || 'In a match'} on ${MAPS[p.match.map]?.name || ''}` : p.status === 'menu' ? 'In the menu' : p.status;
-        return `<div class="friend"><div><b>${esc(p.name)}</b><span>${esc(status || '')}</span></div><span class="spacer"></span>${rankBadge(p.elo)}
-          ${p.match && !p.match.ranked ? `<button class="btn small" data-watch="${esc(p.id)}">Watch</button>` : ''}
-          ${inParty.has(p.id) ? '<span class="m-tagline">In your party</span>' : `<button class="btn small primary" data-inv="${esc(p.id)}">Invite</button>`}</div>`;
-      }).join('') : '<p class="m-empty">Nobody else is online right now. Friends appear here when they open the game while signed in.</p>';
-      box.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => { const p = others.find((x) => x.id === b.dataset.inv); if (p) party.invite(p); b.disabled = true; b.textContent = 'Invited'; }; });
-      box.querySelectorAll('[data-watch]').forEach((b) => { b.onclick = () => { const p = others.find((x) => x.id === b.dataset.watch); m.remove(); if (p?.match) this.app.spectate(p.match); }; });
+      let html = '';
+      if (this.friendsTab === 'friends') {
+        const sorted = [...friends].sort((a, b) => (online.has(b.id) - online.has(a.id)) || a.username.localeCompare(b.username));
+        html = `<div class="fr-add"><input type="text" id="fr-name" maxlength="16" placeholder="Add a friend by username" aria-label="Username"><button class="btn small" id="fr-go">Add</button></div>
+          ${app.friendsMissing ? '<p class="m-empty">Friends need the latest database update. Run supabase/schema.sql in Supabase.</p>'
+            : sorted.length ? sorted.map((f) => { const p = online.get(f.id); return `<div class="friend ${p ? 'on' : 'off'}"><i class="dot"></i><div><b>${esc(f.username)}</b><span>${p ? esc(statusOf(p)) : 'Offline · seen ' + ago(f.last_seen)}</span></div><span class="spacer"></span>${rankBadge(f.elo)}
+              ${actions(f.id, p)}<button class="btn small ghost" data-prof="${esc(f.id)}" title="Profile">Profile</button><button class="btn small ghost" data-rm="${esc(f.id)}" title="Remove friend">×</button></div>`; }).join('')
+              : '<p class="m-empty">No friends yet. Add someone by username, or from the Online now list.</p>'}`;
+      } else if (this.friendsTab === 'online') {
+        const others = app.onlinePlayers().filter((p) => p.id !== meId);
+        html = others.length ? others.map((p) => { const f = app.friendStatus(p.id); return `<div class="friend on"><i class="dot"></i><div><b>${esc(p.name)}</b><span>${esc(statusOf(p))}</span></div><span class="spacer"></span>${rankBadge(p.elo)}
+          ${actions(p.id, p)}${f ? `<span class="m-tagline">${f.status === 'accepted' ? 'Friend' : 'Requested'}</span>` : `<button class="btn small ghost" data-add="${esc(p.id)}" data-name="${esc(p.name)}">Add friend</button>`}</div>`; }).join('')
+          : '<p class="m-empty">Nobody else is online right now. Players appear here when they open the game while signed in.</p>';
+      } else {
+        html = requests.length ? requests.map((f) => `<div class="friend"><div><b>${esc(f.username)}</b><span>${f.incoming ? 'Wants to be your friend' : 'Request sent'} · ${ago(f.since)}</span></div><span class="spacer"></span>${rankBadge(f.elo)}
+          ${f.incoming ? `<button class="btn small primary" data-acc="${esc(f.id)}">Accept</button><button class="btn small ghost" data-dec="${esc(f.id)}">Decline</button>` : `<button class="btn small ghost" data-rm="${esc(f.id)}">Cancel</button>`}</div>`).join('')
+          : '<p class="m-empty">No friend requests.</p>';
+      }
+      box.innerHTML = html;
+      const find = (id) => online.get(id);
+      box.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => { const p = find(b.dataset.inv); if (p) party.invite(p); b.disabled = true; b.textContent = 'Invited'; }; });
+      box.querySelectorAll('[data-watch]').forEach((b) => { b.onclick = () => { const p = find(b.dataset.watch); m.remove(); if (p?.match) app.spectate(p.match); }; });
+      box.querySelectorAll('[data-prof]').forEach((b) => { b.onclick = () => this.profileModal(b.dataset.prof); });
+      box.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => { b.disabled = true; app.removeFriend(b.dataset.rm); }; });
+      box.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => { b.disabled = true; app.respondFriend(b.dataset.acc, true); }; });
+      box.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => { b.disabled = true; app.respondFriend(b.dataset.dec, false); }; });
+      box.querySelectorAll('[data-add]').forEach((b) => { b.onclick = () => { b.disabled = true; app.addFriend(b.dataset.add, b.dataset.name); }; });
+      const name = box.querySelector('#fr-name');
+      if (name) {
+        const go = async () => {
+          const q = name.value.trim();
+          if (!q) return;
+          try {
+            const p = await app.api.profileByName(q);
+            if (!p) { this.toast(`No player called ${q}`, 'bad'); return; }
+            if (p.id === meId) { this.toast('That’s you', 'bad'); return; }
+            name.value = '';
+            app.addFriend(p.id, p.username);
+          } catch (e) { this.toast(e.message, 'bad'); }
+        };
+        box.querySelector('#fr-go').onclick = go;
+        name.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+      }
     };
-    const timer = setInterval(draw, 3000);
+    this.drawFriends = () => { if (!m.querySelector('#fr-name:focus')) draw(); };
+    const timer = setInterval(this.drawFriends, 3000);
     draw();
+    app.loadFriends();
+  }
+
+  // Friends or presence changed: refresh the top-bar button and the open drawer.
+  friendsChanged() {
+    this.renderFriendsButton();
+    this.drawFriends?.();
+  }
+
+  renderFriendsButton() {
+    const b = this.root.querySelector('[data-friends]');
+    if (!b) return;
+    const app = this.app, online = new Set(app.onlinePlayers().map((p) => p.id));
+    const n = (app.friends || []).filter((f) => f.status === 'accepted' && online.has(f.id)).length;
+    const req = app.friendRequestCount || 0;
+    b.innerHTML = `Friends${n ? ` <span class="fr-on">${n} online</span>` : ''}${req ? ` <span class="fr-badge" title="Friend requests">${req}</span>` : ''}`;
   }
 
   partyInvite(inv) {
@@ -495,6 +566,8 @@ export class UI {
 
   // ───────────────────────── play ─────────────────────────
   renderPlay(el) {
+    // The picked bot-match map may have been removed in the workshop.
+    if (!MAPS[this.offline.map] || this.offline.map === 'draft') this.offline.map = 'dustline';
     const app = this.app, online = !!app.user, src = this.source;
     const party = app.party, inParty = !!party?.inParty, isLeader = !inParty || party.isLeader;
     const active = online ? app.activeMatch() : null;
@@ -526,7 +599,9 @@ export class UI {
         <button class="m-train" id="train"><b>Training Range</b><span>Aim drills, moving targets, spray practice and grenade line-ups</span></button>
         <div class="mrows">${OFFLINE_MODES.map((id) => row(id, id === o.mode, 'data-omode')).join('')}</div>
         <div class="m-label">Map</div>
-        <div class="map-strip">${PLAY_MAPS.map((m) => `<button class="map-tile ${o.map === m.id ? 'sel' : ''} ${needsSites(MODES[o.mode]) && !m.sites ? 'off' : ''}" data-map="${m.id}" title="${esc(m.desc)}"><img src="${mapPreview(m.id)}" alt=""><span>${esc(m.name)}</span></button>`).join('')}</div>
+        <div class="map-strip">${playMaps().map((m) => `<button class="map-tile ${o.map === m.id ? 'sel' : ''} ${needsSites(MODES[o.mode]) && !m.sites ? 'off' : ''}" data-map="${m.id}" title="${esc(m.custom ? `${m.name} by ${m.author}. ${m.desc}` : m.desc)}"><img src="${mapPreview(m.id)}" alt=""><span>${esc(m.name)}${m.featured ? ' <i class="map-tag">Featured</i>' : m.custom ? ' <i class="map-tag">Community</i>' : ''}</span></button>`).join('')}</div>
+        <div class="m-label">Conditions</div>
+        <div class="seg" id="off-var">${Object.keys(VARIANTS).map((k) => `<button data-v="${k}" class="${o.variant === k ? 'sel' : ''}">${esc(variantName(MAPS[o.map], k))}</button>`).join('')}</div>
         <div class="m-label">Bots</div>
         <div class="seg" id="off-diff">${Object.keys(BOT_LEVELS).map((k) => `<button data-d="${k}" class="${o.botLevel === k ? 'sel' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
       `}
@@ -568,9 +643,10 @@ export class UI {
         o.map = b.dataset.map; this.scene?.show(o.map); this.footMap(); this.renderPlay(el);
       }; });
       el.querySelectorAll('#off-diff button').forEach((b) => { b.onclick = () => { o.botLevel = b.dataset.d; this.renderPlay(el); }; });
+      el.querySelectorAll('#off-var button').forEach((b) => { b.onclick = () => { o.variant = b.dataset.v; this.renderPlay(el); }; });
       const m = MODES[o.mode], map = MAPS[o.map];
       const n = SOLO_KINDS.has(m.kind) ? 5 : m.teamSize * 2 - 1;
-      info.innerHTML = `<b>${esc(m.name)} on ${esc(map.name)}</b><span>${n} ${o.botLevel} bot${n > 1 ? 's' : ''}. ${esc(map.desc)}</span>`;
+      info.innerHTML = `<b>${esc(m.name)} on ${esc(map.name)}${o.variant !== 'day' ? ' · ' + esc(variantName(map, o.variant)) : ''}</b><span>${n} ${o.botLevel} bot${n > 1 ? 's' : ''}. ${esc(map.desc)}</span>`;
       btn.textContent = 'Deploy';
       btn.onclick = () => app.startOffline({ ...o });
     }
@@ -644,14 +720,26 @@ export class UI {
       teams = col(0, SIDED_KINDS.has(m.kind) ? 'Attackers' : 'Team 1') + col(1, SIDED_KINDS.has(m.kind) ? 'Defenders' : 'Team 2') +
         (auto.length ? `<div class="l-team wide"><div class="l-head"><b>Auto-assign</b><button class="btn small" data-team="-1">Join</button></div>${auto.map(row).join('')}</div>` : '');
     }
-    const maps = needsSites(m) ? PLAY_MAPS.filter((x) => x.sites) : PLAY_MAPS;
+    // Custom maps someone else picked are fetched so the preview and the match work.
+    if (!MAPS[cfg.map]) {
+      this.app.ensureMap(cfg.map).then((ok) => {
+        if (ok) { this.renderLobby(lobby); return; }
+        if (this.lobby !== lobby) return;
+        lobby.leave(); this.lobby = null;
+        this.toast('This lobby is on a community map that no longer exists', 'bad');
+        this.showMenu('play');
+      });
+      return;
+    }
+    const maps = needsSites(m) ? playMaps().filter((x) => x.sites) : playMaps();
     const opt = (v, cur, label) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     el.innerHTML = `<div class="l-top"><div><span class="m-label">Lobby code</span><div class="code-box">${esc(lobby.code)}</div></div><span class="spacer"></span>
         <button class="btn small ghost" id="lb-leave">Leave lobby</button>${host ? '<button class="deploy-btn small" id="lb-start">Start match</button>' : '<span class="m-sub">Waiting for the host to start</span>'}</div>
       <div class="l-grid"><div class="l-teams">${teams}</div>
         <div class="l-cfg">
           <label class="field"><span>Mode</span><select id="lb-mode" ${host ? '' : 'disabled'}>${OFFLINE_MODES.map((k) => opt(k, cfg.mode, MODES[k].name)).join('')}</select></label>
-          <label class="field"><span>Map</span><select id="lb-map" ${host ? '' : 'disabled'}>${maps.map((x) => opt(x.id, cfg.map, `${x.name} (${x.size})`)).join('')}</select></label>
+          <label class="field"><span>Map</span><select id="lb-map" ${host ? '' : 'disabled'}>${maps.some((x) => x.id === cfg.map) ? '' : opt(cfg.map, cfg.map, `${MAPS[cfg.map].name} (community)`)}${maps.map((x) => opt(x.id, cfg.map, `${x.name} (${x.size}${x.featured ? ', featured' : x.custom ? ', community' : ''})`)).join('')}</select></label>
+          <label class="field"><span>Conditions</span><select id="lb-var" ${host ? '' : 'disabled'}>${Object.keys(VARIANTS).map((k) => opt(k, cfg.variant || 'day', variantName(MAPS[cfg.map], k))).join('')}</select></label>
           <label class="field"><span>Bot difficulty</span><select id="lb-diff" ${host ? '' : 'disabled'}>${Object.keys(BOT_LEVELS).map((k) => opt(k, cfg.botLevel, k)).join('')}</select></label>
           <label class="m-check"><input type="checkbox" id="lb-fill" ${cfg.fillBots ? 'checked' : ''} ${host ? '' : 'disabled'}><span>Fill empty slots with bots</span></label>
           <img src="${mapPreview(cfg.map)}" class="l-map" alt="">
@@ -666,6 +754,7 @@ export class UI {
       $('#lb-mode').onchange = (e) => { const mode = e.target.value; let map = cfg.map; if (needsSites(MODES[mode]) && !MAPS[map].sites) map = 'dustline'; lobby.setCfg({ mode, map }); };
       $('#lb-map').onchange = (e) => lobby.setCfg({ map: e.target.value });
       $('#lb-diff').onchange = (e) => lobby.setCfg({ botLevel: e.target.value });
+      $('#lb-var').onchange = (e) => lobby.setCfg({ variant: e.target.value });
       $('#lb-fill').onchange = (e) => lobby.setCfg({ fillBots: e.target.checked });
       $('#lb-start').onclick = () => {
         const humans = lobby.members().length;
@@ -834,7 +923,36 @@ export class UI {
   }
 
   // ───────────────────────── stats ─────────────────────────
+  // Stats has two views: the overview and achievements.
+  statsSwitch() {
+    const v = this.statsView || 'overview';
+    return `<div class="m-switch" role="tablist">${[['overview', 'Overview'], ['achievements', 'Achievements']].map(([k, l]) => `<button data-sv="${k}" class="${v === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  }
+
+  bindStatsSwitch(el) {
+    el.querySelectorAll('[data-sv]').forEach((b) => { b.onclick = () => { this.statsView = b.dataset.sv; this.renderStats(el); }; });
+  }
+
+  renderAchievements(el) {
+    const rec = normalizeAchievements(this.app.achievements), p = this.app.profile;
+    const have = Object.keys(rec.u).length;
+    const card = (a) => {
+      const done = rec.u[a.id], pr = progressOf(rec, a, p), t = TIERS[a.tier];
+      return `<div class="ach ${done ? 'done' : ''}" style="--tc:${t.color}"><span class="ach-icon" aria-hidden="true">${a.icon}</span>
+        <div class="ach-body"><b>${esc(a.name)}</b><span>${esc(a.desc)}</span>
+        ${done ? `<em>Unlocked ${new Date(done).toLocaleDateString()}</em>` : pr && pr[1] > 1 ? `<div class="ach-bar"><i style="width:${pct(pr[0], pr[1])}%"></i></div><em>${pr[0].toLocaleString()} / ${pr[1].toLocaleString()}</em>` : '<em>Locked</em>'}</div>
+        <span class="ach-tier">${t.name} · ${t.points}</span></div>`;
+    };
+    const cats = [...new Set(ACHIEVEMENTS.map((a) => a.cat))];
+    el.innerHTML = `${this.statsSwitch()}
+      <div class="st-nums"><div><b>${have} / ${ACHIEVEMENTS.length}</b><span>Achievements unlocked</span></div><div><b>${points(rec)}</b><span>Points of ${MAX_POINTS}</span></div></div>
+      <p class="m-sub">${p ? 'Progress is saved to your account.' : 'Playing as a guest: progress is saved in this browser and moves to your account when you sign in.'} Bot matches count too; the Training Range doesn't.</p>
+      ${cats.map((c) => `<h3 class="m-h3">${c}</h3><div class="ach-grid">${ACHIEVEMENTS.filter((a) => a.cat === c).map(card).join('')}</div>`).join('')}`;
+    this.bindStatsSwitch(el);
+  }
+
   async renderStats(el, mapId = null) {
+    if (this.statsView === 'achievements') return this.renderAchievements(el);
     const app = this.app, p = app.profile;
     el.innerHTML = '<p class="m-sub">Loading your stats…</p>';
     let rows = [];
@@ -862,7 +980,8 @@ export class UI {
     const bots = agg.h2h?.bot;
     const deathMaps = Object.keys(agg.deaths || {}).filter((k) => MAPS[k] && agg.deaths[k].length);
     const heatMap = mapId && deathMaps.includes(mapId) ? mapId : deathMaps[0];
-    el.innerHTML = `<div class="st-head">
+    if (this.statsView === 'achievements') return;
+    el.innerHTML = `${this.statsSwitch()}<div class="st-head">
         <div><h2 class="m-h1">${esc(app.me().name)}</h2><p class="m-sub">${p ? `Joined ${new Date(p.created_at).toLocaleDateString()} · level ${lvl.level}` : 'Playing as a guest. Stats below are from this browser only.'}</p></div>
         <span class="spacer"></span>${p ? rankBadge(p.elo, true) : ''}
       </div>
@@ -886,6 +1005,7 @@ export class UI {
       <div class="st-search"><input type="text" id="ps" placeholder="Find a player by name" aria-label="Find a player"><button class="btn small" id="psb">Search</button><span class="spacer"></span>
         ${p ? '<button class="btn small danger" id="logout">Sign out</button>' : '<button class="btn small primary" id="signin">Sign in to save stats online</button>'}</div>
       <div id="psr"></div>`;
+    this.bindStatsSwitch(el);
     if (heatMap) this.drawHeat(el.querySelector('#heat'), heatMap, agg.deaths[heatMap]);
     el.querySelectorAll('[data-heat]').forEach((b) => { b.onclick = () => this.renderStats(el, b.dataset.heat); });
     const search = async () => {
@@ -953,9 +1073,29 @@ export class UI {
     const m = this.modal('<p class="m-sub">Loading…</p>');
     try {
       const [p, hist, commends] = await Promise.all([this.app.api.profile(id), this.app.api.history(id, 10), this.app.api.playerCommends(id).catch(() => null)]);
-      m.querySelector('.modal').innerHTML = this.profileHTML(p, hist, commends) + '<div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn small" data-x>Close</button></div>';
+      const app = this.app, f = app.friendStatus(id), canFriend = app.user && id !== app.user.id;
+      const friendBtn = !canFriend ? '' : !f ? '<button class="btn small primary" data-fr="add">Add friend</button>'
+        : f.status === 'accepted' ? '<button class="btn small ghost" data-fr="remove">Remove friend</button>'
+          : f.incoming ? '<button class="btn small primary" data-fr="accept">Accept friend request</button>' : '<span class="m-tagline">Friend request sent</span>';
+      m.querySelector('.modal').innerHTML = this.profileHTML(p, hist, commends) + `<div class="row" style="margin-top:14px;justify-content:flex-end;gap:8px">${friendBtn}<button class="btn small" data-x>Close</button></div>`;
       m.querySelector('[data-x]').onclick = () => m.remove();
+      m.querySelector('[data-fr]')?.addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        const act = e.target.dataset.fr;
+        if (act === 'add') await app.addFriend(id, p.username);
+        else if (act === 'accept') await app.respondFriend(id, true);
+        else await app.removeFriend(id);
+        m.remove();
+      });
     } catch (e) { m.querySelector('.modal').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  }
+
+  // A player's achievement count and their five most recent badges, for profiles.
+  achievementStrip(raw) {
+    const rec = normalizeAchievements(raw), ids = Object.entries(rec.u).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    if (!ids.length) return '';
+    const recent = ids.slice(0, 5).map((id) => ACHIEVEMENTS.find((a) => a.id === id)).filter(Boolean);
+    return `<div class="ach-strip"><span><b>${ids.length}</b> / ${ACHIEVEMENTS.length} achievements · <b>${points(rec)}</b> points</span>${recent.map((a) => `<i title="${esc(a.name)}: ${esc(a.desc)}" style="--tc:${TIERS[a.tier].color}">${a.icon}</i>`).join('')}</div>`;
   }
 
   profileHTML(p, hist, commends = null) {
@@ -970,6 +1110,7 @@ export class UI {
         <div><b>${pct(p.wins, p.matches)}%</b><span>Win rate</span></div>
         <div><b>${p.matches}</b><span>Online matches</span></div>
       </div>
+      ${this.achievementStrip(p.achievements)}
       ${commends && Object.keys(commends).length ? `<div class="commends">${COMMENDS.filter(([k]) => commends[k]).map(([k, l, i]) => `<span title="${l}">${i} ${l} <b>${commends[k]}</b></span>`).join('')}</div>` : ''}
       <h3 class="m-h3">Recent matches</h3>
       ${hist.length ? `<table class="tbl"><tr><th>Result</th><th>Mode</th><th>Map</th><th class="num">K–D</th><th class="num">Rating</th><th class="num">When</th></tr>
@@ -1061,6 +1202,17 @@ export class UI {
         <span>Kill cam</span>${toggle('killcam')}
         <span>Master volume</span>${range('volume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')}
       </div>
+      <h2 class="m-h2">Accessibility</h2>
+      <div class="settings-grid">
+        <span>Colour-blind mode</span>${seg('colorblind', Object.entries(PALETTES).map(([k, p]) => [k, p.label]))}<span></span>
+        <span>Show sounds on screen</span>${toggle('soundCues')}
+        <span>Toggle crouch (instead of hold)</span>${toggle('toggleCrouch')}
+        <span>Toggle walk (instead of hold)</span>${toggle('toggleWalk')}
+        <span>Reduce flashing</span>${toggle('reduceFlash')}
+        <span>Reduce motion</span>${toggle('reduceMotion')}
+        <span>HUD size</span>${range('hudScale', 0.8, 1.5, 0.05, (v) => Math.round(v * 100) + '%')}
+      </div>
+      <p class="m-sub small">Colour-blind mode changes team, enemy, health and win/loss colours everywhere, and shows enemies on the radar as diamonds. Show sounds on screen marks gunfire, footsteps, explosions, the charge's beeps, doors and breaking glass with an arrow pointing at where they came from. Reduce flashing dims flashbangs and the damage flash instead of turning the screen white or red. Reduce motion stops weapon bob and sway.</p>
       <h2 class="m-h2">Offline play</h2>
       <div class="settings-grid">
         <span>Save the game for offline play</span>${toggle('offlineMode')}
@@ -1099,6 +1251,7 @@ export class UI {
       if (Object.keys(patch).some((k) => k.startsWith('crosshair'))) this.drawCrosshairPreview(root);
       if (graphics && !('preset' in patch)) s.preset = 'custom';
       saveSettings(s);
+      applyAccess(s);
       setVolume(s.volume);
       applyPadSettings(s);
       // In the menus the 3D backdrop owns the camera's zoom; keep it so a settings change doesn't
@@ -1129,7 +1282,7 @@ export class UI {
     root.querySelectorAll('[data-range]').forEach((r) => {
       const key = r.dataset.range;
       const fmtEl = root.querySelector(`[data-val="${key}"]`);
-      const fmt = { renderScale: (v) => Math.round(v * 100) + '%', fov: (v) => v + '°', viewmodelFov: (v) => v + '°', volume: (v) => Math.round(v * 100) + '%', crosshairSize: (v) => v + 'px', crosshairGap: (v) => v + 'px', crosshairThick: (v) => v + 'px', padDeadzone: (v) => Math.round(v * 100) + '%' }[key] || ((v) => (+v).toFixed(2));
+      const fmt = { renderScale: (v) => Math.round(v * 100) + '%', fov: (v) => v + '°', viewmodelFov: (v) => v + '°', volume: (v) => Math.round(v * 100) + '%', crosshairSize: (v) => v + 'px', crosshairGap: (v) => v + 'px', crosshairThick: (v) => v + 'px', padDeadzone: (v) => Math.round(v * 100) + '%', hudScale: (v) => Math.round(v * 100) + '%' }[key] || ((v) => (+v).toFixed(2));
       r.oninput = () => { fmtEl.textContent = fmt(+r.value); if (key !== 'renderScale') apply({ [key]: +r.value }, false); };
       r.onchange = () => apply({ [key]: +r.value }, GRAPHICS.has(key));
     });

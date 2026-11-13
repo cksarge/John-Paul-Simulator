@@ -194,6 +194,45 @@ export class Api {
     if (error) throw friendly(error);
   }
 
+  async saveAchievements(id, achievements) {
+    const { error } = await this.sb.from('profiles').update({ achievements }).eq('id', id);
+    if (error) { const e = friendly(error); e.missing = Api.missing(error) || /achievements/.test(error.message); throw e; }
+  }
+
+  // ───────────── custom maps ─────────────
+  // Listings leave out the grid (`data`); it's fetched only when a map is downloaded or played.
+  async featuredMaps() {
+    const { data, error } = await this.sb.from('custom_maps').select('id,name,description,size,data,featured_slot,likes,profiles(username)').not('featured_slot', 'is', null).order('featured_slot');
+    if (error) { const e = friendly(error); e.missing = Api.missing(error); throw e; }
+    return data;
+  }
+
+  async communityMaps({ q = '', sort = 'likes', owner = null } = {}) {
+    let query = this.sb.from('custom_maps').select('id,name,description,size,likes,featured_slot,created_at,updated_at,owner,profiles(username)');
+    if (q) query = query.ilike('name', `%${q.replace(/[%_]/g, '')}%`);
+    if (owner) query = query.eq('owner', owner);
+    query = sort === 'new' ? query.order('created_at', { ascending: false }) : query.order('likes', { ascending: false }).order('created_at', { ascending: false });
+    const { data, error } = await query.limit(60);
+    if (error) { const e = friendly(error); e.missing = Api.missing(error); throw e; }
+    return data;
+  }
+
+  async customMap(id) {
+    const { data, error } = await this.sb.from('custom_maps').select('id,name,description,size,data,featured_slot,likes,owner,profiles(username)').eq('id', id).maybeSingle();
+    if (error) { const e = friendly(error); e.missing = Api.missing(error); throw e; }
+    return data;
+  }
+
+  saveMap(id, name, description, size, data) { return this.rpc('save_custom_map', { p_id: id, p_name: name, p_description: description, p_size: size, p_data: data }); }
+  deleteMap(id) { return this.rpc('delete_custom_map', { p_id: id }); }
+  likeMap(id, like) { return this.rpc('like_custom_map', { p_id: id, p_like: like }); }
+  myMapLikes() { return this.rpc('my_map_likes'); }
+
+  friends() { return this.rpc('my_friends'); }
+  friendRequest(id) { return this.rpc('friend_request', { p_to: id }); }
+  friendRespond(id, accept) { return this.rpc('friend_respond', { p_from: id, p_accept: accept }); }
+  friendRemove(id) { return this.rpc('friend_remove', { p_id: id }); }
+
   commend(to, matchId, kind) { return this.rpc('commend_player', { p_to: to, p_match: matchId, p_kind: kind }); }
   report(target, matchId, mode, reason, note, evidence) { return this.rpc('report_player', { p_target: target, p_match: matchId, p_mode: mode, p_reason: reason, p_note: note, p_evidence: evidence }); }
   playerCommends(id) { return this.rpc('player_commends', { p_id: id }); }

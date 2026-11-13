@@ -1,4 +1,6 @@
 import { MODES, SOLO_KINDS, nextMap } from '../data/modes.js';
+import { MAPS, rollVariant } from '../data/maps.js';
+import { payloadRow } from '../data/custommaps.js';
 import { botName } from '../game/bot.js';
 import { randomChar } from '../data/characters.js';
 
@@ -77,7 +79,7 @@ export function newId(n = 10) {
 }
 
 // Builds the roster for a match: humans get teams (balanced by ELO), bots fill empty slots.
-export function buildMatch({ mode, map, humans, hostId, fillBots = true, botLevel = 'normal' }) {
+export function buildMatch({ mode, map, variant, humans, hostId, fillBots = true, botLevel = 'normal' }) {
   const m = MODES[mode];
   const players = [];
   if (m.kind === 'training') {
@@ -101,5 +103,8 @@ export function buildMatch({ mode, map, humans, hostId, fillBots = true, botLeve
       for (const team of [0, 1]) while (counts[team] < m.teamSize) { counts[team]++; players.push({ id: 'bot-' + i, name: botName(i + team * 7), team, isBot: true, char: randomChar(), elo: 1000 }); i++; }
     }
   }
-  return { matchId: newId(14), mode, map: map || nextMap(mode), hostId, players, botLevel };
+  if (m.kind === 'training') variant = 'day';
+  map ||= nextMap(mode);
+  // Community maps travel with the match so every player can build them.
+  return { matchId: newId(14), mode, map, mapRow: payloadRow(MAPS[map]), variant: variant || rollVariant(!!m.ranked), hostId, players, botLevel };
 }
