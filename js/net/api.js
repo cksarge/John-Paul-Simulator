@@ -228,6 +228,8 @@ export class Api {
   likeMap(id, like) { return this.rpc('like_custom_map', { p_id: id, p_like: like }); }
   myMapLikes() { return this.rpc('my_map_likes'); }
 
+  sendFeedback(kind, message, context) { return this.rpc('submit_feedback', { p_kind: kind, p_message: message, p_context: context }); }
+
   friends() { return this.rpc('my_friends'); }
   friendRequest(id) { return this.rpc('friend_request', { p_to: id }); }
   friendRespond(id, accept) { return this.rpc('friend_respond', { p_from: id, p_accept: accept }); }

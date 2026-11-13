@@ -18,7 +18,7 @@ import { buildCrosshair, layoutCrosshair } from './crosshair.js';
 import { offlineSupported, enableOffline, disableOffline } from '../net/offline.js';
 import { AdminPanel } from './admin.js';
 import { Workshop } from './workshop.js';
-import { commendDialog, reportDialog, showBanned, showMaintenance, showWarnings, bannerHTML, COMMENDS } from './social.js';
+import { commendDialog, reportDialog, feedbackDialog, showBanned, showMaintenance, showWarnings, bannerHTML, COMMENDS } from './social.js';
 import { seasonById, fmtDate } from '../data/seasons.js';
 import { censor } from '../data/profanity.js';
 import { PALETTES, applyAccess } from './access.js';
@@ -434,7 +434,12 @@ export class UI {
     const el = this.root.querySelector('#party');
     if (!el) return;
     const app = this.app, party = app.party;
-    if (!app.user || !party) { el.innerHTML = `<span class="m-party-note">Sign in to party up with friends</span>`; return; }
+    const feedback = '<button class="btn small ghost" data-feedback title="Report a bug or send feedback">Feedback</button>';
+    if (!app.user || !party) {
+      el.innerHTML = `<span class="m-party-note">Sign in to party up with friends</span>${app.user ? feedback : ''}`;
+      el.querySelector('[data-feedback]')?.addEventListener('click', () => feedbackDialog(this));
+      return;
+    }
     const meId = app.me().id, members = party.inParty ? party.members() : [{ ...app.me(), id: meId }];
     const leader = party.inParty ? party.leaderId : meId;
     const slots = [];
@@ -447,9 +452,10 @@ export class UI {
       } else slots.push(`<button class="slot open" data-invite title="Invite a friend">+</button>`);
     }
     const inv = party.invites.length;
-    el.innerHTML = `<button class="btn small" data-friends></button>${slots.join('')}${party.inParty ? '<button class="btn small ghost" data-leave>Leave</button>' : ''}${inv ? `<button class="btn small primary" data-invites>${inv} invite${inv > 1 ? 's' : ''}</button>` : ''}`;
+    el.innerHTML = `<button class="btn small" data-friends></button>${feedback}${slots.join('')}${party.inParty ? '<button class="btn small ghost" data-leave>Leave</button>' : ''}${inv ? `<button class="btn small primary" data-invites>${inv} invite${inv > 1 ? 's' : ''}</button>` : ''}`;
     el.querySelectorAll('[data-invite]').forEach((b) => { b.onclick = () => this.friendsDrawer('online'); });
     el.querySelector('[data-friends]').onclick = () => this.friendsDrawer('friends');
+    el.querySelector('[data-feedback]').onclick = () => feedbackDialog(this);
     this.renderFriendsButton();
     el.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); party.kick(b.dataset.kick); }; });
     el.querySelector('[data-leave]')?.addEventListener('click', () => party.leave());

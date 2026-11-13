@@ -533,6 +533,37 @@ returns bigint[] language sql stable security definer set search_path = public a
   select coalesce(array_agg(map_id), '{}') from map_likes where user_id = auth.uid();
 $$;
 
+-- ───────────── feedback and bug reports ─────────────
+-- Sent from the Feedback button in the menu; only the admin can read them (admin_feedback).
+create table if not exists public.feedback (
+  id          bigint generated always as identity primary key,
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  kind        text not null check (kind in ('bug', 'feedback', 'idea')),
+  message     text not null check (char_length(message) between 5 and 2000),
+  context     jsonb check (context is null or pg_column_size(context) <= 4000),
+  status      text not null default 'open' check (status in ('open', 'resolved')),
+  admin_note  text,
+  created_at  timestamptz not null default now(),
+  resolved_at timestamptz
+);
+create index if not exists feedback_status_idx on public.feedback (status, created_at desc);
+alter table public.feedback enable row level security;
+revoke all on public.feedback from anon, authenticated;
+
+create or replace function public.submit_feedback(p_kind text, p_message text, p_context jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null then raise exception 'sign in to send feedback'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
+  if p_kind not in ('bug', 'feedback', 'idea') then raise exception 'invalid type'; end if;
+  if char_length(trim(coalesce(p_message, ''))) < 5 then raise exception 'write a little more (at least 5 characters)'; end if;
+  if (select count(*) from feedback where user_id = uid and created_at > now() - interval '1 day') >= 10 then raise exception 'you can send 10 messages a day. Thanks for all the feedback!'; end if;
+  insert into feedback (user_id, kind, message, context)
+  values (uid, p_kind, left(trim(p_message), 2000), case when p_context is not null and pg_column_size(p_context) <= 4000 then p_context end);
+end;
+$$;
+
 -- ───────────── challenges ─────────────
 create table if not exists public.challenge_claims (
   user_id    uuid not null references public.profiles(id) on delete cascade,
@@ -673,6 +704,7 @@ begin
     'active_today', (select count(*) from profiles where last_seen > now() - interval '1 day'),
     'matches_today', (select count(*) from match_history where created_at > now() - interval '1 day'),
     'open_reports', (select count(*) from reports where status = 'open'),
+    'open_feedback', (select count(*) from feedback where status = 'open'),
     'banned', (select count(*) from moderation where banned_until > now()),
     'muted', (select count(*) from moderation where muted_until > now()),
     'season', current_season(),
@@ -948,6 +980,26 @@ begin
 end;
 $$;
 
+create or replace function public.admin_feedback(p_status text default 'open', p_limit int default 100)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return (select coalesce(json_agg(row_to_json(t)), '[]') from (
+    select f.*, p.username from feedback f join profiles p on p.id = f.user_id
+    where p_status = 'all' or f.status = p_status order by f.created_at desc limit least(p_limit, 500)) t);
+end;
+$$;
+
+create or replace function public.admin_resolve_feedback(p_id bigint, p_status text, p_note text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  if p_status not in ('open', 'resolved') then raise exception 'invalid status'; end if;
+  update feedback set status = p_status, admin_note = left(p_note, 500), resolved_at = case when p_status = 'resolved' then now() end where id = p_id;
+  perform admin_log('resolve_feedback', p_id::text, json_build_object('status', p_status, 'note', p_note)::jsonb);
+end;
+$$;
+
 -- ───────────── function permissions ─────────────
 -- Internal helpers are not callable from the app at all.
 revoke all on function public.ensure_season(uuid) from public, anon, authenticated;
@@ -974,6 +1026,7 @@ begin
     'friend_request(uuid)', 'friend_respond(uuid, boolean)', 'friend_remove(uuid)', 'my_friends()',
     'save_custom_map(bigint, text, text, text, jsonb)', 'delete_custom_map(bigint)', 'like_custom_map(bigint, boolean)', 'my_map_likes()',
     'admin_feature_map(bigint, int)', 'admin_delete_map(bigint)',
+    'submit_feedback(text, text, jsonb)', 'admin_feedback(text, int)', 'admin_resolve_feedback(bigint, text, text)',
     'admin_overview()', 'admin_reports(text, int)', 'admin_resolve_report(bigint, text, text)', 'admin_player(uuid)',
     'admin_ban(uuid, int, text)', 'admin_unban(uuid)', 'admin_mute(uuid, int, text)', 'admin_unmute(uuid)',
     'admin_kick(uuid, text)', 'admin_warn(uuid, text)', 'admin_rename(uuid, text)', 'admin_set_stats(uuid, jsonb)',

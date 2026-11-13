@@ -102,7 +102,7 @@
 .m-shell .btn.primary, .modal .btn.primary, .toast .btn.primary { background: var(--m-amber); border-color: var(--m-amber); color: var(--m-ink); }
 .m-shell .btn.ghost, .modal .btn.ghost { background: transparent; }
 .m-shell .btn.danger, .modal .btn.danger { border-color: rgba(229, 72, 77, 0.6); color: #ffb3b5; }
-.m-shell input[type=text], .m-shell input[type=email], .m-shell input[type=password], .m-shell select, .modal input[type=text], .ed input[type=text], .ed input[type=number], .ed select, .ed textarea {
+.m-shell input[type=text], .m-shell input[type=email], .m-shell input[type=password], .m-shell select, .modal input[type=text], .modal textarea, .ed input[type=text], .ed input[type=number], .ed select, .ed textarea {
   background: rgba(8, 10, 7, 0.6); border: 1px solid var(--m-faint); border-radius: 2px; padding: 9px 11px; color: var(--m-bone); font-family: var(--m-body); font-size: 14px;
 }
 .m-shell input:focus-visible, .m-shell select:focus-visible { outline: 2px solid var(--m-amber); outline-offset: 0; border-color: transparent; }

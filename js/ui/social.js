@@ -1,4 +1,6 @@
 // Commends, reports, the ban screen, admin warnings and the announcement banner.
+import { GAME_VERSION } from '../config.js';
+
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const COMMENDS = [
@@ -69,6 +71,43 @@ export function showBanned(ui, ban) {
     <div class="row" style="justify-content:center;gap:8px"><button class="btn primary" id="ban-out">Sign out</button></div>
   </div></div>`;
   ui.root.querySelector('#ban-out').onclick = () => ui.app.signOut();
+}
+
+export const FEEDBACK_KINDS = [['bug', 'Bug report', '🐞'], ['feedback', 'Feedback', '💬'], ['idea', 'Idea', '💡']];
+
+// Bug reports, feedback and ideas for the admin (Admin → Feedback). Signed-in players only.
+export function feedbackDialog(ui, kind = 'bug') {
+  const app = ui.app;
+  if (!app.user) { ui.toast('Sign in to send feedback', 'bad'); return; }
+  const m = ui.modal(`<h2 class="m-h2">Send feedback</h2>
+    <p class="m-sub">Goes straight to the developer. Bug reports help most with what you did, what happened and what you expected.</p>
+    <div class="m-switch" id="fb-kind">${FEEDBACK_KINDS.map(([k, l, i]) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${i} ${l}</button>`).join('')}</div>
+    <label class="field"><span id="fb-label"></span><textarea id="fb-msg" maxlength="2000" rows="6"></textarea></label>
+    <label class="m-check"><input type="checkbox" id="fb-ctx" checked><span>Include game version, browser and graphics settings</span></label>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn small ghost" data-x>Cancel</button><button class="btn small primary" data-send>Send</button></div>`);
+  const msg = m.querySelector('#fb-msg');
+  const setKind = (k) => {
+    kind = k;
+    m.querySelectorAll('[data-k]').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+    m.querySelector('#fb-label').textContent = { bug: 'What went wrong?', feedback: 'What do you think?', idea: 'What should be added?' }[k];
+    msg.placeholder = { bug: 'e.g. On Harbor at night, the flashlight stopped working after I died and respawned.', feedback: 'Anything you like or dislike about the game.', idea: 'A mode, map, weapon or feature you’d like to see.' }[k];
+  };
+  setKind(kind);
+  m.querySelectorAll('[data-k]').forEach((b) => { b.onclick = () => setKind(b.dataset.k); });
+  m.querySelector('[data-x]').onclick = () => m.remove();
+  setTimeout(() => msg.focus(), 0);
+  m.querySelector('[data-send]').onclick = async (e) => {
+    const text = msg.value.trim();
+    if (text.length < 5) { ui.toast('Write a little more first', 'bad'); return; }
+    const s = app.settings;
+    const context = m.querySelector('#fb-ctx').checked ? {
+      version: GAME_VERSION, browser: navigator.userAgent.slice(0, 300), screen: `${innerWidth}×${innerHeight} @${devicePixelRatio}x`,
+      graphics: { preset: s.preset, shadows: s.shadows, aa: s.aa, renderScale: s.renderScale }, tab: ui.tab, controller: !!document.querySelector('.pad-gate') || undefined,
+    } : null;
+    e.target.disabled = true;
+    try { await app.api.sendFeedback(kind, text, context); ui.toast('Thanks! Your message was sent.', 'good'); m.remove(); }
+    catch (err) { e.target.disabled = false; ui.toast(err.missing ? 'Feedback needs the latest database update (supabase/schema.sql).' : err.message, 'bad'); }
+  };
 }
 
 // Full-screen maintenance notice for everyone but admins. It goes away by itself when maintenance ends.

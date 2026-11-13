@@ -6,14 +6,14 @@ import { KINDS } from '../data/skins.js';
 import { MODES, rankBadge } from '../data/modes.js';
 import { MAPS } from '../data/maps.js';
 import { FEATURED_SLOTS, registerRow } from '../data/custommaps.js';
-import { REPORT_REASONS, COMMENDS, esc, banUntil, isActive } from './social.js';
+import { REPORT_REASONS, COMMENDS, FEEDBACK_KINDS, esc, banUntil, isActive } from './social.js';
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
 // Report evidence is written by the reporting player, so numbers are forced to numbers.
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const REASON = Object.fromEntries(REPORT_REASONS.map(([k, l]) => [k, l.split(' (')[0]]));
 const DURATIONS = [[60, '1 hour'], [1440, '1 day'], [10080, '7 days'], [43200, '30 days'], [0, 'Permanent']];
-const SECTIONS = [['overview', 'Overview'], ['reports', 'Reports'], ['players', 'Players'], ['moderated', 'Bans & mutes'], ['live', 'Online now'], ['maps', 'Maps'], ['announce', 'Announcements'], ['settings', 'Game switches'], ['audit', 'Audit log']];
+const SECTIONS = [['overview', 'Overview'], ['reports', 'Reports'], ['players', 'Players'], ['moderated', 'Bans & mutes'], ['live', 'Online now'], ['maps', 'Maps'], ['feedback', 'Feedback'], ['announce', 'Announcements'], ['settings', 'Game switches'], ['audit', 'Audit log']];
 
 // Small form dialog. fields: [{id, label, type: 'text'|'textarea'|'select'|'number', options, value}]. Resolves to values or null.
 function ask(ui, title, fields, { confirm = 'Confirm', danger = false, note = '' } = {}) {
@@ -68,11 +68,11 @@ export class AdminPanel {
     const o = await this.call('overview');
     const mt = o.settings?.maintenance?.on;
     this.body.innerHTML = `<div class="adm-stats">
-      ${[['players', 'Players'], ['new_today', 'New today'], ['active_today', 'Active today'], ['matches_today', 'Matches today'], ['open_reports', 'Open reports'], ['banned', 'Banned'], ['muted', 'Muted']].map(([k, l]) => `<div class="${k === 'open_reports' && o[k] ? 'hot' : ''}"><b>${Number(o[k] || 0).toLocaleString()}</b><span>${l}</span></div>`).join('')}
+      ${[['players', 'Players'], ['new_today', 'New today'], ['active_today', 'Active today'], ['matches_today', 'Matches today'], ['open_reports', 'Open reports'], ['open_feedback', 'Open feedback'], ['banned', 'Banned'], ['muted', 'Muted']].map(([k, l]) => `<div class="${(k === 'open_reports' || k === 'open_feedback') && o[k] ? 'hot' : ''}"><b>${Number(o[k] || 0).toLocaleString()}</b><span>${l}</span></div>`).join('')}
       <div><b>${esc((o.season || '—').toUpperCase())}</b><span>Current season</span></div></div>
       ${mt ? '<p class="m-banner warn"><b>Maintenance on</b><span>Online play is paused for everyone but you.</span></p>' : ''}
       <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button class="btn small primary" data-go="reports">Review reports</button><button class="btn small" data-go="players">Find a player</button><button class="btn small" data-go="announce">Post an announcement</button><button class="btn small" data-go="settings">Game switches</button></div>`;
+        <button class="btn small primary" data-go="reports">Review reports</button><button class="btn small" data-go="feedback">Read feedback</button><button class="btn small" data-go="players">Find a player</button><button class="btn small" data-go="announce">Post an announcement</button><button class="btn small" data-go="settings">Game switches</button></div>`;
     this.body.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => { this.section = b.dataset.go; this.refresh(); }; });
   }
 
@@ -253,6 +253,28 @@ export class AdminPanel {
     this.bindPlayerLinks(this.body);
     this.bindActions(this.body);
     this.body.querySelectorAll('[data-spec]').forEach((b) => { b.onclick = () => this.app.spectate(list.find((m) => m.id === b.dataset.spec)?.match); });
+  }
+
+  // ───────────── feedback ─────────────
+  async feedback() {
+    const f = this.feedbackFilter || 'open';
+    const list = await this.call('feedback', { p_status: f });
+    const kinds = Object.fromEntries(FEEDBACK_KINDS.map(([k, l, i]) => [k, `${i} ${l}`]));
+    const ctx = (c) => (c ? `<div class="m-sub small">v${esc(c.version ?? '?')} · ${esc(c.screen || '')} · ${esc(c.graphics?.preset || '')} graphics · ${esc((c.browser || '').replace(/^Mozilla\/5\.0 /, ''))}</div>` : '');
+    this.body.innerHTML = `<div class="seg" id="fb-f">${[['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([k, l]) => `<button data-f="${k}" class="${f === k ? 'sel' : ''}">${l}</button>`).join('')}</div>
+      ${list.length ? list.map((x) => `<div class="adm-report ${x.status === 'resolved' ? 'dismissed' : ''}">
+        <div class="row"><b>${kinds[x.kind] || esc(x.kind)}</b><span class="m-sub">from <a href="#" data-player="${esc(x.user_id)}">${esc(x.username)}</a> · ${when(x.created_at)}</span><span class="spacer"></span>
+          ${x.status === 'open' ? `<button class="btn tiny primary" data-res="${x.id}">Mark resolved</button>` : `<button class="btn tiny" data-reopen="${x.id}">Reopen</button>`}</div>
+        <p style="white-space:pre-wrap;margin:6px 0">${esc(x.message)}</p>${ctx(x.context)}${x.admin_note ? `<div class="m-sub">Note: ${esc(x.admin_note)}</div>` : ''}</div>`).join('') : `<p class="m-empty">No ${f === 'all' ? '' : f} feedback.</p>`}`;
+    this.bindPlayerLinks(this.body);
+    this.body.querySelectorAll('[data-f]').forEach((b) => { b.onclick = () => { this.feedbackFilter = b.dataset.f; this.refresh(); }; });
+    this.body.querySelectorAll('[data-res]').forEach((b) => { b.onclick = async () => {
+      const v = await ask(this.ui, 'Mark resolved', [{ id: 'note', label: 'Note (optional, only you see it)', type: 'textarea', max: 500 }], { confirm: 'Resolve' });
+      if (!v) return;
+      await this.call('resolve_feedback', { p_id: +b.dataset.res, p_status: 'resolved', p_note: v.note || null }, 'Resolved');
+      this.refresh();
+    }; });
+    this.body.querySelectorAll('[data-reopen]').forEach((b) => { b.onclick = async () => { await this.call('resolve_feedback', { p_id: +b.dataset.reopen, p_status: 'open', p_note: null }, 'Reopened'); this.refresh(); }; });
   }
 
   // ───────────── community maps ─────────────
