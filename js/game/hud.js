@@ -103,7 +103,7 @@ export class Hud {
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel pause" style="text-align:center">
       <h3>${esc(m.name)} · ${esc(map.name)}</h3>
       <h1 style="margin:0">Ready up</h1>
-      <p class="muted small">WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy · F rebuy · K keep loadout · E plant/defuse · Tab scores · 1-5 weapons</p>
+      <p class="muted small">WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy (1-3 presets) · F rebuy · K keep loadout · E doors, ammo, plant/defuse · Tab scores · 1-5 weapons</p>
       <p class="goal-tag" style="margin:0">${esc(goalText(m))}</p>
       <button class="btn primary big" data-a="go">Click to play</button>
     </div></div>`;
@@ -147,6 +147,7 @@ export class Hud {
     if (this.overlay !== 'buy') return;
     const g = this.g, p = g.local, free = !econFor(g.mode);
     const owned = (id) => (WEAPONS[id] && p.inv[WEAPONS[id].slot] === id && !(free && id === 'knife')) || (GRENADES[id] && p.inv.nades.includes(id)) || (id === 'kevlar' && p.armor >= 100) || (id === 'helmet' && p.helmet && p.armor >= 100);
+    const names = (items) => items.map((i) => esc(itemInfo(i)?.name || i)).join(' · ');
     const cats = BUY_MENU.map((c) => `<div class="buy-cat"><h3>${c.title}</h3>${c.items.map((id) => {
       const info = itemInfo(id), price = g.priceOf(id);
       const cls = owned(id) ? 'owned' : p.money < price ? 'no' : '';
@@ -158,12 +159,19 @@ export class Hud {
       <button class="btn small" data-a="rebuy" ${g.savedBuys.length ? '' : 'disabled'}>Rebuy last (F)</button>
       <button class="btn small ${g.settings.keepLoadout ? 'primary' : ''}" data-a="keep">Keep loadout: ${g.settings.keepLoadout ? 'ON' : 'OFF'} (K)</button>
       <button class="btn small" data-a="close">Done (B)</button></div>
-      <p class="muted small" style="margin:8px 0 0">${g.savedBuys.length ? 'Saved loadout: ' + g.savedBuys.map((i) => esc(itemInfo(i)?.name || i)).join(' · ') : 'Your purchases are saved as your loadout.'} With <b>Keep loadout</b> on, it's re-equipped automatically every round${g.mode.kind === 'tdm' ? ' and respawn' : ''}.</p>
+      <p class="muted small" style="margin:8px 0 0">${g.savedBuys.length ? 'Last loadout: ' + names(g.savedBuys) : 'Whatever you end up holding after you buy becomes your last loadout.'} With <b>Keep loadout</b> on, it's re-equipped automatically every round${g.mode.kind === 'tdm' ? ' and respawn' : ''}.</p>
+      <div class="presets">${g.presets().map((items, i) => `<div class="preset">
+        <div class="preset-head"><b>Preset ${i + 1}</b><span class="muted small">${i + 1} equip · Shift+${i + 1} save</span></div>
+        <div class="preset-items small">${items ? names(items) : '<span class="muted">Empty</span>'}</div>
+        <div class="row"><button class="btn small primary" data-preset="${i}" ${items ? '' : 'disabled'}>Equip</button><button class="btn small" data-save="${i}">Save current</button></div>
+      </div>`).join('')}</div>
       <div class="buy-cats" style="margin-top:14px">${cats}</div></div></div>`;
     this.el.ovl.querySelectorAll('.buy-item').forEach((e) => { e.onclick = () => g.buy(e.dataset.id); });
     this.el.ovl.querySelector('[data-a=close]').onclick = () => this.closeOverlay(true);
     this.el.ovl.querySelector('[data-a=rebuy]').onclick = () => g.rebuy(true);
     this.el.ovl.querySelector('[data-a=keep]').onclick = () => g.toggleKeepLoadout();
+    this.el.ovl.querySelectorAll('[data-preset]').forEach((e) => { e.onclick = () => g.equipPreset(+e.dataset.preset); });
+    this.el.ovl.querySelectorAll('[data-save]').forEach((e) => { e.onclick = () => g.savePreset(+e.dataset.save); });
     this.el.ovl.querySelector('[data-close]').onclick = (e) => { if (e.target.dataset.close !== undefined) this.closeOverlay(true); };
     if (!this.buyKey) {
       this.buyKey = (e) => {
@@ -171,6 +179,8 @@ export class Hud {
         if (e.code === 'KeyB' || e.code === 'Escape') { e.preventDefault(); this.closeOverlay(e.code === 'KeyB'); }
         if (e.code === 'KeyF') this.g.rebuy(true);
         if (e.code === 'KeyK') this.g.toggleKeepLoadout();
+        const n = { Digit1: 0, Digit2: 1, Digit3: 2 }[e.code];
+        if (n !== undefined) { e.preventDefault(); if (e.shiftKey) this.g.savePreset(n); else this.g.equipPreset(n); }
       };
       addEventListener('keydown', this.buyKey);
     }

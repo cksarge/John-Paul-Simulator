@@ -11,7 +11,7 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 - **Weapons:** 32 in eight classes: Pistols (4), SMGs (4), Shotguns (4), Rifles (4), LMGs (4), Snipers (4, including the AWP, which kills with one shot to the head or body), Knives (4) and Other (nail gun, crossbow, grenade launcher, piercing rail gun).
 - **Grenades:** frag, flashbang, smoke, incendiary (smoke puts it out), proximity mine and decoy. Up to 4 carried (5 with Utility Belt). Plus kevlar and helmet.
 - **Collection (Armory):** 18 weapon finishes and 11 outfits across 5 rarities. Finishes work on any gun and outfits on any operator, and other players see them. Earned as post-match drops (wins always drop).
-- **Loadouts:** your purchases are saved. Press **F** to rebuy them, or **K** to toggle *Keep loadout* so they're re-equipped automatically every round or respawn.
+- **Loadouts:** whatever you end up holding after you buy is your *last loadout* (switching guns replaces the old one). Press **F** to rebuy it, or **K** to toggle *Keep loadout* so it's re-equipped automatically every round or respawn. The buy menu also has three presets: **Shift+1–3** saves your current kit, **1–3** equips it.
 - **Accounts:** sign-up with email confirmation, forgot/reset password, profiles, match history, XP levels, and leaderboards for ELO, kills, wins and level
 - **Graphics:** Low / Medium / High / Ultra presets plus individual settings for resolution scale, shadows, MSAA/SMAA/FXAA, bloom, GTAO ambient occlusion, frame-rate cap, FOV and crosshair
 
@@ -79,6 +79,7 @@ The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, g
 | Weapons (primary / pistol / knife / grenades / charge) | 1 – 5, Q = last weapon, mouse wheel |
 | Buy menu | B |
 | Rebuy last loadout / toggle keep loadout | F / K |
+| Equip / save preset (in buy menu) | 1–3 / Shift+1–3 |
 | Plant / defuse | Hold E |
 | Open / close door, resupply at ammo crate | E |
 | Scoreboard | Tab |

@@ -65,7 +65,6 @@ export class Game {
     this.action = null;
     this.spectateIdx = 0;
     this.lastFrame = performance.now();
-    this.roundBuys = [];
     try { this.savedBuys = JSON.parse(localStorage.getItem(loadoutKey(this.mode)) || '[]'); } catch { this.savedBuys = []; }
   }
 
@@ -377,6 +376,9 @@ export class Game {
   }
 
   // ───────────────────────── saved loadouts ─────────────────────────
+  // A loadout is what you end up holding, not the list of things you bought: switching from one
+  // rifle to another just replaces it. "Last loadout" updates after every purchase you make yourself;
+  // the three presets only change when you save over them.
   toggleKeepLoadout() {
     this.settings.keepLoadout = !this.settings.keepLoadout;
     try { localStorage.setItem('jps_settings', JSON.stringify(this.settings)); } catch { /* ignore */ }
@@ -384,26 +386,71 @@ export class Game {
     this.hud.refreshBuy();
   }
 
-  // Re-requests every item from the last loadout the player bought (host validates money and limits).
-  rebuy(manual = false) {
-    const items = this.savedBuys || [];
-    if (!items.length) { if (manual) this.hud.info('No saved loadout yet — buy something first', 2); return; }
-    items.forEach((item, i) => setTimeout(() => { if (this.canBuy()) this.request('buy', { item }); }, i * 60));
-    if (manual) this.hud.info('Rebuying last loadout', 1.5);
+  // The player's current kit as buy-menu items, most important first.
+  currentLoadout(p = this.local) {
+    if (!p) return [];
+    const items = [];
+    if (p.inv.primary) items.push(p.inv.primary);
+    if (p.helmet && p.armor > 0) items.push('helmet'); else if (p.armor > 0) items.push('kevlar');
+    if (p.inv.secondary && p.inv.secondary !== 'p9') items.push(p.inv.secondary);
+    if (p.inv.melee && p.inv.melee !== 'knife') items.push(p.inv.melee);
+    items.push(...p.inv.nades);
+    return items;
   }
 
-  // TDM has no rounds, so a loadout is saved shortly after the player stops buying.
-  commitRoundBuysSoon() {
-    clearTimeout(this.commitT);
-    this.commitT = setTimeout(() => this.commitRoundBuys(), 1500);
+  // Items from `target` the player doesn't already hold.
+  missingItems(target, p = this.local) {
+    const have = [...p.inv.nades];
+    return target.filter((it) => {
+      const w = WEAPONS[it];
+      if (w) return p.inv[w.slot] !== it;
+      if (it === 'kevlar') return p.armor < 100;
+      if (it === 'helmet') return !(p.helmet && p.armor >= 100);
+      const i = have.indexOf(it);
+      if (i >= 0) { have.splice(i, 1); return false; }
+      return true;
+    });
   }
 
-  commitRoundBuys() {
-    if (!this.roundBuys.length) return;
-    this.savedBuys = this.roundBuys;
-    this.roundBuys = [];
+  // Buys whatever is missing from a loadout. Purchases made here don't overwrite the last loadout,
+  // so being short of money one round doesn't shrink what you saved.
+  equipLoadout(items, label, manual) {
+    const p = this.local;
+    if (!p || !items?.length) { if (manual) this.hud.info(`No ${label} saved yet`, 2); return; }
+    if (!this.canBuy()) { if (manual) this.hud.info('You can only buy during the buy phase', 2); return; }
+    const missing = this.missingItems(items, p);
+    if (!missing.length) { if (manual) this.hud.info(`Already equipped: ${label}`, 1.5); return; }
+    this.equipping = (this.equipping || 0) + 1;
+    missing.forEach((item, i) => setTimeout(() => { if (this.canBuy()) this.request('buy', { item }); }, i * 60));
+    setTimeout(() => { this.equipping--; }, missing.length * 60 + 900);
+    if (manual) this.hud.info(`Equipping ${label}`, 1.5);
+  }
+
+  rebuy(manual = false) { this.equipLoadout(this.savedBuys, 'last loadout', manual); }
+
+  saveLastLoadout() {
+    this.savedBuys = this.currentLoadout();
     try { localStorage.setItem(loadoutKey(this.mode), JSON.stringify(this.savedBuys)); } catch { /* ignore */ }
   }
+
+  presetKey() { return loadoutKey(this.mode).replace('loadout', 'presets'); }
+
+  presets() {
+    try { const a = JSON.parse(localStorage.getItem(this.presetKey()) || '[]'); return [0, 1, 2].map((i) => (Array.isArray(a[i]) ? a[i] : null)); }
+    catch { return [null, null, null]; }
+  }
+
+  savePreset(i) {
+    const items = this.currentLoadout();
+    if (!items.length) { this.hud.info('Buy something first, then save it as a preset', 2); return; }
+    const all = this.presets();
+    all[i] = items;
+    try { localStorage.setItem(this.presetKey(), JSON.stringify(all)); } catch { /* ignore */ }
+    this.hud.info(`Saved preset ${i + 1}`, 1.5);
+    this.hud.refreshBuy();
+  }
+
+  equipPreset(i) { this.equipLoadout(this.presets()[i], `preset ${i + 1}`, true); }
 
   buy(item) {
     if (!this.canBuy()) return;
@@ -1315,7 +1362,6 @@ export class Game {
       setTimeout(() => this.botBuys(), 400);
     }
     const lp = this.local;
-    this.commitRoundBuys();
     if (RESPAWN_KINDS.has(this.mode.kind)) this.hud.center(this.mode.name.toUpperCase(), goalText(this.mode), 3);
     else {
       const side = this.mode.kind === 'bomb' && lp ? (lp.team === 0 ? 'Attack — plant the charge at A or B' : 'Defend — stop the plant') : 'Press B to choose your loadout';
@@ -1343,8 +1389,7 @@ export class Game {
     else if (it === 'helmet') { p.armor = 100; p.helmet = true; }
     if (p.isLocal) {
       sfx.buy(); this.viewmodel.setWeapon(p.weaponId, p.char); this.hud.refreshBuy();
-      if (!this.roundBuys.includes(it)) this.roundBuys.push(it);
-      if (this.mode.kind === 'tdm') this.commitRoundBuysSoon();
+      if (!this.equipping) this.saveLastLoadout();
     }
   }
 
