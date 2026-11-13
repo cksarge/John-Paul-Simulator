@@ -536,7 +536,7 @@ class App {
   startOffline(o) {
     if (this.maintenanceShown) return;
     const me = this.me();
-    const payload = buildMatch({ mode: o.mode, map: o.map, variant: o.variant || 'day', humans: [{ id: me.id, name: me.name, elo: me.elo, char: me.char }], hostId: me.id, fillBots: true, botLevel: o.botLevel });
+    const payload = buildMatch({ mode: o.mode, map: o.map, variant: o.variant || 'day', humans: [{ id: me.id, name: me.name, elo: me.elo, char: me.char }], hostId: me.id, fillBots: !o.noBots, botLevel: o.botLevel });
     this.runGame(payload, null);
   }
 

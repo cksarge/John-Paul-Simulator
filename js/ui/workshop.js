@@ -72,19 +72,21 @@ export class Workshop {
     const ed = new MapEditor(this.ui, draft, {
       onSave: (d) => { const all = readDrafts(); all[d.key] = d; writeDrafts(all); },
       onTest: (d) => this.test(d, ed),
+      onWalk: (d) => this.test(d, ed, true),
       onUpload: (d) => this.upload(d, ed),
       onClose: () => { if (this.ui.tab === 'workshop') this.render(this.el); },
     });
     ed.open();
   }
 
-  // Plays the draft against bots, then comes back to the editor.
-  test(d, ed) {
+  // Plays the draft against bots (or walks it alone, free for all with nobody else), then comes back to the editor.
+  test(d, ed, walk = false) {
     ed.close();
     MAPS.draft = draftDef(d);
     this.reopen = d;
     this.app.returnTab = 'workshop';
-    this.app.startOffline({ mode: d.size === 'large' ? 'bomb' : 'tdm', map: 'draft', variant: 'day', botLevel: 'normal' });
+    if (walk) this.app.startOffline({ mode: 'ffa', map: 'draft', variant: 'day', noBots: true });
+    else this.app.startOffline({ mode: d.size === 'large' ? 'bomb' : 'tdm', map: 'draft', variant: 'day', botLevel: 'normal' });
   }
 
   async upload(d, ed) {

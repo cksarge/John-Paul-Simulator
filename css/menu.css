@@ -480,6 +480,12 @@
 .ed-hover { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: var(--m-dim); pointer-events: none; }
 .ed-check ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--m-dim); }
 .ed-check .ok { color: var(--good); }
+.ed-check .warn { color: #e8b04a; margin: 8px 0 0; }
+.ed-check .m-label { margin-top: 8px; }
+.ed-layers, .ed-view, .ed-tools, .ed-dir .seg { flex-wrap: wrap; }
+.ed-view button { font-size: 11px; }
+.ed-tools button:disabled { opacity: .35; cursor: not-allowed; }
+.ed-pal .m-label { margin-top: 6px; }
 .ed-props .row { gap: 8px; }
 .ed-props .row .field { flex: 1; }
 @media (max-width: 900px) { .ed { grid-template-columns: 1fr; grid-template-rows: auto auto 60vh auto; } .ed-side, .ed-props { border: 0; } }
