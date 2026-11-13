@@ -5,6 +5,7 @@ import { RARITIES, KINDS } from '../data/skins.js';
 import { itemSwatch, emoteName, cardImage } from '../ui/cards.js';
 import { spreadFor } from './combat.js';
 import { DRILLS } from './training.js';
+import { buildCrosshair, layoutCrosshair } from '../ui/crosshair.js';
 import { pad, padHelp } from '../engine/gamepad.js';
 import { censor } from '../data/profanity.js';
 
@@ -75,20 +76,9 @@ export class Hud {
     this.root.classList.add('hidden');
   }
 
-  buildCrosshair() {
-    const s = this.g.settings;
-    this.el.ch.style.setProperty('--ch', s.crosshairColor);
-    this.el.ch.innerHTML = `<i class="l"></i><i class="r"></i><i class="u"></i><i class="d"></i>${s.crosshairDot ? '<i class="dot"></i>' : ''}`;
-    this.chParts = [...this.el.ch.querySelectorAll('i:not(.dot)')];
-  }
+  buildCrosshair() { this.chParts = buildCrosshair(this.el.ch, this.g.settings); }
 
-  layoutCrosshair(gap) {
-    const s = this.g.settings, L = s.crosshairSize, T = s.crosshairThick;
-    const [l, r, u, d] = this.chParts;
-    const set = (e, x, y, w, h) => { e.style.left = x + 'px'; e.style.top = y + 'px'; e.style.width = w + 'px'; e.style.height = h + 'px'; };
-    set(l, -gap - L, -T / 2, L, T); set(r, gap, -T / 2, L, T);
-    set(u, -T / 2, -gap - L, T, L); set(d, -T / 2, gap, T, L);
-  }
+  layoutCrosshair(gap) { layoutCrosshair(this.chParts, this.g.settings, gap); }
 
   overlayOpen() { return !!this.overlay; }
 

@@ -451,3 +451,13 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 
 /* Anything wider than its container scrolls sideways instead of being cut off. */
 .modal, .overlay .panel, .buy-menu, .scoreboard, .adm-player, .m-panel { overflow-x: auto; }
+
+/* Live crosshair preview in Settings, over a choice of backgrounds. */
+.ch-preview { position: relative; height: 150px; border: 1px solid var(--line2, rgba(255,255,255,.14)); overflow: hidden; margin-bottom: 12px; }
+.ch-preview[data-bg=dark] { background: linear-gradient(180deg, #3a3f45 0 55%, #23272c 55%), #2b2f33; }
+.ch-preview[data-bg=sand] { background: linear-gradient(180deg, #d8c39a 0 55%, #b89a6a 55%); }
+.ch-preview[data-bg=sky] { background: linear-gradient(180deg, #a9c8e8 0, #dfeaf5 60%, #8f9aa3 60%); }
+.ch-preview .crosshair { z-index: 1; }
+.ch-preview-bar { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ch-preview-bar .seg { background: rgba(10,12,16,.7); }
+.ch-preview-bar .btn { background: rgba(10,12,16,.7); }

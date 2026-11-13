@@ -14,6 +14,7 @@ import { mountTurnstile } from './turnstile.js';
 import { cardImage, itemSwatch } from './cards.js';
 import { applyPadSettings, padHelp } from '../engine/gamepad.js';
 import { renderSeason } from './season.js';
+import { buildCrosshair, layoutCrosshair } from './crosshair.js';
 import { offlineSupported, enableOffline, disableOffline } from '../net/offline.js';
 import { AdminPanel } from './admin.js';
 import { commendDialog, reportDialog, showBanned, showWarnings, bannerHTML, COMMENDS } from './social.js';
@@ -1074,6 +1075,13 @@ export class UI {
       </div>
       <p class="m-sub small">${padHelp()}</p>
       <h2 class="m-h2">Crosshair</h2>
+      <div class="ch-preview" data-bg="dark">
+        <div class="crosshair" aria-hidden="true"></div>
+        <div class="ch-preview-bar">
+          <div class="seg ch-bg" aria-label="Preview background">${[['dark', 'Dark'], ['sand', 'Sand'], ['sky', 'Sky']].map(([k, l]) => `<button data-chbg="${k}" class="${k === 'dark' ? 'sel' : ''}">${l}</button>`).join('')}</div>
+          <button class="btn small" data-chfire>Preview firing</button>
+        </div>
+      </div>
       <div class="settings-grid">
         <span>Colour</span><div class="swatches">${['#3dff8f', '#ffffff', '#ffe14d', '#4dd7ff', '#ff4dd2', '#ff4d4d'].map((c) => `<div class="swatch ${s.crosshairColor === c ? 'sel' : ''}" data-ch="${c}" style="background:${c}"></div>`).join('')}<input type="color" data-color="crosshairColor" value="${s.crosshairColor}"></div><span></span>
         <span>Length</span>${range('crosshairSize', 2, 16, 1, (v) => v + 'px')}
@@ -1088,6 +1096,7 @@ export class UI {
     const apply = (patch, graphics) => {
       const s = app.settings;
       Object.assign(s, patch);
+      if (Object.keys(patch).some((k) => k.startsWith('crosshair'))) this.drawCrosshairPreview(root);
       if (graphics && !('preset' in patch)) s.preset = 'custom';
       saveSettings(s);
       setVolume(s.volume);
@@ -1126,6 +1135,24 @@ export class UI {
     }; });
     root.querySelectorAll('[data-ch]').forEach((sw) => { sw.onclick = () => { apply({ crosshairColor: sw.dataset.ch }); root.querySelectorAll('[data-ch]').forEach((x) => x.classList.toggle('sel', x === sw)); }; });
     root.querySelectorAll('[data-color]').forEach((c) => { c.oninput = () => apply({ [c.dataset.color]: c.value }); });
+    // Crosshair preview: background choice and a short burst showing how it spreads when firing.
+    this.drawCrosshairPreview(root);
+    root.querySelectorAll('[data-chbg]').forEach((b) => { b.onclick = () => {
+      root.querySelector('.ch-preview').dataset.bg = b.dataset.chbg;
+      root.querySelectorAll('[data-chbg]').forEach((x) => x.classList.toggle('sel', x === b));
+    }; });
+    root.querySelector('[data-chfire]')?.addEventListener('click', () => {
+      const start = performance.now();
+      const tick = (now) => {
+        const t = (now - start) / 900;
+        if (t >= 1 || !this.chPreview?.parts[0].isConnected) { this.drawCrosshairPreview(root); return; }
+        // Opens up over a short burst, then settles back, like spraying a rifle.
+        const spread = Math.sin(Math.min(1, t * 1.6) * Math.PI / 2) * 14 * (t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4);
+        layoutCrosshair(this.chPreview.parts, app.settings, app.settings.crosshairGap + spread);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
   }
 
   // Settings → Offline play: installs or removes the service worker and the saved copy of the game.
@@ -1152,6 +1179,14 @@ export class UI {
       this.toast(e.message, 'bad', null, 6000);
     }
     box.disabled = false;
+  }
+
+  drawCrosshairPreview(root) {
+    const el = root.querySelector('.ch-preview .crosshair');
+    if (!el) return;
+    const s = this.app.settings;
+    this.chPreview = { parts: buildCrosshair(el, s) };
+    layoutCrosshair(this.chPreview.parts, s, s.crosshairGap);
   }
 
   rebindAfterPreset(root) {
