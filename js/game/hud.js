@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { WEAPONS, GRENADES, BUY_MENU, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
-import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText, econFor } from '../data/modes.js';
+import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, SIDED_KINDS, BOMB_KINDS, goalText, econFor } from '../data/modes.js';
 import { RARITIES, KINDS } from '../data/skins.js';
 import { itemSwatch, emoteName, cardImage } from '../ui/cards.js';
 import { spreadFor } from './combat.js';
+import { DRILLS } from './training.js';
 import { pad, padHelp } from '../engine/gamepad.js';
 import { censor } from '../data/profanity.js';
 
@@ -165,6 +166,8 @@ export class Hud {
       <button class="btn small ${g.settings.keepLoadout ? 'primary' : ''}" data-a="keep">Keep loadout: ${g.settings.keepLoadout ? 'ON' : 'OFF'} (K)</button>
       <button class="btn small" data-a="close">Done (B)</button></div>
       <p class="muted small" style="margin:8px 0 0">${g.savedBuys.length ? 'Last loadout: ' + names(g.savedBuys) : 'Whatever you end up holding after you buy becomes your last loadout.'} With <b>Keep loadout</b> on, it's re-equipped automatically every round${g.mode.kind === 'tdm' ? ' and respawn' : ''}.</p>
+      ${g.training ? `<div class="drills">${Object.entries(DRILLS).map(([id, d]) => `<button class="btn small ${g.training.drill === id ? 'primary' : ''}" data-drill="${id}" title="${esc(d.desc)}">${esc(d.name)}</button>`).join('')}</div>
+        <p class="muted small" style="margin:6px 0 0">${esc(DRILLS[g.training.drill].desc)} Every weapon is free and ammo is unlimited.</p>` : ''}
       <div class="presets">${g.presets().map((items, i) => `<div class="preset">
         <div class="preset-head"><b>Preset ${i + 1}</b><span class="muted small">${i + 1} equip · Shift+${i + 1} save</span></div>
         <div class="preset-items small">${items ? names(items) : '<span class="muted">Empty</span>'}</div>
@@ -177,6 +180,7 @@ export class Hud {
     this.el.ovl.querySelector('[data-a=keep]').onclick = () => g.toggleKeepLoadout();
     this.el.ovl.querySelectorAll('[data-preset]').forEach((e) => { e.onclick = () => g.equipPreset(+e.dataset.preset); });
     this.el.ovl.querySelectorAll('[data-save]').forEach((e) => { e.onclick = () => g.savePreset(+e.dataset.save); });
+    this.el.ovl.querySelectorAll('[data-drill]').forEach((e) => { e.onclick = () => { g.training.setDrill(e.dataset.drill); this.closeOverlay(true); }; });
     this.el.ovl.querySelector('[data-close]').onclick = (e) => { if (e.target.dataset.close !== undefined) this.closeOverlay(true); };
     if (!this.buyKey) {
       this.buyKey = (e) => {
@@ -248,6 +252,14 @@ export class Hud {
     this.root.classList.toggle('in-killcam', !!info);
     if (!info) { el.classList.add('hidden'); return; }
     const k = info.killer;
+    if (info.highlight) {
+      el.innerHTML = `<div class="kc-tag hl"><i></i>PLAY OF THE MATCH</div>
+        <div class="kc-card" style="background-image:url(${cardImage(k?.char?.card || 'standard')})">
+          <div class="kc-text"><span>${esc(info.highlight.title)}</span><b>${esc(k?.name || '')}</b><em>${esc(info.highlight.detail)}</em></div>
+        </div>`;
+      el.classList.remove('hidden');
+      return;
+    }
     const wname = itemInfo(info.weapon)?.name || info.weapon;
     el.innerHTML = `<div class="kc-tag"><i></i>KILL CAM</div>
       <div class="kc-card" style="background-image:url(${cardImage(k?.char?.card || 'standard')})">
@@ -255,6 +267,18 @@ export class Hud {
       </div>
       <div class="kc-skip">${pad.active ? pad.label('next') : 'Space'} · skip</div>`;
     el.classList.remove('hidden');
+  }
+
+  // Skip button shown over the play-of-the-match highlight.
+  showHighlightSkip(onSkip) {
+    this.overlay = 'highlight';
+    this.el.ovl.innerHTML = `<div class="overlay hl-overlay"><button class="btn" data-a="close">Skip highlight (${pad.active ? pad.label('next') : 'Space'})</button></div>`;
+    this.el.ovl.querySelector('[data-a=close]').onclick = onSkip;
+    const key = (e) => {
+      if (this.overlay !== 'highlight') { removeEventListener('keydown', key); return; }
+      if (e.code === 'Space' || e.code === 'Escape') { e.preventDefault(); removeEventListener('keydown', key); onSkip(); }
+    };
+    addEventListener('keydown', key);
   }
 
   // Emote wheel while G is held. `list` null hides it.
@@ -331,17 +355,26 @@ export class Hud {
     const g = this.g, title = { win: 'VICTORY', loss: 'DEFEAT', draw: 'DRAW', over: 'MATCH OVER' }[result];
     const color = result === 'win' ? 'var(--good)' : result === 'loss' ? 'var(--bad)' : 'var(--muted)';
     const reasonText = { forfeit: 'Opponent forfeited', 'host-left': 'The host left the match', kills: 'Kill limit reached', time: 'Time limit reached', gungame: 'Got a kill with every weapon', score: '' }[reason] || '';
-    const rows = [...stats].sort((a, b) => b.k - a.k).map((s) => `<tr class="${s.id === g.localId ? 'me' : ''}"><td>${esc(s.name)}</td>${!SOLO_KINDS.has(g.mode.kind) ? `<td style="color:var(--${TEAM_CLASS[s.team]})">${g.mode.kind === 'bomb' ? (s.team === 0 ? 'ATK' : 'DEF') : 'T' + (s.team + 1)}</td>` : ''}<td class="num">${s.k}</td><td class="num">${s.d}</td><td class="num">${s.hs}</td><td class="num">${s.dmg}</td></tr>`).join('');
+    // Commend or report other real players (signed-in online matches only).
+    const social = g.online && !!g.app.user && !g.spectator;
+    const canRate = (s) => social && !s.bot && s.id !== g.localId && /^[0-9a-f-]{36}$/.test(s.id);
+    const rateCell = (s) => (social ? `<td class="rate">${canRate(s) ? `<button class="btn tiny" data-commend="${esc(s.id)}" title="Commend ${esc(s.name)}">👍</button><button class="btn tiny ghost" data-report="${esc(s.id)}" title="Report ${esc(s.name)}">⚑</button>` : ''}</td>` : '');
+    const rows = [...stats].sort((a, b) => b.k - a.k).map((s) => `<tr class="${s.id === g.localId ? 'me' : ''}"><td>${esc(s.name)}</td>${!SOLO_KINDS.has(g.mode.kind) ? `<td style="color:var(--${TEAM_CLASS[s.team]})">${SIDED_KINDS.has(g.mode.kind) ? (s.team === 0 ? 'ATK' : 'DEF') : 'T' + (s.team + 1)}</td>` : ''}<td class="num">${s.k}</td><td class="num">${s.d}</td><td class="num">${s.hs}</td><td class="num">${s.dmg}</td>${rateCell(s)}</tr>`).join('');
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel" style="width:min(720px,94vw)">
       <div style="text-align:center"><div class="hud-num" style="font-size:64px;color:${color}">${title}</div>
       <div class="muted">${esc(g.mode.name)} · ${esc(g.mapDef.name)} · ${esc(score)}</div>
       ${reasonText ? `<div class="muted small">${esc(reasonText)}</div>` : ''}
       <div class="elo" style="margin:10px 0;font-family:var(--display);font-size:22px">${g.mode.ranked && g.app.user ? 'Updating rating…' : ''}</div>
       <div class="drop"></div></div>
-      <table class="tbl"><tr><th>Player</th>${!SOLO_KINDS.has(g.mode.kind) ? '<th>Team</th>' : ''}<th class="num">K</th><th class="num">D</th><th class="num">HS</th><th class="num">DMG</th></tr>${rows}</table>
+      <table class="tbl"><tr><th>Player</th>${!SOLO_KINDS.has(g.mode.kind) ? '<th>Team</th>' : ''}<th class="num">K</th><th class="num">D</th><th class="num">HS</th><th class="num">DMG</th>${social ? '<th></th>' : ''}</tr>${rows}</table>
       <div class="row" style="justify-content:center;margin-top:16px"><button class="btn" data-a="replay">Watch replay</button><button class="btn primary" data-a="menu">Back to menu</button></div>
     </div></div>`;
     this.el.ovl.querySelector('[data-a=menu]').onclick = () => this.g.leave();
+    const byId = (id) => stats.find((x) => x.id === id);
+    this.el.ovl.querySelectorAll('[data-commend]').forEach((b) => { b.onclick = () => g.app.ui.commendDialog(byId(b.dataset.commend), g.matchId, () => { b.disabled = true; b.textContent = '✓'; }); });
+    this.el.ovl.querySelectorAll('[data-report]').forEach((b) => { b.onclick = () => g.app.ui.reportDialog(byId(b.dataset.report), { matchId: g.matchId, mode: g.mode.id, map: g.mapDef.id, chat: (g.chatLog || []).filter((c) => c.id === b.dataset.report) }, () => { b.disabled = true; b.textContent = '✓'; }); });
+    if (this.pendingDrop) { this.showDrop(this.pendingDrop); this.pendingDrop = null; }
+    if (this.pendingElo) { this.setEloChange(...this.pendingElo); this.pendingElo = null; }
     this.el.ovl.querySelector('[data-a=replay]').onclick = () => {
       const app = this.g.app;
       this.g.destroy();
@@ -352,6 +385,7 @@ export class Hud {
 
   showDrop(item) {
     const e = this.el.ovl.querySelector('.drop');
+    if (this.overlay !== 'results') { this.pendingDrop = item; return; }
     if (!e || !item) return;
     const r = RARITIES[item.rarity];
     e.innerHTML = `<div class="drop-card" style="--rc:${r.color}"><span class="small muted">${item.duplicate ? 'Duplicate drop' : 'New item unlocked'}</span>
@@ -361,6 +395,7 @@ export class Hud {
 
   setEloChange(delta, error) {
     const e = this.el.ovl.querySelector('.elo');
+    if (this.overlay !== 'results') { this.pendingElo = [delta, error]; return; }
     if (!e) return;
     if (error) { e.innerHTML = `<span class="small" style="color:var(--bad)">${esc(error)}</span>`; return; }
     if (delta === null || delta === undefined) { e.textContent = this.g.app.user ? 'Stats saved' : ''; return; }
@@ -421,8 +456,16 @@ export class Hud {
     const phaseLabel = { warmup: g.waitingForPlayers() ? 'WAITING' : 'WARMUP', buy: 'BUY', live: planted ? 'CHARGE' : '', post: '', over: 'FINAL' }[s.phase] ?? '';
     const kind = g.mode.kind;
     let goal = goalText(g.mode);
-    if (kind === 'rounds' || kind === 'bomb') goal += ` · Round ${Math.max(1, s.round)}`;
-    if (kind === 'ffa') {
+    if (kind === 'rounds' || SIDED_KINDS.has(kind)) goal += ` · Round ${Math.max(1, s.round)}`;
+    if (kind === 'hostage') {
+      const hs = s.hostages || [];
+      goal += ` · Hostages: ${hs.map((h) => (h.state === 'rescued' ? '✓' : h.state === 'carried' ? '➜' : '●')).join(' ')}`;
+    }
+    if (kind === 'training') {
+      const tr = g.training, st = tr?.stats;
+      el.top.innerHTML = `<div class="ts ct" title="Kills">${st?.kills ?? 0}</div><div class="timer">${st?.running ? fmtTime(st.left) : '∞'}<small>TRAINING</small></div><div class="ts t" title="Accuracy">${tr ? tr.accuracy() + '%' : ''}</div>`;
+      goal = tr ? tr.hudLine() : '';
+    } else if (kind === 'ffa') {
       const lead = [...g.players.values()].sort((a, b) => b.kills - a.kills)[0];
       el.top.innerHTML = `<div class="ts ct" title="Your kills">${p.kills}</div><div class="timer">${fmtTime(timer)}<small>${lead ? 'LEAD ' + esc(lead.name) + ' ' + lead.kills : ''}</small></div><div class="ts t" title="Kills to win">${g.mode.killsToWin}</div>`;
       goal += ` · you have ${p.kills}`;
@@ -477,6 +520,8 @@ export class Hud {
     if (p.alive && s.phase === 'live') {
       if (bomb.state === 'carried' && bomb.carrier === p.id && g.world.siteAt(p.pos.x, p.pos.z)) hint = `Hold ${pad.label('use')} to plant the charge`;
       else if (planted && p.team === 1 && Math.hypot(p.pos.x - bomb.pos[0], p.pos.z - bomb.pos[2]) < 2.2) hint = `Hold ${pad.label('use')} to defuse`;
+      else if (g.hostageView?.usable(p)) hint = `Hold ${pad.label('use')} to pick up the hostage`;
+      else if (s.hostages?.some((h) => h.carrier === p.id)) hint = 'Carry the hostage back to the green zone at your spawn';
       else hint = g.interactHint?.() || '';
     }
     if (s.phase === 'buy' && !this.overlay && p.alive) hint = econFor(g.mode) ? `Buy phase — press ${pad.label('buy')} to open the buy menu` : `Press ${pad.label('buy')} to choose your loadout`;
@@ -521,7 +566,13 @@ export class Hud {
       ctx.beginPath(); ctx.arc(d.pos.x * S, d.pos.z * S, 6 / zoom * 0.6, 0, Math.PI * 2); ctx.fill();
     }
     const b = g.state.bomb || {};
-    if ((b.state === 'dropped' || b.state === 'planted') && (g.mode.kind === 'bomb' && (p.team === 0 || b.state === 'planted'))) {
+    g.pings?.drawRadar(ctx, S);
+    for (const h of g.state.hostages || []) {
+      if (h.state === 'rescued') continue;
+      ctx.fillStyle = h.state === 'carried' ? '#3dff8f' : '#ffd23f';
+      ctx.beginPath(); ctx.arc(h.pos[0] * S, h.pos[2] * S, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    if ((b.state === 'dropped' || b.state === 'planted') && (BOMB_KINDS.has(g.mode.kind) && (p.team === 0 || b.state === 'planted'))) {
       ctx.fillStyle = b.state === 'planted' && Math.floor(this.t * 4) % 2 ? '#fff' : '#ff3030';
       ctx.fillRect(b.pos[0] * S - 5, b.pos[2] * S - 5, 10, 10);
     }

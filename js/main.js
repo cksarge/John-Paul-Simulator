@@ -9,6 +9,8 @@ import { PartyManager } from './net/party.js';
 import { initAudio } from './engine/audio.js';
 import { pad, PadNav, isTouchOnly, applyPadSettings, padHelp } from './engine/gamepad.js';
 import { normalizeInventory, rollDrop, addToInventory, KINDS } from './data/skins.js';
+import { applySeasonRows, currentSeason, seasonById, seasonTrack, tierFor, rankedReward, RANKED_REWARD_WINS } from './data/seasons.js';
+import { normalizeProgress, applyMatch } from './data/challenges.js';
 
 const boot = document.getElementById('boot');
 const bootBar = boot.querySelector('.boot-bar div');
@@ -41,6 +43,8 @@ class App {
     }
     this.char = this.loadChar();
     this.inventory = this.loadLocalInventory();
+    this.sessionStart = Date.now();
+    this.challenges = this.loadLocalChallenges();
     this.ui = new UI(this);
     addEventListener('pointerdown', () => initAudio(), { once: true });
     applyPadSettings(this.settings);
@@ -162,13 +166,18 @@ class App {
     if (profile.character) this.char = { ...sanitizeChar(profile.character), preset: profile.character.preset || 'custom' };
     else this.api.saveCharacter(this.user.id, this.char).catch(() => null);
     localStorage.setItem('jps_char', JSON.stringify(this.char));
+    this.challenges = normalizeProgress(profile.challenges);
     this.joinPresence();
+    await this.pollStatus();
+    this.grantSeasonRewards();
+    this.claimPending();
     this.ui.showMenu('play');
   }
 
   loginGuest() {
     this.user = null; this.profile = null;
     this.inventory = this.loadLocalInventory();
+    this.challenges = this.loadLocalChallenges();
     this.ui.showMenu('play');
   }
 
@@ -176,6 +185,7 @@ class App {
     this.party?.leave(true); this.party = null;
     this.presence?.leave(); this.presence = null;
     await this.api?.signOut();
+    clearInterval(this.statusTimer);
     this.user = null; this.profile = null;
     this.inventory = this.loadLocalInventory();
     this.ui.showAuth();
@@ -185,6 +195,85 @@ class App {
     if (!this.user) return;
     try { this.profile = await this.api.profile(this.user.id) || this.profile; } catch { /* keep old */ }
     this.presence?.track({ elo: this.profile.elo });
+    this.grantSeasonRewards();
+  }
+
+  // ───────────── account status ─────────────
+  // Polled every 30 s while signed in: moves you into the current season and loads its dates.
+  async pollStatus() {
+    if (!this.api || !this.user) return;
+    clearInterval(this.statusTimer);
+    this.statusTimer = setInterval(() => this.pollStatus(), 30000);
+    let st;
+    try { st = await this.api.myStatus(); } catch (e) { if (!e.missing) console.warn('Status check failed', e); return; }
+    if (st?.season && !this.seasonsLoaded) {
+      this.seasonsLoaded = true;
+      applySeasonRows(await this.api.seasons());
+    }
+  }
+
+  // Grants season reward-track items you've reached, plus rewards from finished seasons.
+  // Inventory adds are idempotent, so this can run any time the profile changes.
+  async grantSeasonRewards() {
+    const p = this.profile;
+    if (!p || !this.user) return;
+    const before = JSON.stringify(this.inventory);
+    const cur = currentSeason();
+    if (cur && p.season_id === cur.id) {
+      const { tier } = tierFor(p.pass_xp);
+      for (const r of seasonTrack(cur.id).slice(0, tier)) addToInventory(this.inventory, r);
+    }
+    for (const h of await this.api.seasonHistory(this.user.id)) {
+      if (!seasonById(h.season_id)) continue;
+      for (const r of seasonTrack(h.season_id).slice(0, tierFor(h.pass_xp).tier)) addToInventory(this.inventory, r);
+      const rr = rankedReward(h.season_id);
+      if (rr && h.wins >= RANKED_REWARD_WINS) addToInventory(this.inventory, rr);
+    }
+    if (JSON.stringify(this.inventory) !== before) {
+      await this.saveInventory().catch(() => null);
+      this.ui.toast('New season rewards added to your Armory', 'good');
+    }
+  }
+
+  // ───────────── challenges ─────────────
+  loadLocalChallenges() {
+    try { return normalizeProgress(JSON.parse(localStorage.getItem('jps_challenges') || 'null')); }
+    catch { return normalizeProgress(null); }
+  }
+
+  // Called after every finished match (not the training range). Signed-in players get the XP
+  // straight away; guests keep progress on this device.
+  async trackChallenges(m) {
+    this.challenges = normalizeProgress(this.challenges);
+    const done = applyMatch(this.challenges, m);
+    if (this.user) {
+      for (const c of done) {
+        try {
+          const xp = await this.api.claimChallenge(c.key);
+          if (!this.challenges.claimed.includes(c.key)) this.challenges.claimed.push(c.key);
+          this.ui.toast(`Challenge complete: ${c.text} · +${xp || c.xp} XP`, 'good', null, 6000);
+        } catch (e) {
+          if (!e.missing) this.ui.toast(`Challenge complete: ${c.text} (XP not saved: ${e.message})`, 'bad');
+        }
+      }
+      this.api.saveChallenges(this.user.id, this.challenges).catch(() => null);
+    } else {
+      for (const c of done) this.ui.toast(`Challenge complete: ${c.text}. Sign in to earn the XP.`, 'good', null, 6000);
+      try { localStorage.setItem('jps_challenges', JSON.stringify(this.challenges)); } catch { /* ignore */ }
+    }
+    return done;
+  }
+
+  // Retry claims that finished while offline or before the database was updated.
+  async claimPending() {
+    if (!this.user || !this.challenges) return;
+    const { activeChallenges } = await import('./data/challenges.js');
+    for (const c of activeChallenges()) {
+      if ((this.challenges[c.key] || 0) >= c.n && !this.challenges.claimed.includes(c.key)) {
+        try { await this.api.claimChallenge(c.key); this.challenges.claimed.push(c.key); } catch { return; }
+      }
+    }
+    this.api.saveChallenges(this.user.id, this.challenges).catch(() => null);
   }
 
   async saveChar(c) {

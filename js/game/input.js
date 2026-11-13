@@ -3,7 +3,7 @@ import { pad, BTN } from '../engine/gamepad.js';
 // Controller buttons that act like keys, so the game reads them exactly like the keyboard.
 const PAD_KEYS = {
   [BTN.A]: 'Space', [BTN.B]: 'ControlLeft', [BTN.X]: 'KeyR', [BTN.Y]: 'KeyQ', [BTN.LB]: 'Digit4', [BTN.RB]: 'KeyE',
-  [BTN.BACK]: 'Tab', [BTN.UP]: 'KeyG', [BTN.LEFT]: 'KeyB', [BTN.RIGHT]: 'KeyF', [BTN.L3]: 'Digit5', [BTN.R3]: 'Digit3',
+  [BTN.BACK]: 'Tab', [BTN.UP]: 'KeyG', [BTN.LEFT]: 'KeyB', [BTN.RIGHT]: 'KeyF', [BTN.L3]: 'KeyV', [BTN.R3]: 'KeyZ',
 };
 
 // Keyboard/mouse state with pointer lock, plus a controller. Edge-triggered presses are read with `pressed()`.

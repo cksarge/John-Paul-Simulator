@@ -40,6 +40,17 @@ export const WEAPON_SKINS = {
   obsidian: { name: 'Obsidian', rarity: 'legendary', pattern: 'metal', palette: ['#121214'], metal: '#050506', metalness: 1, roughness: 0.12 },
   // Milestone unlocks: earned by playing, never dropped.
   veteran: { name: 'Veteran Steel', rarity: 'epic', pattern: 'damascus', palette: ['#2b2f24', '#c9b46a'], metal: '#1d1f18', metalness: 0.85, roughness: 0.3, milestone: { stat: 'matches', n: 100, label: 'Play 100 online matches' } },
+  // Season reward-track exclusives (slot: which reward tier they sit on; see js/data/seasons.js).
+  s1_signal: { name: 'Signal Flare', rarity: 'epic', pattern: 'fade', palette: ['#f2a33a', '#ff5a1f', '#1b2028'], season: 's1', slot: 'finish' },
+  s1_frontier: { name: 'Frontier', rarity: 'legendary', pattern: 'metal', palette: ['#c96f1d'], metal: '#3a2414', metalness: 0.9, roughness: 0.3, season: 's1', slot: 'legend' },
+  s2_glacier: { name: 'Glacier', rarity: 'epic', pattern: 'cracks', palette: ['#0c1824', '#7cc7ff'], emissive: '#5ab8ff', season: 's2', slot: 'finish' },
+  s2_permafrost: { name: 'Permafrost', rarity: 'legendary', pattern: 'marble', palette: ['#e9f4ff', '#4a7aa8'], roughness: 0.2, season: 's2', slot: 'legend' },
+  s3_moss: { name: 'Mossback', rarity: 'epic', pattern: 'camo', palette: ['#3d5a2a', '#6b8a3a', '#22331a', '#9ab85a'], season: 's3', slot: 'finish' },
+  s3_verdant: { name: 'Verdant', rarity: 'legendary', pattern: 'grid', palette: ['#06120a', '#6dff5a'], emissive: '#6dff5a', metal: '#0a140c', season: 's3', slot: 'legend' },
+  s4_scorch: { name: 'Scorched', rarity: 'epic', pattern: 'cracks', palette: ['#1a0c08', '#ffb03a'], emissive: '#ff9a1f', season: 's4', slot: 'finish' },
+  s4_solar: { name: 'Solar Flare', rarity: 'legendary', pattern: 'fade', palette: ['#ffd23f', '#ff5a1f', '#8a1020'], emissive: '#ff7a3d', season: 's4', slot: 'legend' },
+  s5_dusk: { name: 'Duskfall', rarity: 'epic', pattern: 'digital', palette: ['#1a1030', '#3a2060', '#6a3dff', '#0a0614'], season: 's5', slot: 'finish' },
+  s5_void: { name: 'Voidwalker', rarity: 'legendary', pattern: 'circuit', palette: ['#05030a', '#c06cff'], emissive: '#c06cff', metal: '#0a0612', season: 's5', slot: 'legend' },
   apex: { name: 'Apex', rarity: 'legendary', pattern: 'fade', palette: ['#ffd23f', '#ff5a5a', '#c06cff'], emissive: '#ff7a3d', milestone: { stat: 'peak_elo', n: 1400, label: 'Reach Diamond (1400 ELO)' } },
 };
 
@@ -62,6 +73,11 @@ export const OUTFITS = {
   mercenary: { name: 'Mercenary', rarity: 'rare', colors: { top: '#5a4632', pants: '#3b3328', vestColor: '#8a3a2a', gloves: '#3b3328', boots: '#2a221b' } },
   iceguard: { name: 'Ice Guard', rarity: 'epic', colors: { top: '#e8f6ff', pants: '#a8c8e0', vestColor: '#2a5aa8', gloves: '#2a5aa8', boots: '#1b2533' }, glow: '#7cc7ff' },
   ember: { name: 'Ember', rarity: 'legendary', colors: { top: '#1a0f0a', pants: '#1a0f0a', vestColor: '#2a140a', gloves: '#ff6a1f', boots: '#1a0f0a' }, glow: '#ff6a1f' },
+  s1_vanguard: { name: 'Vanguard', rarity: 'epic', colors: { top: '#3a3f45', pants: '#2b2f33', vestColor: '#f2a33a', gloves: '#1d1d1f', boots: '#1a1a1a' }, season: 's1', slot: 'outfit' },
+  s2_polar: { name: 'Polar Recon', rarity: 'epic', colors: { top: '#eef6fb', pants: '#c9d8e4', vestColor: '#5a8ab8', gloves: '#2a3a4a', boots: '#2a3a4a' }, glow: '#9ad8ff', season: 's2', slot: 'outfit' },
+  s3_ranger: { name: 'Ranger', rarity: 'epic', colors: { top: '#3d5a2a', pants: '#2f3b22', vestColor: '#6b8a3a', gloves: '#22331a', boots: '#2a221b' }, season: 's3', slot: 'outfit' },
+  s4_dunes: { name: 'Dune Raider', rarity: 'epic', colors: { top: '#c8a374', pants: '#8a6a45', vestColor: '#b8401f', gloves: '#5a3a22', boots: '#3b2a1a' }, season: 's4', slot: 'outfit' },
+  s5_shade: { name: 'Shade', rarity: 'epic', colors: { top: '#120a1e', pants: '#0a0612', vestColor: '#2a1a40', gloves: '#c06cff', boots: '#0a0612' }, glow: '#c06cff', season: 's5', slot: 'outfit' },
   commander: { name: 'Commander', rarity: 'legendary', colors: { top: '#1d1d1f', pants: '#1d1d1f', vestColor: '#5b1a1a', gloves: '#d4a73a', boots: '#141414' }, milestone: { stat: 'wins', n: 50, label: 'Win 50 online matches' } },
 };
 
@@ -78,6 +94,17 @@ export const CALLING_CARDS = {
   hazard: { name: 'Hazard Zone', rarity: 'epic', colors: ['#141414', '#e0b030'], motif: 'stripes' },
   skyline: { name: 'Skyline', rarity: 'epic', colors: ['#10162a', '#c06cff'], motif: 'skyline' },
   aurora: { name: 'Aurora', rarity: 'legendary', colors: ['#050a18', '#3ddc97', '#c06cff'], motif: 'aurora' },
+  s1_contact: { name: 'First Contact', rarity: 'rare', colors: ['#11161d', '#f2a33a'], motif: 'radar', season: 's1', slot: 'card' },
+  s2_whiteout: { name: 'Whiteout', rarity: 'rare', colors: ['#0d1a2a', '#bfe6ff'], motif: 'mountains', season: 's2', slot: 'card' },
+  s3_canopy: { name: 'Canopy', rarity: 'rare', colors: ['#0b1a10', '#6ddc5a'], motif: 'waves', season: 's3', slot: 'card' },
+  s4_mirage: { name: 'Mirage', rarity: 'rare', colors: ['#2a0a06', '#ff7a3d'], motif: 'sunburst', season: 's4', slot: 'card' },
+  s5_eclipse: { name: 'Eclipse', rarity: 'rare', colors: ['#0a0614', '#c06cff'], motif: 'skyline', season: 's5', slot: 'card' },
+  // Ranked rewards: win enough ranked matches in a season to earn its card.
+  s1_ranked: { name: 'S1 Competitor', rarity: 'epic', colors: ['#1b2028', '#f2a33a', '#ffd48a'], motif: 'chevrons', season: 's1', rankedReward: true },
+  s2_ranked: { name: 'S2 Competitor', rarity: 'epic', colors: ['#0d1a2a', '#7cc7ff', '#e8f6ff'], motif: 'chevrons', season: 's2', rankedReward: true },
+  s3_ranked: { name: 'S3 Competitor', rarity: 'epic', colors: ['#0b1a10', '#6ddc5a', '#d6ffcc'], motif: 'chevrons', season: 's3', rankedReward: true },
+  s4_ranked: { name: 'S4 Competitor', rarity: 'epic', colors: ['#2a0a06', '#ff7a3d', '#ffd23f'], motif: 'chevrons', season: 's4', rankedReward: true },
+  s5_ranked: { name: 'S5 Competitor', rarity: 'epic', colors: ['#0a0614', '#c06cff', '#ffd6ff'], motif: 'chevrons', season: 's5', rankedReward: true },
   veteran: { name: 'Veteran', rarity: 'epic', colors: ['#1d1f18', '#c9b46a'], motif: 'chevrons', milestone: { stat: 'matches', n: 50, label: 'Play 50 online matches' } },
   headhunter: { name: 'Headhunter', rarity: 'legendary', colors: ['#1a0606', '#ff3030'], motif: 'crosshair', milestone: { stat: 'headshots', n: 250, label: 'Land 250 headshot kills' } },
 };
@@ -124,9 +151,15 @@ export function milestoneMet(def, stats) {
   return !!(m && stats && (stats[m.stat] || 0) >= m.n);
 }
 
+// Season items can't be owned or worn before their season starts, whatever the inventory says.
+// js/data/seasons.js installs the real date check (it imports this file, so it can't be imported here).
+let seasonNotStarted = () => false;
+export function setSeasonGate(fn) { seasonNotStarted = fn; }
+export const seasonLocked = (def) => !!def?.season && seasonNotStarted(def.season);
+
 export function owns(inv, kind, id, stats) {
   const k = KINDS[kind], def = k?.defs[id];
-  if (!def) return false;
+  if (!def || seasonLocked(def)) return false;
   if (def.starter) return true;
   if (def.milestone) return milestoneMet(def, stats);
   return (inv?.[k.key] || []).includes(id);
@@ -147,11 +180,11 @@ export function normalizeInventory(inv) {
 }
 
 // Rolls one random item. Already-owned items are skipped where possible so drops feel fresh.
-// Milestone items never drop.
+// Milestone and season items never drop.
 export function rollDrop(inv, rng = Math.random) {
   const pool = [];
   for (const [kind, k] of Object.entries(KINDS)) {
-    for (const [id, d] of Object.entries(k.defs)) if (!d.starter && !d.milestone) pool.push({ kind, id, rarity: d.rarity, name: d.name });
+    for (const [id, d] of Object.entries(k.defs)) if (!d.starter && !d.milestone && !d.season) pool.push({ kind, id, rarity: d.rarity, name: d.name });
   }
   const owned = (it) => (inv[KINDS[it.kind].key] || []).includes(it.id);
   const fresh = pool.filter((it) => !owned(it));

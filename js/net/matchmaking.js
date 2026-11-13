@@ -3,6 +3,7 @@ import { MODES, SOLO_KINDS } from '../data/modes.js';
 
 const FILL_AFTER = 20; // seconds before a non-ranked queue starts with bots filling gaps
 
+
 function needFor(mode) {
   const m = MODES[mode];
   return SOLO_KINDS.has(m.kind) ? m.maxPlayers : m.teamSize * 2;

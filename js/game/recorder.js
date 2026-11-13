@@ -11,7 +11,7 @@ export const ITEM_IDS = [null, ...Object.keys(WEAPONS), ...Object.keys(GRENADES)
 const ITEM_INDEX = new Map(ITEM_IDS.map((id, i) => [id, i]));
 
 const FX = ['muzzle', 'tracer', 'impact', 'explosion', 'smoke', 'flash', 'fire', 'endFire', 'shatter', 'splinters', 'beam', 'killFx'];
-const SFX_SKIP = new Set(['ui', 'click', 'buy', 'hit', 'dryFire', 'ringing', 'pickup', 'hurt', 'win', 'lose', 'roundStart']);
+const SFX_SKIP = new Set(['ui', 'ping', 'click', 'buy', 'hit', 'dryFire', 'ringing', 'pickup', 'hurt', 'win', 'lose', 'roundStart']);
 export const WORLD_EVENTS = new Set(['door', 'prop', 'round', 'roundEnd', 'bomb', 'kill', 'emote', 'score', 'msg']);
 
 // Plain-data versions of effect arguments (Vector3 → array; fire handles → ids).

@@ -89,7 +89,7 @@ export const pad = {
 export const isTouchOnly = () => navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
 
 // ───────────────────────── menu navigation ─────────────────────────
-const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"]), .buy-item, .swatch, .item-card, .op-row, .chip, .map-tile, .mrow, .rp-p';
+const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"]), .buy-item, .swatch, .item-card, .op-row, .chip, .map-tile, .mrow, .rp-p, tr.clickable';
 const BACK = '[data-a=close], [data-a=resume], [data-done], [data-a=exit], [data-x], [data-back], [data-cancel]';
 const DEFAULT = '[data-a=resume], [data-a=go], [data-gate-go], .deploy-btn:not([disabled]), .btn.primary:not([disabled]), button.sel, button.on';
 const DIRS = { [BTN.UP]: [0, -1], [BTN.DOWN]: [0, 1], [BTN.LEFT]: [-1, 0], [BTN.RIGHT]: [1, 0] };
@@ -288,6 +288,6 @@ export function applyPadSettings(s) {
 // The full button layout, shown in settings and on the controller screen.
 export function padHelp() {
   return 'Left stick move (light push walks) · Right stick look · RT fire · LT aim/scope · A jump · B crouch · X reload · Y last weapon · '
-    + 'LB grenade · RB use/plant/defuse · D-pad ↓ next weapon · ↑ hold for emotes · ← buy · → rebuy · R3 knife · L3 bomb · View scores · Menu pause. '
+    + 'LB grenade · RB use/plant/defuse/pick up · D-pad ↓ next weapon · ↑ hold for emotes · ← buy · → rebuy · R3 ping (hold for the ping wheel) · L3 inspect · View scores · Menu pause. '
     + 'In menus: D-pad or left stick moves, A selects, B goes back, LB/RB switch sections, right stick scrolls.';
 }

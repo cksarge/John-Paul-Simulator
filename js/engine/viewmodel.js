@@ -52,6 +52,7 @@ export class Viewmodel {
 
   setWeapon(id, char) {
     this.root.clear();
+    this.inspectT = -1;
     this.id = id;
     this.skin = char?.skins?.[id] || null;
     if (!id) return;
@@ -82,6 +83,7 @@ export class Viewmodel {
   }
 
   fire(strength = 1, flash = true) {
+    this.inspectT = -1;
     this.kick = Math.min(0.08, this.kick + 0.035 * strength);
     this.kickRot = Math.min(0.25, this.kickRot + 0.08 * strength);
     if (flash && typeOf(this.id) !== 'knife') {
@@ -92,7 +94,29 @@ export class Viewmodel {
     }
   }
 
-  swingKnife(heavy) { this.swing = heavy ? 1.6 : 1; this.swingHeavy = heavy; }
+  swingKnife(heavy) { this.swing = heavy ? 1.6 : 1; this.swingHeavy = heavy; this.inspectT = -1; }
+
+  // Weapon inspect: turns the gun to show its finish, then the other side; knives get a flip.
+  inspect() {
+    if (!this.holder || typeOf(this.id) === 'nade' || this.id === 'bomb') return false;
+    this.inspectT = 0;
+    this.inspectDur = typeOf(this.id) === 'knife' ? 2.4 : 3.0;
+    return true;
+  }
+  get inspecting() { return this.inspectT >= 0; }
+
+  inspectPose(t, knife) {
+    const ease = (x) => x * x * (3 - 2 * x);
+    const seg = (a, b) => ease(THREE.MathUtils.clamp((t - a) / (b - a), 0, 1));
+    const into = seg(0, 0.18), out = seg(0.84, 1), mid = seg(0.4, 0.62);
+    const k = into * (1 - out);
+    // Bring the gun toward the centre and tilt it to show the right side, then roll to the left side.
+    const ry = k * (-1.05 + mid * 1.9), rz = k * (0.25 - mid * 0.65), rx = k * (0.18 + Math.sin(t * Math.PI * 2) * 0.04);
+    const pos = new THREE.Vector3(-k * 0.13, k * 0.05, k * 0.06);
+    let spin = 0;
+    if (knife) spin = seg(0.42, 0.66) * Math.PI * 2 * k; // a full flip around the blade
+    return { rx, ry, rz: rz + spin, pos };
+  }
 
   // st: {speed, onGround, lookDX, lookDY, reload (0..1 or -1), scoped, crouch, dt}
   update(dt, st) {
@@ -125,6 +149,19 @@ export class Viewmodel {
       ry += s * (this.swingHeavy ? 0.2 : 0.9);
       rx -= s * (this.swingHeavy ? 0.9 : 0.2);
       this.holder.position.z -= s * 0.12;
+    }
+    if (this.inspectT >= 0) {
+      if (st.reload >= 0 || st.scoped) this.inspectT = -1;
+      else {
+        this.inspectT += dt;
+        const t = this.inspectT / this.inspectDur;
+        if (t >= 1) this.inspectT = -1;
+        else {
+          const p = this.inspectPose(t, typeOf(this.id) === 'knife');
+          rx += p.rx; ry += p.ry; rz += p.rz;
+          this.holder.position.add(p.pos);
+        }
+      }
     }
     this.holder.rotation.set(rx, ry, rz);
     if (this.flashT > 0) { this.flashT -= dt; if (this.flashT <= 0) this.flash.visible = false; }

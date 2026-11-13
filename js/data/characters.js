@@ -1,5 +1,5 @@
 import { WEAPONS } from './weapons.js';
-import { WEAPON_SKINS, OUTFITS, CALLING_CARDS, KILL_FX, EMOTES } from './skins.js';
+import { WEAPON_SKINS, OUTFITS, CALLING_CARDS, KILL_FX, EMOTES, seasonLocked } from './skins.js';
 
 // One perk per operator. The custom operator may pick any of them.
 export const PERKS = {
@@ -56,10 +56,12 @@ export const OPERATORS = [
 export function randomChar(rng = Math.random) {
   const pick = (a) => a[Math.floor(rng() * a.length)];
   const base = pick(OPERATORS).char;
-  const finishes = Object.keys(WEAPON_SKINS), outfits = Object.keys(OUTFITS);
+  // Season exclusives stay off bots so nobody sees them before they can be earned.
+  const open = (defs) => Object.keys(defs).filter((id) => !defs[id].season);
+  const finishes = open(WEAPON_SKINS), outfits = open(OUTFITS);
   const skins = {};
   for (const w of Object.keys(WEAPONS)) if (rng() < 0.35) skins[w] = pick(finishes);
-  const cards = Object.keys(CALLING_CARDS), fx = Object.keys(KILL_FX);
+  const cards = open(CALLING_CARDS), fx = Object.keys(KILL_FX);
   return { ...base, top: pick(CHAR_OPTIONS.cloth), pants: pick(CHAR_OPTIONS.cloth), skin: pick(CHAR_OPTIONS.skin), outfit: rng() < 0.4 ? pick(outfits) : 'standard', skins, card: pick(cards), killfx: rng() < 0.3 ? pick(fx) : 'none' };
 }
 
@@ -84,14 +86,15 @@ export function sanitizeChar(c) {
   out.vest = oneOf(c.vest, CHAR_OPTIONS.vest, out.vest);
   out.height = Math.min(1.08, Math.max(0.92, Number(c.height) || 1));
   out.perk = oneOf(c.perk, Object.keys(PERKS), out.perk);
-  out.outfit = oneOf(c.outfit, Object.keys(OUTFITS), 'standard');
-  out.card = oneOf(c.card, Object.keys(CALLING_CARDS), 'standard');
+  // Items from seasons that haven't started yet are never worn.
+  out.outfit = oneOf(c.outfit, Object.keys(OUTFITS).filter((id) => !seasonLocked(OUTFITS[id])), 'standard');
+  out.card = oneOf(c.card, Object.keys(CALLING_CARDS).filter((id) => !seasonLocked(CALLING_CARDS[id])), 'standard');
   out.killfx = oneOf(c.killfx, Object.keys(KILL_FX), 'none');
   const em = Array.isArray(c.emotes) ? c.emotes.filter((e) => EMOTES[e]).slice(0, 4) : [];
   out.emotes = em.length ? [...em, ...DEFAULT_CHAR.emotes.filter((e) => !em.includes(e))].slice(0, 4) : [...DEFAULT_CHAR.emotes];
   out.skins = {};
   if (c.skins && typeof c.skins === 'object') {
-    for (const [w, f] of Object.entries(c.skins)) if (WEAPONS[w] && WEAPON_SKINS[f]) out.skins[w] = f;
+    for (const [w, f] of Object.entries(c.skins)) if (WEAPONS[w] && WEAPON_SKINS[f] && !seasonLocked(WEAPON_SKINS[f])) out.skins[w] = f;
   }
   return out;
 }

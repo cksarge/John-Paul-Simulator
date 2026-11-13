@@ -1,4 +1,4 @@
-import { MODES, rankBadge, rankFor, levelFor, RANKS, SOLO_KINDS, goalText } from '../data/modes.js';
+import { MODES, rankBadge, rankFor, levelFor, RANKS, SOLO_KINDS, SIDED_KINDS, needsSites, goalText } from '../data/modes.js';
 import { PERKS, OPERATORS, CHAR_OPTIONS, sanitizeChar } from '../data/characters.js';
 import { WEAPONS, CLASS_NAMES, itemInfo } from '../data/weapons.js';
 import { RARITIES, KINDS, owns } from '../data/skins.js';
@@ -13,6 +13,9 @@ import { PASSWORD_RULES, OTP_LENGTH, assertPassword } from '../data/auth.js';
 import { mountTurnstile } from './turnstile.js';
 import { cardImage, itemSwatch } from './cards.js';
 import { applyPadSettings, padHelp } from '../engine/gamepad.js';
+import { renderSeason } from './season.js';
+import { commendDialog, reportDialog, COMMENDS } from './social.js';
+import { seasonById, fmtDate } from '../data/seasons.js';
 import { censor } from '../data/profanity.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -20,12 +23,14 @@ const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; };
 const QUAD_MODES = ['ranked', 'duo', 'bomb', 'tdm'];
-const MORE_MODES = ['duel', 'gungame', 'ffa'];
-const OFFLINE_MODES = ['duel', 'duo', 'bomb', 'tdm', 'gungame', 'ffa'];
+const MORE_MODES = ['hostage', 'retake', 'duel', 'gungame', 'ffa'];
+const OFFLINE_MODES = ['duel', 'duo', 'bomb', 'hostage', 'retake', 'tdm', 'gungame', 'ffa'];
+const PLAY_MAPS = Object.values(MAPS).filter((m) => !m.training);
 const RESEND_COOLDOWN = 60; // seconds between auth emails (matches Supabase's default per-user limit)
 const COOLDOWN_KEY = 'jps_email_sent_at';
 const NAV = [
   ['play', 'Play', 'Queue up or fight bots'],
+  ['season', 'Season', 'Reward track and challenges'],
   ['operators', 'Operators', 'Pick and build your operator'],
   ['armory', 'Armory', 'Finishes, outfits, cards, effects, emotes'],
   ['stats', 'Stats', 'Your record, weapons and rivals'],
@@ -33,8 +38,8 @@ const NAV = [
   ['leaderboard', 'Leaderboard', 'Top players'],
   ['settings', 'Settings', 'Graphics, controls and audio'],
 ];
-const FOCUS = { play: 'play', operators: 'operator', armory: 'weapon', stats: 'stats', replays: 'stats', leaderboard: 'play', settings: 'play' };
-const WIDE = new Set(['stats', 'replays', 'leaderboard', 'settings']);
+const FOCUS = { play: 'play', season: 'operator', operators: 'operator', armory: 'weapon', stats: 'stats', replays: 'stats', leaderboard: 'play', settings: 'play' };
+const WIDE = new Set(['season', 'stats', 'replays', 'leaderboard', 'settings']);
 const ARMORY_KINDS = [['finish', 'Finishes'], ['outfit', 'Outfits'], ['card', 'Calling cards'], ['effect', 'Kill effects'], ['emote', 'Emotes']];
 const WHEEL = ['Up', 'Right', 'Down', 'Left'];
 const SIZE_LABEL = (m) => (SOLO_KINDS.has(m.kind) ? `${m.maxPlayers} players` : `${m.teamSize}v${m.teamSize}`);
@@ -359,10 +364,13 @@ export class UI {
     }
     const el = this.root.querySelector('#tab');
     ({
-      play: () => this.renderPlay(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el),
+      play: () => this.renderPlay(el), season: () => renderSeason(this, el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el),
       stats: () => this.renderStats(el), replays: () => this.renderReplays(el), leaderboard: () => this.renderLeaderboard(el), settings: () => this.renderSettings(el),
     })[tab]();
   }
+
+  commendDialog(player, matchId, done) { commendDialog(this, player, matchId, done); }
+  reportDialog(player, ctx, done) { reportDialog(this, player, ctx, done); }
 
   footMap() {
     const f = this.root.querySelector('#foot-map');
@@ -480,9 +488,10 @@ export class UI {
           <button class="mrow ${this.onlineMode === 'custom' ? 'sel' : ''}" data-mode="custom"><span class="mrow-name">Custom lobby</span><span class="mrow-goal">Your rules, invite code, bots optional</span><span class="mrow-size">Any</span></button></div>` : ''}
         ${online ? `<div class="m-join"><input type="text" id="join-code" maxlength="5" placeholder="Lobby code" aria-label="Lobby code"><button class="btn small" id="join-btn">Join</button><button class="btn small ghost" id="browse-btn">Browse open lobbies</button></div><div id="lobby-list"></div>` : ''}
       ` : `
+        <button class="m-train" id="train"><b>Training Range</b><span>Aim drills, moving targets, spray practice and grenade line-ups</span></button>
         <div class="mrows">${OFFLINE_MODES.map((id) => row(id, id === o.mode, 'data-omode')).join('')}</div>
         <div class="m-label">Map</div>
-        <div class="map-strip">${Object.values(MAPS).map((m) => `<button class="map-tile ${o.map === m.id ? 'sel' : ''} ${o.mode === 'bomb' && !m.sites ? 'off' : ''}" data-map="${m.id}" title="${esc(m.desc)}"><img src="${mapPreview(m.id)}" alt=""><span>${esc(m.name)}</span></button>`).join('')}</div>
+        <div class="map-strip">${PLAY_MAPS.map((m) => `<button class="map-tile ${o.map === m.id ? 'sel' : ''} ${needsSites(MODES[o.mode]) && !m.sites ? 'off' : ''}" data-map="${m.id}" title="${esc(m.desc)}"><img src="${mapPreview(m.id)}" alt=""><span>${esc(m.name)}</span></button>`).join('')}</div>
         <div class="m-label">Bots</div>
         <div class="seg" id="off-diff">${Object.keys(BOT_LEVELS).map((k) => `<button data-d="${k}" class="${o.botLevel === k ? 'sel' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
       `}
@@ -511,14 +520,15 @@ export class UI {
         $('#browse-btn').onclick = () => this.browseLobbies($('#lobby-list'));
       }
       const custom = this.onlineMode === 'custom', m = MODES[this.onlineMode];
-      info.innerHTML = custom ? '<b>Custom lobby</b><span>Pick the mode and map, share the code, start when ready.</span>'
-        : `<b>${esc(m.name)}</b><span>${esc(m.desc)}</span>${inParty ? `<span class="m-party-line">${isLeader ? `Your party of ${party.size} queues together${party.size > partyLimit(m.id) ? ' — too many players for this mode' : ''}.` : 'Only your party leader can start a search.'}</span>` : ''}`;
+      info.innerHTML = (custom ? '<b>Custom lobby</b><span>Pick the mode and map, share the code, start when ready.</span>'
+        : `<b>${esc(m.name)}</b><span>${esc(m.desc)}</span>${inParty ? `<span class="m-party-line">${isLeader ? `Your party of ${party.size} queues together${party.size > partyLimit(m.id) ? ' — too many players for this mode' : ''}.` : 'Only your party leader can start a search.'}</span>` : ''}`);
       btn.textContent = custom ? 'Create lobby' : 'Find match';
       btn.onclick = () => (custom ? this.createLobby() : this.startQueue(this.onlineMode));
     } else {
-      el.querySelectorAll('[data-omode]').forEach((b) => { b.onclick = () => { o.mode = b.dataset.omode; if (!MAPS[o.map].sites && o.mode === 'bomb') { o.map = 'dustline'; this.scene?.show(o.map); this.footMap(); } this.renderPlay(el); }; });
+      $('#train').onclick = () => app.startOffline({ mode: 'training', map: 'range', botLevel: 'easy' });
+      el.querySelectorAll('[data-omode]').forEach((b) => { b.onclick = () => { o.mode = b.dataset.omode; if (!MAPS[o.map].sites && needsSites(MODES[o.mode])) { o.map = 'dustline'; this.scene?.show(o.map); this.footMap(); } this.renderPlay(el); }; });
       el.querySelectorAll('[data-map]').forEach((b) => { b.onclick = () => {
-        if (o.mode === 'bomb' && !MAPS[b.dataset.map].sites) { this.toast('Bomb defusal needs one of the large maps with bomb sites.', 'bad'); return; }
+        if (needsSites(MODES[o.mode]) && !MAPS[b.dataset.map].sites) { this.toast(`${MODES[o.mode].name} needs one of the large maps with sites.`, 'bad'); return; }
         o.map = b.dataset.map; this.scene?.show(o.map); this.footMap(); this.renderPlay(el);
       }; });
       el.querySelectorAll('#off-diff button').forEach((b) => { b.onclick = () => { o.botLevel = b.dataset.d; this.renderPlay(el); }; });
@@ -592,10 +602,10 @@ export class UI {
     else {
       const col = (t, label) => `<div class="l-team ${t ? 'ct' : 't'}"><div class="l-head"><b>${label}</b><button class="btn small" data-team="${t}">Join</button></div>${members.filter((x) => x.team === t).map(row).join('') || '<p class="m-empty">Empty — bots fill in if enabled.</p>'}</div>`;
       const auto = members.filter((x) => x.team !== 0 && x.team !== 1);
-      teams = col(0, m.kind === 'bomb' ? 'Attackers' : 'Team 1') + col(1, m.kind === 'bomb' ? 'Defenders' : 'Team 2') +
+      teams = col(0, SIDED_KINDS.has(m.kind) ? 'Attackers' : 'Team 1') + col(1, SIDED_KINDS.has(m.kind) ? 'Defenders' : 'Team 2') +
         (auto.length ? `<div class="l-team wide"><div class="l-head"><b>Auto-assign</b><button class="btn small" data-team="-1">Join</button></div>${auto.map(row).join('')}</div>` : '');
     }
-    const maps = cfg.mode === 'bomb' ? Object.values(MAPS).filter((x) => x.sites) : Object.values(MAPS);
+    const maps = needsSites(m) ? PLAY_MAPS.filter((x) => x.sites) : PLAY_MAPS;
     const opt = (v, cur, label) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     el.innerHTML = `<div class="l-top"><div><span class="m-label">Lobby code</span><div class="code-box">${esc(lobby.code)}</div></div><span class="spacer"></span>
         <button class="btn small ghost" id="lb-leave">Leave lobby</button>${host ? '<button class="deploy-btn small" id="lb-start">Start match</button>' : '<span class="m-sub">Waiting for the host to start</span>'}</div>
@@ -614,7 +624,7 @@ export class UI {
     el.querySelectorAll('[data-team]').forEach((b) => { b.onclick = () => lobby.setTeam(+b.dataset.team); });
     el.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = () => lobby.room.send('kick', b.dataset.kick); });
     if (host) {
-      $('#lb-mode').onchange = (e) => { const mode = e.target.value; let map = cfg.map; if (mode === 'bomb' && !MAPS[map].sites) map = 'dustline'; lobby.setCfg({ mode, map }); };
+      $('#lb-mode').onchange = (e) => { const mode = e.target.value; let map = cfg.map; if (needsSites(MODES[mode]) && !MAPS[map].sites) map = 'dustline'; lobby.setCfg({ mode, map }); };
       $('#lb-map').onchange = (e) => lobby.setCfg({ map: e.target.value });
       $('#lb-diff').onchange = (e) => lobby.setCfg({ botLevel: e.target.value });
       $('#lb-fill').onchange = (e) => lobby.setCfg({ fillBots: e.target.checked });
@@ -728,9 +738,10 @@ export class UI {
     const card = (id, d) => {
       const own = this.owned(kind, id), r = RARITIES[d.rarity], sw = itemSwatch(kind, id);
       const eq = kind === 'emote' ? c.emotes.includes(id) : id === current;
-      const lockText = d.milestone ? d.milestone.label : 'Earned from match drops';
+      const ss = d.season ? seasonById(d.season) : null;
+      const lockText = d.milestone ? d.milestone.label : ss ? (d.rankedReward ? `Season ${ss.num} ranked reward` : `Season ${ss.num} reward track`) + (Date.parse(ss.start) > Date.now() ? ` · from ${fmtDate(ss.start)}` : '') : 'Earned from match drops';
       return `<button class="item-card ${kind === 'card' ? 'wide' : ''} ${eq ? 'equipped' : ''} ${own ? '' : 'locked'}" data-item="${id}" style="--rc:${r.color}" title="${esc(own ? d.name : lockText)}">
-        <span class="sw" style="background:${sw.bg}">${sw.glyph}</span><b>${esc(d.name)}</b><em>${own ? r.name : d.milestone ? 'Milestone' : 'Locked'}</em>
+        <span class="sw" style="background:${sw.bg}">${sw.glyph}</span><b>${esc(d.name)}</b><em>${own ? r.name : d.milestone ? 'Milestone' : ss ? `Season ${ss.num}` : 'Locked'}</em>
         ${kind === 'emote' && eq ? `<i class="slot-tag">${WHEEL[c.emotes.indexOf(id)]}</i>` : ''}</button>`;
     };
     const classes = Object.keys(CLASS_NAMES);
@@ -758,7 +769,7 @@ export class UI {
       if (kind === 'emote') this.scene?.emote(id);
       if (kind === 'finish' && !own) { const prev = { ...c, skins: { ...c.skins, [wid]: id } }; this.scene?.setChar(prev, wid); this.scene?.faceFront(); }
       if (kind === 'outfit' && !own) { this.scene?.setChar({ ...c, outfit: id }, 'ar7'); this.scene?.faceFront(); }
-      if (!own) { this.toast(`${d.name} is locked. ${d.milestone ? d.milestone.label + ' to unlock it.' : 'Win matches to earn drops.'}`, 'bad'); return; }
+      if (!own) { const ss = d.season ? seasonById(d.season) : null; this.toast(`${d.name} is locked. ${d.milestone ? d.milestone.label + ' to unlock it.' : ss ? `It's a Season ${ss.num} (${ss.name}) ${d.rankedReward ? 'ranked reward' : 'reward-track item'}${Date.parse(ss.start) > Date.now() ? `, available from ${fmtDate(ss.start)}` : ''}.` : 'Win matches to earn drops.'}`, 'bad'); return; }
       if (kind === 'finish') { if (id === 'factory') delete c.skins[wid]; else c.skins[wid] = id; }
       else if (kind === 'outfit') c.outfit = id;
       else if (kind === 'card') c.card = id;
@@ -902,13 +913,13 @@ export class UI {
   async profileModal(id) {
     const m = this.modal('<p class="m-sub">Loading…</p>');
     try {
-      const [p, hist] = await Promise.all([this.app.api.profile(id), this.app.api.history(id, 10)]);
-      m.querySelector('.modal').innerHTML = this.profileHTML(p, hist) + '<div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn small" data-x>Close</button></div>';
+      const [p, hist, commends] = await Promise.all([this.app.api.profile(id), this.app.api.history(id, 10), this.app.api.playerCommends(id).catch(() => null)]);
+      m.querySelector('.modal').innerHTML = this.profileHTML(p, hist, commends) + '<div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn small" data-x>Close</button></div>';
       m.querySelector('[data-x]').onclick = () => m.remove();
     } catch (e) { m.querySelector('.modal').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
   }
 
-  profileHTML(p, hist) {
+  profileHTML(p, hist, commends = null) {
     const lvl = levelFor(p.xp);
     const card = p.character?.card || 'standard';
     return `<div class="pm-card" style="background-image:linear-gradient(90deg, rgba(14,18,13,.9), rgba(14,18,13,.3)), url(${cardImage(card)})"><div><h2 class="m-h1">${esc(p.username)}</h2><p class="m-sub">Level ${lvl.level}, joined ${new Date(p.created_at).toLocaleDateString()}</p></div><span class="spacer"></span>${rankBadge(p.elo, true)}</div>
@@ -920,6 +931,7 @@ export class UI {
         <div><b>${pct(p.wins, p.matches)}%</b><span>Win rate</span></div>
         <div><b>${p.matches}</b><span>Online matches</span></div>
       </div>
+      ${commends && Object.keys(commends).length ? `<div class="commends">${COMMENDS.filter(([k]) => commends[k]).map(([k, l, i]) => `<span title="${l}">${i} ${l} <b>${commends[k]}</b></span>`).join('')}</div>` : ''}
       <h3 class="m-h3">Recent matches</h3>
       ${hist.length ? `<table class="tbl"><tr><th>Result</th><th>Mode</th><th>Map</th><th class="num">K–D</th><th class="num">Rating</th><th class="num">When</th></tr>
         ${hist.map((h) => `<tr><td class="res-${h.result}">${h.result[0].toUpperCase() + h.result.slice(1)}</td><td>${esc(MODES[h.mode]?.name || h.mode)}</td><td>${esc(MAPS[h.map]?.name || h.map)}</td><td class="num">${h.kills}–${h.deaths}</td><td class="num">${h.ranked ? (h.elo_change > 0 ? '+' : '') + h.elo_change : '—'}</td><td class="num muted">${ago(h.created_at)}</td></tr>`).join('')}</table>` : '<p class="m-empty">No matches yet.</p>'}`;
@@ -947,12 +959,22 @@ export class UI {
   async renderLeaderboard(el, kind = 'elo') {
     const app = this.app;
     el.innerHTML = `<div class="row"><h2 class="m-h1">Leaderboard</h2><span class="spacer"></span>
-      <div class="seg" id="lb-kind">${[['elo', 'Rating'], ['kills', 'Kills'], ['wins', 'Wins'], ['xp', 'Level']].map(([k, l]) => `<button data-k="${k}" class="${k === kind ? 'sel' : ''}">${l}</button>`).join('')}</div></div>
+      <div class="seg" id="lb-kind">${[['season', 'Season'], ['elo', 'Rating'], ['kills', 'Kills'], ['wins', 'Wins'], ['xp', 'Level']].map(([k, l]) => `<button data-k="${k}" class="${k === kind ? 'sel' : ''}">${l}</button>`).join('')}</div></div>
       <div id="lb-body"><p class="m-sub">Loading…</p></div>`;
     el.querySelectorAll('#lb-kind button').forEach((b) => { b.onclick = () => this.renderLeaderboard(el, b.dataset.k); });
     const body = el.querySelector('#lb-body');
     if (!app.api) { body.innerHTML = '<p class="m-empty">The leaderboard needs an internet connection.</p>'; return; }
     try {
+      if (kind === 'season') {
+        const { currentSeason } = await import('../data/seasons.js');
+        const cur = currentSeason();
+        const rows = cur ? await app.api.seasonLeaderboard(cur.id, 100) : [];
+        body.innerHTML = rows.length ? `<p class="m-sub">Season ${cur.num}: ${esc(cur.name)}</p><table class="tbl lb"><tr><th>#</th><th>Player</th><th>Rank</th><th class="num">Rating</th><th class="num">Record</th><th class="num">Peak</th></tr>
+          ${rows.map((r, i) => `<tr class="clickable ${r.id === app.user?.id ? 'me' : ''}" data-id="${r.id}"><td class="pos">${i + 1}</td><td><b>${esc(r.username)}</b></td><td>${rankBadge(r.elo)}</td><td class="num">${r.elo}</td><td class="num">${r.season_wins}–${r.season_losses}</td><td class="num">${r.season_peak}</td></tr>`).join('')}</table>`
+          : '<p class="m-empty">Nobody has played ranked this season yet.</p>';
+        body.querySelectorAll('[data-id]').forEach((r) => { r.onclick = () => this.profileModal(r.dataset.id); });
+        return;
+      }
       const rows = await app.api.leaderboard(kind);
       if (!rows.length) { body.innerHTML = '<p class="m-empty">No players yet. Play a ranked match to be first.</p>'; return; }
       body.innerHTML = `<table class="tbl lb"><tr><th>#</th><th>Player</th><th>Rank</th><th class="num">Rating</th><th class="num">Ranked</th><th class="num">Wins</th><th class="num">K/D</th><th class="num">Kills</th><th class="num">Level</th></tr>

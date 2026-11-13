@@ -188,4 +188,5 @@ export const sfx = {
   win() { if (!ctx) return; const d = out(null, 0.4); const t = ctx.currentTime; [523, 659, 784, 1046].forEach((f, i) => tone(d, t + i * 0.12, 0.5, { type: 'triangle', freq: f, gain: 0.5 })); },
   lose() { if (!ctx) return; const d = out(null, 0.4); const t = ctx.currentTime; [392, 330, 262].forEach((f, i) => tone(d, t + i * 0.16, 0.5, { type: 'triangle', freq: f, gain: 0.5 })); },
   ui() { if (!ctx) return; tone(out(null, 0.15), ctx.currentTime, 0.04, { type: 'sine', freq: 1200, gain: 0.4 }); },
+  ping(urgent) { if (!ctx) return; const d = out(null, 0.25); const t = ctx.currentTime; tone(d, t, 0.07, { type: 'sine', freq: urgent ? 1560 : 1180, gain: 0.5 }); tone(d, t + 0.08, 0.1, { type: 'sine', freq: urgent ? 2080 : 1480, gain: 0.45 }); },
 };

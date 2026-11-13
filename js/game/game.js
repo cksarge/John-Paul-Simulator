@@ -5,7 +5,11 @@ import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
 import { sfx, setListener, initAudio, setVolume } from '../engine/audio.js';
 import { MAPS } from '../data/maps.js';
-import { MODES, RESPAWN_KINDS, SOLO_KINDS, goalText, econFor } from '../data/modes.js';
+import { MODES, RESPAWN_KINDS, SOLO_KINDS, BOMB_KINDS, SIDED_KINDS, goalText, econFor } from '../data/modes.js';
+import { HostageView } from './hostage.js';
+import { sanitizeChar } from '../data/characters.js';
+import { Training } from './training.js';
+import { Pings } from './pings.js';
 import { WEAPONS, GRENADES, itemInfo, GUN_GAME_ORDER, nadeDef, isKnife } from '../data/weapons.js';
 import { Player } from './player.js';
 import { Input } from './input.js';
@@ -14,7 +18,7 @@ import { censor } from '../data/profanity.js';
 import { Rules } from './rules.js';
 import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
-import { EMOTES, KILL_FX } from '../data/skins.js';
+import { EMOTES, KILL_FX, WEAPON_SKINS } from '../data/skins.js';
 import { Recorder, WORLD_EVENTS, unpack } from './recorder.js';
 import { SpectatorCam } from './spectatorcam.js';
 import {
@@ -54,14 +58,14 @@ export class Game {
     this.matchId = opts.matchId || 'off-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     this.players = new Map();
     this.brains = new Map();
-    this.state = { phase: 'warmup', time: 0, round: 0, scores: [0, 0], bomb: { state: 'none' } };
+    this.state = { phase: 'warmup', time: 0, round: 0, scores: [0, 0], bomb: { state: 'none' }, hostages: [] };
     this.botPlan = { site: 'A', ctIndex: 0 };
     this.nades = [];
     this.fires = [];
     this.decoys = [];
     this.nadeSeq = 0;
     // Detailed personal stats for the stats page (weapons, accuracy, head-to-head, where you died).
-    this.myStats = { shots: 0, hits: 0, weapons: {}, victims: {}, killers: {}, deaths: [] };
+    this.myStats = { shots: 0, hits: 0, weapons: {}, victims: {}, killers: {}, deaths: [], nades: 0, plants: 0, defuses: 0, rescues: 0 };
     this.punch = 0;
     this.lookDX = 0; this.lookDY = 0;
     this.outShots = new Map();
@@ -101,6 +105,7 @@ export class Game {
     this.bombMesh.add(this.bombLight);
     scene.add(this.bombMesh);
     this.beepT = 0;
+    if (this.mode.kind === 'hostage') this.hostageView = new HostageView(this);
 
     for (const info of this.opts.players) this.addPlayer(info);
 
@@ -116,13 +121,16 @@ export class Game {
     };
     this.hud = new Hud(this);
     this.hud.mount();
+    this.pings = new Pings(this);
     initAudio();
     setVolume(this.settings.volume);
 
     if (this.online) this.bindNet();
+    if (this.mode.kind === 'training') { this.training = new Training(this); this.rec.unwrap(); }
     if (this.isHost) {
       this.rules = new Rules(this);
       this.rules.begin();
+      this.training?.setDrill('free');
     } else {
       this.helloT = 0;
       if (this.rejoin) {
@@ -142,12 +150,16 @@ export class Game {
 
   addPlayer(info) {
     if (this.players.has(info.id)) return this.players.get(info.id);
+    // Other players' operators arrive over the network; clean them like our own (this also drops
+    // cosmetics from seasons that haven't started).
+    if (!info.isBot && info.char) info = { ...info, char: { ...sanitizeChar(info.char), preset: info.char.preset } };
     const p = new Player(info);
     p.owner = info.isBot ? this.hostId : info.id;
     p.isLocal = info.id === this.localId;
     p.isRemoteView = p.owner !== this.localId;
     this.players.set(p.id, p);
-    if (info.isBot && this.isHost) this.brains.set(p.id, new BotBrain(this, p, this.opts.botLevel || 'normal'));
+    p.dummy = !!info.dummy;
+    if (info.isBot && !info.dummy && this.isHost) this.brains.set(p.id, new BotBrain(this, p, this.opts.botLevel || 'normal'));
     if (!p.isLocal) {
       p.ensureModel(this.scene, !SOLO_KINDS.has(this.mode.kind));
       p.model.root.visible = false;
@@ -209,7 +221,8 @@ export class Game {
     inp.pollPad();
     if (!this.ended && !inp.captured && !inp.typing && (!this.hud.overlayOpen() || this.hud.overlay === 'score') && now - inp.lockRequestedAt > 1600) this.hud.showPause();
     try {
-      if (!(this.paused && !this.online)) { this.update(dt, now); this.rec.tick(dt); }
+      // The training range has no replays or kill cams, so it doesn't record (it can run for hours).
+      if (!(this.paused && !this.online)) { this.update(dt, now); if (!this.training) this.rec.tick(dt); }
       if (this.killcam) this.updateKillcam(dt); else this.updateCamera(dt);
       this.engine.render();
     } catch (e) {
@@ -222,7 +235,7 @@ export class Game {
     if (this.isHost) this.rules.update(dt);
     else {
       this.state.time -= dt;
-      if (this.state.bomb?.state === 'planted') this.state.bomb.time -= dt;
+      if (this.state.bomb?.state === 'planted' && this.state.phase === 'live') this.state.bomb.time -= dt;
       this.helloT -= dt;
       if (!this.gotSnap && this.helloT <= 0) { this.helloT = 1.5; this.net.send('hello', { id: this.localId }); }
     }
@@ -253,6 +266,9 @@ export class Game {
     if (this.emoteT > 0) { this.emoteT -= dt; if (!this.local?.model?.emote) this.emoteT = 0; }
     this.updateNades(dt);
     this.updateBomb(dt);
+    this.hostageView?.update(dt);
+    this.training?.update(dt);
+    this.pings?.update(dt);
     this.world.update(dt);
     if (this.isHost && RESPAWN_KINDS.has(this.mode.kind)) this.tickPropRespawn(dt);
     if (this.pendingLeave.size) this.tickPendingLeaves(dt);
@@ -295,9 +311,11 @@ export class Game {
       const id = (p.char?.emotes || [])[slot];
       if (id) this.emote(p, id);
     }
-    const mdx = ui || wheel ? 0 : inp.mouse.dx, mdy = ui || wheel ? 0 : inp.mouse.dy * (s.invertY ? -1 : 1);
+    // Hold Z for the ping wheel; like the emote wheel it takes the mouse while open.
+    const pinging = this.pings.input(dt, p, ui || wheel);
+    const mdx = ui || wheel || pinging ? 0 : inp.mouse.dx, mdy = ui || wheel || pinging ? 0 : inp.mouse.dy * (s.invertY ? -1 : 1);
     // Controller look turns at a rate (radians per second at full tilt) instead of by distance.
-    const padRate = ui || wheel ? 0 : 3.6 * s.padSens * dt * (p.ws.scope > 0 ? s.scopedSens * zoom : 1);
+    const padRate = ui || wheel || pinging ? 0 : 3.6 * s.padSens * dt * (p.ws.scope > 0 ? s.scopedSens * zoom : 1);
     const pdx = stick.x * padRate, pdy = stick.y * padRate * (s.padInvertY ? -1 : 1);
     this.lookDX = mdx + pdx / 0.0022; this.lookDY = mdy + pdy / 0.0022;
     if (p.alive) {
@@ -330,6 +348,14 @@ export class Game {
         if (this.action.t >= this.actionTime('defuse', p)) { this.request('defuse', {}); this.action = null; }
       }
     }
+    // Pick up a hostage (hold E)
+    const hostage = k('KeyE') && this.state.phase === 'live' && this.hostageView?.usable(p);
+    if (hostage) {
+      acting = true;
+      if (this.action?.type !== 'pickup') this.action = { type: 'pickup', t: 0 };
+      this.action.t += dt;
+      if (this.action.t >= this.mode.pickupTime) { this.request('pickup', { i: hostage.i }); this.action = null; }
+    }
     if (!acting) this.action = null;
     if (!ui && !acting && inp.pressed('KeyE')) this.interact(p);
 
@@ -360,6 +386,7 @@ export class Game {
       if (inp.pressed('KeyQ')) this.selectSlot(p, hasSlot(p, p.lastSlot) ? p.lastSlot : bestSlot(p));
       if (inp.mouse.wheel) { cycleSlot(p, inp.mouse.wheel > 0 ? 1 : -1); this.viewmodel.setWeapon(p.weaponId, p.char); }
       if (inp.pressed('KeyR') && startReload(p)) sfx.reload(null);
+      if (inp.pressed('KeyV')) this.inspect(p);
       if (inp.clicked('right')) this.altFire(p);
     }
     if (this.viewmodel.id !== p.weaponId) this.viewmodel.setWeapon(p.weaponId, p.char);
@@ -399,6 +426,16 @@ export class Game {
     if (!ui && this.online && (inp.pressed('Enter') || inp.pressed('KeyY') || inp.pressed('KeyT'))) this.hud.openChat();
   }
 
+  // Weapon inspect: plays the viewmodel animation and shows the finish and your kill count with it.
+  inspect(p) {
+    const id = p.weaponId;
+    if (!id || p.ws.reloadT >= 0 || !this.viewmodel.inspect()) return;
+    const finish = WEAPON_SKINS[p.char?.skins?.[id]]?.name || 'Factory';
+    const kills = (this.app.localStats?.().weapons?.[id]?.k || 0) + (this.myStats.weapons[id]?.k || 0);
+    const name = itemInfo(id)?.name || id;
+    this.hud.info(`${name} · ${finish}${WEAPONS[id] ? ` · ${kills.toLocaleString()} kill${kills === 1 ? '' : 's'} on this device` : ''}`, 3);
+  }
+
   selectSlot(p, slot) {
     if (switchSlot(p, slot)) this.viewmodel.setWeapon(p.weaponId, p.char);
   }
@@ -412,10 +449,11 @@ export class Game {
 
   canBuy(p = this.local) {
     if (!p || !p.alive) return false;
+    if (this.mode.kind === 'training') return true;
     if (SOLO_KINDS.has(this.mode.kind)) return false;
     if (this.mode.kind === 'tdm') return this.state.phase === 'live';
     if (this.state.phase === 'buy') return true;
-    if (this.state.phase === 'live' && this.mode.kind === 'bomb' && this.state.time > this.mode.roundTime - 20) {
+    if (this.state.phase === 'live' && (this.mode.kind === 'bomb' || this.mode.kind === 'hostage') && this.state.time > this.mode.roundTime - 20) {
       const r = this.mapDef.spawns[p.team];
       const cx = Math.floor(p.pos.x / CELL), cy = Math.floor(p.pos.z / CELL);
       return cx >= r[0] - 2 && cx <= r[2] + 2 && cy >= r[1] - 2 && cy <= r[3] + 2;
@@ -527,6 +565,7 @@ export class Game {
     p.crouch += ((crouch ? 1 : 0) - p.crouch) * Math.min(1, dt * 10);
     const w = p.weapon;
     let max = 6.0 * (w?.moveSpeed || 1) * (p.ws.scope > 0 ? 0.5 : 1) * (p.char?.perk === 'fleet' ? 1.06 : 1);
+    if (this.state.hostages?.some((h) => h.carrier === p.id)) max *= 0.82;
     if (crouch) max *= 0.42; else if (walk) max *= 0.52;
     const v = p.vel;
     if (p.onGround) {
@@ -689,6 +728,7 @@ export class Game {
       const ws = (this.myStats.weapons[w.id] ||= { k: 0, s: 0, h: 0, hs: 0 });
       ws.s++; this.myStats.shots++;
       if (dmgBy.size) { ws.h++; this.myStats.hits++; }
+      this.training?.onShot(dmgBy.size > 0);
     }
     for (const [victim, { d, part }] of dmgBy) {
       this.request('hit', { v: victim.id, d: Math.round(d), part, w: w.id }, p);
@@ -818,7 +858,8 @@ export class Game {
     const kind = p.weaponId;
     if (!GRENADES[kind]) return;
     const i = p.inv.nades.indexOf(kind);
-    if (i >= 0) p.inv.nades.splice(i, 1);
+    if (i >= 0 && !this.training) p.inv.nades.splice(i, 1);
+    if (p.isLocal) this.myStats.nades++;
     const f = p.forward();
     const o = p.eye().addScaledVector(f, 0.4);
     const v = f.clone().multiplyScalar(kind === 'mine' ? 9 : 15).add(new THREE.Vector3(p.vel.x * 0.5, 2.2, p.vel.z * 0.5));
@@ -842,7 +883,8 @@ export class Game {
   }
 
   // Moves one grenade a step with bounces. Returns {floor, wall} for what it hit this frame.
-  stepNade(n, dt) {
+  // `silent` is for the training arc preview, which simulates throws without sound.
+  stepNade(n, dt, silent = false) {
     const W = this.world, steps = 3, h = dt / steps;
     const hit = { floor: false, wall: false, player: false };
     for (let s = 0; s < steps; s++) {
@@ -871,7 +913,7 @@ export class Game {
           if (!bounced) { n.vel.x = -n.vel.x * 0.45; n.vel.z = -n.vel.z * 0.45; next.x = n.pos.x; next.z = n.pos.z; }
           hit.wall = true;
         }
-        if (n.vel.length() > 2) sfx.bounce(n.pos);
+        if (n.vel.length() > 2 && !silent) sfx.bounce(n.pos);
       }
       n.pos.copy(next);
     }
@@ -1242,6 +1284,7 @@ export class Game {
     else if (type === 'prop') this.hostPropRequest(p, data);
     else if (type === 'plant') this.rules.onPlant(p, data.pos);
     else if (type === 'defuse') this.rules.onDefuse(p);
+    else if (type === 'pickup') this.rules.onPickup?.(p, data.i);
   }
 
   hostDamage(attacker, victim, raw, part, weapon) {
@@ -1329,7 +1372,7 @@ export class Game {
 
   onEvent(type, d) {
     const s = this.state, lp = this.local;
-    if (this.rec && WORLD_EVENTS.has(type)) this.rec.event(type, d);
+    if (this.rec && !this.training && WORLD_EVENTS.has(type)) this.rec.event(type, d);
     switch (type) {
       case 'phase':
         s.phase = d.phase; s.time = d.time;
@@ -1390,6 +1433,7 @@ export class Game {
         v.model?.die(dir);
         if (k && k !== v) { k.kills++; if (d.hs) k.hs++; if (this.isHost) k.money = d.money ?? k.money; }
         this.trackKill(k, v, d);
+        this.training?.onKill(k, v);
         this.hud.killfeed(k, v, d.w, d.hs);
         const fx = k && k !== v ? k.char?.killfx : null;
         if (fx && fx !== 'none' && KILL_FX[fx]) this.effects.killFx(fx, v.pos.clone().setY(v.pos.y + 1), KILL_FX[fx].color);
@@ -1432,11 +1476,26 @@ export class Game {
         const prev = s.bomb?.state;
         s.bomb = d;
         this.refreshBombCarrier();
+        if (d.state === 'planted' && prev !== 'planted' && d.planter === this.localId) this.myStats.plants++;
+        if (d.state === 'defused' && d.defuser === this.localId) this.myStats.defuses++;
         if (d.state === 'planted' && prev !== 'planted') { this.hud.center('CHARGE PLANTED', `Site ${d.site} · ${this.mode.bombTime}s`, 3); sfx.plantDone(new THREE.Vector3(...d.pos)); }
         if (d.state === 'exploded') { const pos = new THREE.Vector3(...d.pos); this.effects.explosion(pos); this.effects.explosion(pos.clone().setY(pos.y + 1.5)); sfx.explosion(pos); }
         if (d.state === 'defused') sfx.plantDone(new THREE.Vector3(...d.pos));
         break;
       }
+      case 'hostage': {
+        s.hostages = d.list;
+        const by = d.by ? this.players.get(d.by) : null;
+        if (d.rescued !== undefined) {
+          this.hud.center('HOSTAGE RESCUED', by ? `${by.name} brought them home` : '', 3);
+          sfx.plantDone(by ? by.pos : null);
+          if (by?.isLocal) this.myStats.rescues++;
+        } else if (d.picked !== undefined && by) {
+          this.hud.info(by.isLocal ? 'Hostage secured — carry them back to your spawn' : `${by.name} has a hostage`, 3);
+        } else if (d.dropped !== undefined) this.hud.info('A hostage was dropped', 2);
+        break;
+      }
+      case 'ping': this.pings?.receive(d); break;
       case 'give': this.applyGive(d); break;
       case 'nade': this.spawnNade(d); break;
       case 'emote': {
@@ -1449,14 +1508,19 @@ export class Game {
       case 'boom': { const i = this.nades.findIndex((n) => n.nid === d.nid); if (i >= 0) this.detonate(i); break; }
       case 'door': this.world.setDoor(d.cell, d.open); sfx.door(this.world.cellCenter(...d.cell)); break;
       case 'prop': this.applyPropBreak(d); break;
-      case 'chat': this.hud.chatLine(d.name, d.text, d.team); break;
+      case 'chat': {
+        (this.chatLog ||= []).push({ id: d.id, name: d.name, text: d.text, t: Math.round(this.rec?.t || 0) });
+        if (this.chatLog.length > 200) this.chatLog.shift();
+        this.hud.chatLine(d.name, d.text, d.team);
+        break;
+      }
       case 'msg': this.hud.center(d.text, d.sub || '', d.time || 3); break;
       case 'end': this.onEnd(d); break;
     }
   }
 
   teamName(team) {
-    if (this.mode.kind === 'bomb') return team === 0 ? 'ATTACKERS' : 'DEFENDERS';
+    if (SIDED_KINDS.has(this.mode.kind)) return team === 0 ? 'ATTACKERS' : 'DEFENDERS';
     const lp = this.local;
     if (!lp && this.mode.teamSize !== 1) return 'TEAM ' + (team + 1);
     if (this.mode.teamSize === 1) {
@@ -1532,7 +1596,7 @@ export class Game {
   applyRound(d) {
     const s = this.state;
     this.endKillcam();
-    s.round = d.round; s.time = d.time; s.scores = d.scores; s.phase = d.phase || 'buy'; s.bomb = d.bomb;
+    s.round = d.round; s.time = d.time; s.scores = d.scores; s.phase = d.phase || 'buy'; s.bomb = d.bomb; s.hostages = d.hostages || [];
     this.effects.clearRound();
     this.clearNades();
     if (!RESPAWN_KINDS.has(this.mode.kind)) this.world.resetProps();
@@ -1554,12 +1618,17 @@ export class Game {
     }
     const lp = this.local;
     if (RESPAWN_KINDS.has(this.mode.kind)) this.hud.center(this.mode.name.toUpperCase(), goalText(this.mode), 3);
+    else if (this.training) this.hud.center('TRAINING RANGE', `Press ${pad.label('buy')} for weapons and drills`, 3);
     else {
-      const side = this.mode.kind === 'bomb' && lp ? (lp.team === 0 ? 'Attack — plant the charge at A or B' : 'Defend — stop the plant') : `Press ${pad.label('buy')} to choose your loadout`;
+      const kind = this.mode.kind, site = d.bomb?.site || d.hostages?.[0]?.site;
+      const side = !lp ? '' : kind === 'bomb' ? (lp.team === 0 ? 'Attack — plant the charge at A or B' : 'Defend — stop the plant')
+        : kind === 'retake' ? (lp.team === 0 ? `Hold site ${site} — the charge is planted` : `Retake site ${site} and defuse the charge`)
+          : kind === 'hostage' ? (lp.team === 0 ? `Rescue a hostage from site ${site}` : `Guard the hostages at site ${site}`)
+            : `Press ${pad.label('buy')} to choose your loadout`;
       this.hud.center(`ROUND ${d.round}`, side, 2.5);
       const keep = this.settings.keepLoadout && this.savedBuys.length;
       if (lp && lp.alive && keep) setTimeout(() => this.rebuy(), 350);
-      else if (lp && lp.alive && this.mode.kind !== 'bomb' && reset.has(lp.id)) this.hud.openBuy();
+      else if (lp && lp.alive && this.mode.kind !== 'bomb' && this.mode.kind !== 'hostage' && reset.has(lp.id)) this.hud.openBuy();
     }
     if (lp?.hasBomb) this.hud.info('You have the charge — hold E inside a bomb site to plant', 5);
   }
@@ -1589,7 +1658,7 @@ export class Game {
   // ───────────────────────── networking ─────────────────────────
   bindNet() {
     const n = this.net;
-    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg', 'boom', 'door', 'prop', 'emote'];
+    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'hostage', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg', 'boom', 'door', 'prop', 'emote', 'ping'];
     for (const e of evs) n.on(e, (d) => this.onEvent(e, d));
     n.on('S', (d) => this.onStates(d));
     n.on('req', (d) => { if (this.isHost) this.handleRequest(d.type, d.data, d.from); });
@@ -1800,8 +1869,9 @@ export class Game {
   chat(text) {
     const lp = this.local;
     if (!text.trim() || !lp) return;
-    this.broadcast('chat', { name: lp.name, text: censor(text.slice(0, 120)), team: lp.team });
+    this.broadcast('chat', { id: lp.id, name: lp.name, text: censor(text.slice(0, 120)), team: lp.team });
   }
+
 
   // ───────────────────────── camera ─────────────────────────
   spectating() { const lp = this.local; return !lp || !lp.alive; }
@@ -1913,7 +1983,7 @@ export class Game {
     const killer = this.players.get(kc.killer);
     if (!kc.started) {
       kc.started = true;
-      this.hud.killcam({ killer, weapon: kc.w, hs: kc.hs, hp: this.rec.sample(kc.killer, this.rec.t)?.hp });
+      this.hud.killcam({ killer, weapon: kc.w, hs: kc.hs, hp: this.rec.sample(kc.killer, this.rec.t)?.hp, highlight: kc.highlight });
       kc.cursor = this.rec.events.findIndex((e) => e.t > kc.pos);
     }
     const prev = kc.pos;
@@ -1956,12 +2026,53 @@ export class Game {
     const kc = this.killcam;
     this.killcam = null;
     this.hud.killcam(null);
+    kc.onDone?.();
     if (!this.local?.alive) this.viewmodel.setWeapon(null);
     // Models revived for the replay go back to lying where they fell.
     for (const id of kc.revived) {
       const p = this.players.get(id);
       if (p && !p.alive && p.model) { p.model.die(1); p.model.deathT = 1; }
     }
+  }
+
+  // ───────────────────────── play of the match ─────────────────────────
+  // The best multi-kill from the recording: kills by one player no more than 6 s apart.
+  // Needs at least two kills; your own streaks get a small bonus.
+  findHighlight() {
+    const kills = this.rec.events.filter((e) => e.k === 'ev' && e.n === 'kill' && e.a?.killer && e.a.killer !== e.a.victim);
+    const byKiller = new Map();
+    for (const e of kills) {
+      const runs = byKiller.get(e.a.killer) || [];
+      const last = runs[runs.length - 1];
+      if (last && e.t - last[last.length - 1].t <= 6) last.push(e); else runs.push([e]);
+      byKiller.set(e.a.killer, runs);
+    }
+    let best = null;
+    for (const [killer, runs] of byKiller) {
+      if (!this.players.has(killer)) continue;
+      for (const run of runs) {
+        if (run.length < 2) continue;
+        const score = run.length * 10 + run.filter((e) => e.a.hs).length * 2 + (killer === this.localId ? 3 : 0);
+        if (!best || score > best.score) best = { killer, run, score };
+      }
+    }
+    if (!best) return null;
+    const end = best.run[best.run.length - 1].t + 1.4;
+    return { ...best, start: Math.max(0, end - 14, best.run[0].t - 2.2), end };
+  }
+
+  // Plays the highlight through the kill-cam camera, then calls `done`.
+  playHighlight(h, done) {
+    const n = h.run.length, hs = h.run.filter((e) => e.a.hs).length;
+    const title = ['', '', 'DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL', 'ACE'][Math.min(n, 5)] || `${n} KILLS`;
+    let finished = false;
+    const finish = () => { if (finished) return; finished = true; this.endKillcam(); done(); };
+    this.killcam = {
+      killer: h.killer, delay: 0.3, pos: h.start, end: h.end, w: h.run[n - 1].a.w, hs: false, revived: new Set(),
+      highlight: { title, detail: `${n} kills${hs ? ` · ${hs} headshot${hs > 1 ? 's' : ''}` : ''} in ${(h.run[n - 1].t - h.run[0].t).toFixed(1)} s` },
+      onDone: finish,
+    };
+    this.hud.showHighlightSkip(finish);
   }
 
   // ───────────────────────── end ─────────────────────────
@@ -1989,9 +2100,16 @@ export class Game {
       : this.mode.kind === 'gungame' ? `Weapon ${Math.min((lp?.gg || 0) + 1, GUN_GAME_ORDER.length)}/${GUN_GAME_ORDER.length}`
         : `${d.scores[lp?.team ?? 0]}-${d.scores[1 - (lp?.team ?? 0)]}`;
     (result === 'win' ? sfx.win : result === 'loss' ? sfx.lose : sfx.roundStart)();
-    this.hud.showResults({ result, reason: d.reason, scores: d.scores, stats: d.stats || this.statsPayload(), eloChange: null, score });
+    const results = { result, reason: d.reason, scores: d.scores, stats: d.stats || this.statsPayload(), eloChange: null, score };
+    const highlight = d.reason !== 'host-left' && d.reason !== 'forfeit' && this.settings.killcam !== false ? this.findHighlight() : null;
+    if (highlight) setTimeout(() => this.playHighlight(highlight, () => this.hud.showResults(results)), 1200);
+    else this.hud.showResults(results);
     if (this.spectator) return;
     this.app.recordLocalStats?.({ mode: this.mode.id, map: this.mapDef.id, result, online: this.online, k: myStats.k, d: myStats.d, hs: myStats.hs, details: this.myStats });
+    if (this.mode.kind !== 'training' && d.reason !== 'host-left') {
+      const ms = this.myStats, knife = Object.entries(ms.weapons).reduce((a, [w, v]) => a + (isKnife(w) ? v.k : 0), 0);
+      this.app.trackChallenges?.({ mode: this.mode.id, result, online: this.online, k: myStats.k, hs: myStats.hs, dmg: Math.round(lp?.damage || 0), weapons: ms.weapons, nades: ms.nades, plants: ms.plants, defuses: ms.defuses, rescues: ms.rescues, knife });
+    }
     if (d.reason !== 'host-left') this.app.awardDrop?.(result, this.online).then((item) => this.hud.showDrop(item)).catch((e) => console.warn('Drop failed', e));
     const api = this.app.api;
     if (api && this.app.user) {

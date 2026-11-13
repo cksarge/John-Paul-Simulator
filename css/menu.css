@@ -299,6 +299,58 @@
 .toast { font-family: var(--m-body); background: var(--m-ink); color: var(--m-bone); border-radius: 0; display: flex; flex-direction: column; gap: 8px; }
 .toast-actions { display: flex; gap: 6px; }
 
+/* ───────────── training ───────────── */
+.m-train { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; margin-bottom: 8px; padding: 12px 14px; cursor: pointer; color: var(--m-bone); border: 1px solid var(--m-faint); background: linear-gradient(90deg, rgba(95, 179, 168, 0.16), rgba(95, 179, 168, 0.03)); }
+.m-train b { font-family: var(--m-stencil); font-size: 22px; line-height: 1.05; }
+.m-train span { font-size: 13px; color: var(--m-dim); }
+.m-train:hover { border-color: var(--m-teal); }
+
+/* ───────────── season ───────────── */
+.season-head { display: flex; gap: 16px; align-items: flex-end; padding: 14px 16px; border-left: 4px solid var(--sc); background: linear-gradient(90deg, color-mix(in srgb, var(--sc) 22%, transparent), transparent); }
+.season-head > div:first-child { flex: 1; min-width: 0; }
+.season-kicker { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--sc); font-weight: 700; }
+.season-tier { text-align: center; flex: none; }
+.season-tier b { display: block; font-family: var(--m-stencil); font-size: 52px; line-height: .9; color: var(--sc); }
+.season-tier span { font-size: 12px; color: var(--m-dim); }
+.season-xp { margin: 10px 0 14px; display: flex; flex-direction: column; gap: 6px; }
+.bar.big { height: 10px; } .bar i { background: var(--m-amber); }
+.track { display: grid; grid-auto-flow: column; grid-auto-columns: 112px; gap: 8px; overflow-x: auto; padding: 4px 2px 10px; overscroll-behavior-x: contain; }
+.tier { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; padding: 22px 6px 8px; cursor: pointer; color: var(--m-bone); background: var(--m-ink2); border: 1px solid var(--m-faint); border-top: 3px solid var(--rc); text-align: center; min-width: 0; }
+.tier .sw { width: 56px; height: 56px; display: grid; place-items: center; font-size: 26px; border-radius: 4px; }
+.tier .sw.wide, .future-s .sw.wide, .ranked-reward .sw.wide { width: 96px; height: 24px; background-size: cover; background-position: center; border-radius: 2px; }
+.tier b { font-size: 12px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.tier em { font-style: normal; font-size: 11px; color: var(--rc); }
+.tier small { font-size: 10px; color: var(--m-dim); text-transform: uppercase; letter-spacing: .06em; }
+.tier-n { position: absolute; left: 6px; top: 4px; font-family: var(--m-stencil); font-size: 15px; color: var(--m-dim); }
+.tier.excl { background: linear-gradient(180deg, color-mix(in srgb, var(--rc) 18%, var(--m-ink2)), var(--m-ink2)); }
+.tier.locked { opacity: .55; } .tier.locked .sw { filter: grayscale(.6); }
+.tier.next { border-color: var(--m-amber); box-shadow: 0 0 0 1px var(--m-amber); opacity: 1; }
+.tier-ok { position: absolute; right: 6px; top: 4px; font-style: normal; color: var(--good, #59d38a); font-weight: 700; }
+.season-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
+.season-cols > section { min-width: 0; }
+.ch { padding: 10px 12px; background: var(--m-ink2); border: 1px solid var(--m-faint); margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ch-top { display: flex; gap: 8px; align-items: baseline; } .ch-top b { flex: 1; font-weight: 600; font-size: 14px; }
+.ch-xp { font-size: 12px; color: var(--m-amber); white-space: nowrap; }
+.ch.done { border-color: rgba(89, 211, 138, .5); } .ch.done .bar i { background: #59d38a; }
+.season-rank, .ranked-reward { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.season-rank > div, .ranked-reward > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.future { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.future-s { padding: 10px 12px; border: 1px solid var(--m-faint); border-left: 3px solid var(--sc); display: flex; flex-direction: column; gap: 8px; background: var(--m-ink2); }
+.fs-head { display: flex; flex-direction: column; } .fs-head b { color: var(--sc); }
+.fs-items { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.fs-items .sw { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 3px; filter: grayscale(.5) brightness(.8); }
+
+/* ───────────── social ───────────── */
+.commend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.commend-grid .btn { display: flex; gap: 8px; align-items: center; justify-content: center; }
+.ci { font-size: 18px; }
+.report-reasons { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+.radio { display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: 14px; }
+.radio input { accent-color: var(--m-amber, #f2a33a); width: 16px; height: 16px; }
+.modal textarea, .m-shell textarea { width: 100%; resize: vertical; font: inherit; }
+.commends { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0; font-size: 13px; color: var(--m-dim); }
+.commends b { color: var(--m-bone); }
+
 @media (max-width: 1180px) {
   .m-shell, .m-shell.wide { grid-template-columns: 210px minmax(0, 1fr) minmax(380px, 46vw); }
   .m-nav b { font-size: 30px; }
@@ -321,6 +373,8 @@
   .m-panel .settings-grid > span:nth-child(3n + 1) { grid-column: 1 / -1; margin-top: 8px; }
   .op-list, .map-strip { grid-template-columns: repeat(2, 1fr); }
   .m-panel .item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .season-cols { grid-template-columns: 1fr; }
+  .season-tier b { font-size: 40px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .m-nav span, .deploy-btn, .m-nav b { transition: none; }

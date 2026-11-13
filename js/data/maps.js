@@ -267,4 +267,31 @@ export const MAPS = {
       fog: 0xc8d4e0, fogDensity: 0.006, sun: 0xfff6ee, sunIntensity: 3.0, hemi: [0xdde8ff, 0x8a96a8, 0.8], exposure: 0.5,
     },
   },
+  // Training range: shooting lanes facing away from the firing line, crates and a platform for grenade line-ups.
+  // Not in any mode's rotation; only the Training Range mode uses it.
+  range: {
+    id: 'range', name: 'Range', size: 'small', w: 34, h: 27, training: true,
+    desc: 'Indoor firing range with lanes out to 35 m and a grenade yard.',
+    ops: [
+      ['.', 1, 1, 32, 25],
+      // firing line: a waist-high counter with gaps to walk through
+      ['h', 2, 18, 7, 18], ['h', 9, 18, 15, 18], ['h', 17, 18, 23, 18],
+      // lane markers between the near and far targets
+      ['h', 11, 11, 11, 13], ['h', 18, 11, 18, 13],
+      // grenade yard on the right: cover to throw over and around
+      ['#', 25, 1, 25, 9], ['C', 28, 4, 29, 5], ['c', 30, 9, 30, 9], ['k', 27, 12, 27, 12], ['W', 29, 14, 30, 14],
+      ['2', 31, 1, 32, 3], ['h', 26, 16, 26, 18],
+      // spray wall: open back wall in the left lane
+      ['X', 1, 1, 9, 1],
+      // supplies by the firing line
+      ['A', 1, 24, 1, 24], ['A', 24, 24, 24, 24],
+    ],
+    spawns: [[12, 21, 15, 24], [3, 3, 22, 14]],
+    theme: {
+      wall: 'concrete', wall2: 'panel', half: 'concrete', floor: 'epoxy', platform: 'grate', crate: 'crate_metal', crate2: 'crate_mil', trim: 'hazard', door: 'panel',
+      decor: { trim: 'hazard', skyline: 'industrial', particles: 'dust', decals: ['dirt', 'paint'], wall: ['lamp', 'vent', 'lamp', 'pipe'], lights: 8, lampColor: 0xe8f2ff, groundColor: 0x55534e, signs: 4, signColor: '#d9a531' },
+      sky: { elevation: 48, azimuth: 120, turbidity: 5, rayleigh: 1.1 },
+      fog: 0x7b8794, fogDensity: 0.004, sun: 0xfff1dc, sunIntensity: 3.0, hemi: [0xbcd3ff, 0x4a4036, 0.75], exposure: 0.62,
+    },
+  },
 };

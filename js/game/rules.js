@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CELL } from '../engine/world.js';
 import { GUN_GAME_ORDER, isKnife } from '../data/weapons.js';
-import { RESPAWN_KINDS, econFor } from '../data/modes.js';
+import { RESPAWN_KINDS, BOMB_KINDS, econFor } from '../data/modes.js';
 
 // Host-only match logic. Everything it decides is broadcast as events that every client applies.
 export class Rules {
@@ -16,6 +16,7 @@ export class Rules {
   get s() { return this.g.state; }
 
   begin() {
+    if (this.mode.kind === 'training') return this.startTraining();
     const s = this.s;
     s.phase = 'warmup';
     s.time = this.g.online ? 6 : 3;
@@ -28,7 +29,7 @@ export class Rules {
 
   update(dt) {
     const s = this.s, g = this.g;
-    if (s.phase === 'over') return;
+    if (s.phase === 'over' || this.mode.kind === 'training') return;
     s.time -= dt;
     this.syncT -= dt;
     if (this.syncT <= 0) { this.syncT = 1; g.broadcast('sync', g.syncPayload()); }
@@ -57,7 +58,14 @@ export class Rules {
   checkLive(dt) {
     const s = this.s, g = this.g;
     const a0 = this.aliveCount(0), a1 = this.aliveCount(1);
-    if (this.mode.kind === 'bomb') {
+    if (this.mode.kind === 'hostage') {
+      if (this.updateHostages()) return;
+      if (a0 === 0) return this.endRound(1, 'elim');
+      if (a1 === 0) return this.endRound(0, 'elim');
+      if (s.time <= 0) return this.endRound(1, 'time');
+      return;
+    }
+    if (BOMB_KINDS.has(this.mode.kind)) {
       const b = s.bomb;
       if (b.state === 'planted') {
         b.time -= dt;
@@ -103,9 +111,9 @@ export class Rules {
     }
   }
 
-  spawnPoints(team, n) {
+  spawnPoints(team, n, zone = null) {
     const w = this.g.world;
-    const cells = [...(w.spawnCells[team] || w.allFloor)].sort(() => Math.random() - 0.5);
+    const cells = [...(zone || w.spawnCells[team] || w.allFloor)].sort(() => Math.random() - 0.5);
     const center = new THREE.Vector3(w.size.x / 2, 0, w.size.z / 2);
     const out = [];
     for (let i = 0; i < n; i++) {
@@ -175,28 +183,41 @@ export class Rules {
     // Spawn zones are built so they can't see each other; re-rolling is a second safety net.
     let spawns = {};
     const resetKit = [];
+    // Retakes: the attackers start on the site where the charge is already planted.
+    const siteIds = Object.keys(g.world.sites);
+    const retakeSite = m.kind === 'retake' ? siteIds[Math.floor(Math.random() * siteIds.length)] : null;
+    const attackZone = retakeSite ? g.world.cellsIn(g.world.sites[retakeSite].cells, true).filter((c) => g.world.navH(c.x, c.y) !== null) : null;
     for (let attempt = 0; attempt < 12; attempt++) {
       spawns = {};
       for (const team of [0, 1]) {
         const ps = [...g.players.values()].filter((p) => p.team === team);
-        const pts = this.spawnPoints(team, ps.length);
+        const pts = this.spawnPoints(team, ps.length, retakeSite ? (team === 0 ? attackZone : this.retakeZone(retakeSite)) : null);
         ps.forEach((p, i) => { spawns[p.id] = pts[i]; });
       }
-      if (!this.faceAwayFromEnemies(spawns, (id) => g.players.get(id)?.team)) break;
+      const unsafe = this.faceAwayFromEnemies(spawns, (id) => g.players.get(id)?.team);
+      // Retakes also require that nobody can see an opponent at all from where they start.
+      const exposed = retakeSite && Object.entries(spawns).some(([a, pa]) => Object.entries(spawns).some(([b, pb]) => g.players.get(a)?.team !== g.players.get(b)?.team && this.canSeeBody(pa, pb)));
+      if (!unsafe && !exposed) break;
     }
     for (const p of g.players.values()) {
       if (!p.alive || !this.econ || s.round === 1 || this.justSwapped) resetKit.push(p.id);
     }
     this.justSwapped = false;
+    s.hostages = [];
     if (m.kind === 'bomb') {
       const ts = [...g.players.values()].filter((p) => p.team === 0);
       const carrier = ts[Math.floor(Math.random() * ts.length)];
       s.bomb = carrier ? { state: 'carried', carrier: carrier.id } : { state: 'none' };
+    } else if (retakeSite) {
+      const c = attackZone[Math.floor(Math.random() * attackZone.length)];
+      const x = (c.x + 0.5) * CELL, z = (c.y + 0.5) * CELL;
+      s.bomb = { state: 'planted', pos: [x, g.world.heightAt(x, z), z], site: retakeSite, time: m.bombTime, planter: null };
     } else s.bomb = { state: 'none' };
+    if (m.kind === 'hostage') s.hostages = this.placeHostages();
     const money = {};
     for (const p of g.players.values()) money[p.id] = p.money;
     g.broadcast('round', {
-      round: s.round, time: s.time, scores: s.scores, spawns, resetKit, money, bomb: s.bomb,
+      round: s.round, time: s.time, scores: s.scores, spawns, resetKit, money, bomb: s.bomb, hostages: s.hostages,
       teams: Object.fromEntries([...g.players.values()].map((p) => [p.id, p.team])),
       freeArmor: !this.econ,
     });
@@ -210,7 +231,7 @@ export class Rules {
     const E = this.econ;
     if (E && winner >= 0) {
       const loser = 1 - winner;
-      const winAmt = reason === 'bomb' ? E.winBomb : reason === 'defuse' ? E.winDefuse : E.winElim;
+      const winAmt = reason === 'bomb' || reason === 'rescue' ? E.winBomb : reason === 'defuse' ? E.winDefuse : E.winElim;
       const lossAmt = Math.min(E.lossMax, E.lossBase + E.lossStep * s.lossStreak[loser]);
       s.lossStreak[winner] = Math.max(0, s.lossStreak[winner] - 1);
       s.lossStreak[loser] = Math.min(4, s.lossStreak[loser] + 1);
@@ -238,7 +259,7 @@ export class Rules {
     const w = this.matchWinner();
     if (w !== null) return this.finish(w, 'score');
     if (m.halftime && s.round === m.halftime) {
-      for (const p of g.players.values()) { p.team = 1 - p.team; p.money = this.econ.start; }
+      for (const p of g.players.values()) { p.team = 1 - p.team; p.money = this.econ ? this.econ.start : 0; }
       s.scores = [s.scores[1], s.scores[0]];
       s.lossStreak = [0, 0];
       this.justSwapped = true;
@@ -251,6 +272,15 @@ export class Rules {
     const s = this.s;
     s.phase = 'over';
     this.g.broadcast('end', { winner, reason, scores: s.scores, stats: this.g.statsPayload() });
+  }
+
+  // Training: one live phase that never ends; js/game/training.js runs the drills.
+  startTraining() {
+    const s = this.s, g = this.g;
+    Object.assign(s, { phase: 'live', time: 0, round: 1, scores: [0, 0], bomb: { state: 'none' }, hostages: [] });
+    const [pt] = this.spawnPoints(0, 1);
+    pt[3] = 0; // face down the range
+    g.broadcast('round', { round: 1, time: 0, scores: [0, 0], spawns: { [g.localId]: pt }, resetKit: [g.localId], money: {}, bomb: s.bomb, teams: {}, freeArmor: true, phase: 'live' });
   }
 
   // ───────────── respawn modes: free for all, team deathmatch, gun game ─────────────
@@ -334,6 +364,12 @@ export class Rules {
       }
       return;
     }
+    for (const h of s.hostages || []) {
+      if (h.state === 'carried' && h.carrier === victim.id) {
+        Object.assign(h, { state: 'idle', carrier: null, pos: [victim.pos.x, victim.pos.y, victim.pos.z] });
+        this.g.broadcast('hostage', { list: s.hostages, dropped: h.i });
+      }
+    }
     const b = s.bomb;
     if (b && b.state === 'carried' && b.carrier === victim.id) {
       s.bomb = { state: 'dropped', pos: [victim.pos.x, victim.pos.y, victim.pos.z] };
@@ -373,6 +409,78 @@ export class Rules {
     s.bomb = { state: 'planted', pos, site, time: this.mode.bombTime, planter: p.id };
     p.money = Math.min(this.econ.max, p.money + this.econ.plant);
     this.g.broadcast('bomb', s.bomb);
+  }
+
+  // Retakes: defenders start 20–35 m from the site in spots that have no line of sight to any part of
+  // it (on some maps the normal defender spawn overlooks the sites). Cached per site.
+  retakeZone(site) {
+    this.retakeZones ||= {};
+    if (this.retakeZones[site]) return this.retakeZones[site];
+    const w = this.g.world;
+    const S = w.cellsIn(w.sites[site].cells, true).filter((c) => w.navH(c.x, c.y) !== null);
+    const sx = S.reduce((a, c) => a + c.x, 0) / S.length, sy = S.reduce((a, c) => a + c.y, 0) / S.length;
+    const at = (c) => { const x = (c.x + 0.5) * CELL, z = (c.y + 0.5) * CELL; return [x, w.heightAt(x, z), z]; };
+    const cand = w.allFloor.filter((c) => w.navH(c.x, c.y) !== null && !S.includes(c))
+      .map((c) => ({ c, d: Math.hypot(c.x - sx, c.y - sy) })).filter((o) => o.d > 7 && o.d < 26).sort((a, b) => a.d - b.d);
+    const zone = [];
+    for (const o of cand) {
+      if (zone.length >= 24) break;
+      // Spawns are jittered inside the cell, so test its centre and edges.
+      const pts = [[0, 0], [0.7, 0], [-0.7, 0], [0, 0.7], [0, -0.7]].map(([dx, dz]) => { const p = at(o.c); p[0] += dx; p[2] += dz; return p; });
+      if (!S.some((sc) => { const q = at(sc); return pts.some((pt) => this.canSeeBody(pt, q) || this.canSeeBody(q, pt)); })) zone.push(o.c);
+    }
+    this.retakeZones[site] = zone.length >= this.mode.teamSize ? zone : w.spawnCells[1];
+    return this.retakeZones[site];
+  }
+
+  // ───────────── hostage rescue ─────────────
+  // Two hostages kneel at a random site. An attacker carries one back to the attackers' spawn zone to
+  // win the round. Hostages can't be shot.
+  placeHostages() {
+    const w = this.g.world, ids = Object.keys(w.sites);
+    const site = ids[Math.floor(Math.random() * ids.length)];
+    const cells = w.cellsIn(w.sites[site].cells, true).filter((c) => w.navH(c.x, c.y) !== null).sort(() => Math.random() - 0.5);
+    const out = [];
+    for (const c of cells) {
+      const x = (c.x + 0.5) * CELL, z = (c.y + 0.5) * CELL;
+      if (out.some((h) => Math.hypot(h.pos[0] - x, h.pos[2] - z) < 5)) continue;
+      out.push({ i: out.length, state: 'idle', carrier: null, pos: [x, w.heightAt(x, z), z], site, yaw: Math.random() * Math.PI * 2 });
+      if (out.length === 2) break;
+    }
+    return out;
+  }
+
+  inRescueZone(p) {
+    const r = this.g.mapDef.spawns[0];
+    const cx = Math.floor(p.pos.x / CELL), cy = Math.floor(p.pos.z / CELL);
+    return cx >= r[0] - 1 && cx <= r[2] + 1 && cy >= r[1] - 1 && cy <= r[3] + 1;
+  }
+
+  // Returns true if the round ended.
+  updateHostages() {
+    for (const h of this.s.hostages || []) {
+      if (h.state !== 'carried') continue;
+      const c = this.g.players.get(h.carrier);
+      if (!c || !c.alive) { Object.assign(h, { state: 'idle', carrier: null }); this.g.broadcast('hostage', { list: this.s.hostages }); continue; }
+      h.pos = [c.pos.x, c.pos.y, c.pos.z];
+      if (this.inRescueZone(c)) {
+        Object.assign(h, { state: 'rescued', carrier: null, rescuer: c.id });
+        if (this.econ) c.money = Math.min(this.econ.max, c.money + 600);
+        this.g.broadcast('hostage', { list: this.s.hostages, rescued: h.i, by: c.id });
+        this.endRound(0, 'rescue');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  onPickup(p, i) {
+    const s = this.s, h = s.hostages?.[i];
+    if (s.phase !== 'live' || !h || h.state !== 'idle' || !p.alive || p.team !== 0) return;
+    if (s.hostages.some((o) => o.carrier === p.id)) return;
+    if (Math.hypot(p.pos.x - h.pos[0], p.pos.z - h.pos[2]) > 2.4) return;
+    Object.assign(h, { state: 'carried', carrier: p.id });
+    this.g.broadcast('hostage', { list: s.hostages, picked: i, by: p.id });
   }
 
   onDefuse(p) {

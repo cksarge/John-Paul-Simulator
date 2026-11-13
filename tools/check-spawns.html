@@ -17,6 +17,7 @@ import { MAPS } from '../js/data/maps.js';
 const out = [];
 let failures = 0;
 for (const [id, def] of Object.entries(MAPS)) {
+  if (def.training) continue; // the training range has no opposing spawns
   const w = new World(def);
   for (const p of w.props.values()) { if (p.ch === 'D') w.setDoor([p.x, p.y], true); else if ('GBWk'.includes(p.ch)) w.breakProp(p.x, p.y); }
   const A = w.spawnCells[0], B = w.spawnCells[1];

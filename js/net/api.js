@@ -163,6 +163,47 @@ export class Api {
     if (error) throw friendly(error);
   }
 
+  // ───────────── seasons, challenges, commends and reports ─────────────
+  // These need the November 2026 additions to supabase/schema.sql. Before that runs, the calls fail
+  // with a "missing" error and the features stay hidden instead of breaking the menu.
+  static missing(error) { return /PGRST202|PGRST205|schema cache|does not exist|42883|42P01/i.test(error?.code + ' ' + error?.message); }
+
+  async rpc(fn, args) {
+    const { data, error } = await this.sb.rpc(fn, args);
+    if (error) { const e = friendly(error); e.missing = Api.missing(error); throw e; }
+    return data;
+  }
+
+  async seasons() {
+    const { data, error } = await this.sb.from('seasons').select('*').order('starts_at');
+    if (error) return null;
+    return data;
+  }
+
+  async seasonHistory(userId) {
+    const { data, error } = await this.sb.from('season_history').select('*').eq('user_id', userId);
+    return error ? [] : data;
+  }
+
+  myStatus() { return this.rpc('my_status'); }
+  claimChallenge(key) { return this.rpc('claim_challenge', { p_key: key }); }
+
+  async saveChallenges(id, challenges) {
+    const { error } = await this.sb.from('profiles').update({ challenges }).eq('id', id);
+    if (error) throw friendly(error);
+  }
+
+  commend(to, matchId, kind) { return this.rpc('commend_player', { p_to: to, p_match: matchId, p_kind: kind }); }
+  report(target, matchId, mode, reason, note, evidence) { return this.rpc('report_player', { p_target: target, p_match: matchId, p_mode: mode, p_reason: reason, p_note: note, p_evidence: evidence }); }
+  playerCommends(id) { return this.rpc('player_commends', { p_id: id }); }
+
+  async seasonLeaderboard(seasonId, limit = 100) {
+    const { data, error } = await this.sb.from('profiles').select('id,username,elo,season_peak,season_wins,season_losses,pass_xp')
+      .eq('season_id', seasonId).order('elo', { ascending: false }).limit(limit);
+    if (error) throw friendly(error);
+    return data;
+  }
+
   // Recent history with details for the stats page.
   async statsHistory(userId, limit = 100) {
     const { data, error } = await this.sb.from('match_history').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(limit);

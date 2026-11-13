@@ -2,7 +2,13 @@
 
 A browser-based 3D tactical FPS. There is no build step: it is plain ES modules loaded straight from the folder, so it runs on GitHub Pages as-is.
 
-- **Modes:** Ranked 1v1 (ELO), 1v1 Duel (both 1v1s have a round economy: winning pays more than losing), 2v2 Wingman, 5v5 Bomb Defusal (full economy), Team Deathmatch, Gun Game, Free For All. Every mode shows its win condition ("First to …") on the HUD and scoreboard.
+- **Modes:** Ranked 1v1 (ELO), 1v1 Duel (both 1v1s have a round economy: winning pays more than losing), 2v2 Wingman, 5v5 Bomb Defusal (full economy), 5v5 Hostage Rescue (carry one of two hostages back to your spawn), 4v4 Retakes (the charge is already planted; attackers hold the site, defenders retake and defuse), Team Deathmatch, Gun Game, Free For All. Every mode shows its win condition ("First to …") on the HUD and scoreboard.
+- **Training Range** (Play → Versus bots): free practice, a 60-second aim drill with best scores, moving targets, a spray board and grenade line-ups with a live arc preview. Unlimited ammo, every weapon free.
+- **Seasons:** three-month ranked seasons (Season 1 runs to Dec 31, 2026; Seasons 2–5 cover all of 2027). Each has a 30-tier reward track filled by match and challenge XP, four season-exclusive cosmetics and a ranked card for 5 ranked wins. Ratings move halfway back toward 1000 when a season ends. Future seasons' items are visible but locked until they start.
+- **Challenges:** three daily (300 XP) and three weekly (1,000 XP) challenges, the same for everyone, shown on the Season tab.
+- **Play of the match:** the best multi-kill replays at the end of every match before the results.
+- **Pings and inspect:** tap **Z** to mark a spot or an enemy for your team, hold it for a callout wheel; **V** inspects your weapon.
+- **Commend and report:** after an online match, commend or report the other players from the results screen. Reports are stored with the match and that player's chat.
 - **Online:** quick-match queues, custom lobbies with join codes, a lobby browser, an online-players list and in-match chat
 - **Parties:** invite friends from the online list (the + slots at the top of the menu). The leader queues or opens a lobby and the whole party comes along on the same team.
 - **Spectating:** press Watch next to a friend in a non-ranked match to join as a spectator with third-person, first-person and free cameras.
@@ -76,9 +82,9 @@ python3 -m http.server 8765
 
 The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, go to **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`**. The game will be live at **https://jpsim.carterscoding.com/**, and every push to `main` redeploys it.
 
-## Optional: detailed stats in your account
+## Database updates
 
-Weapon, accuracy, rival and death-location stats are always kept in the browser. To also store them with each match in Supabase (so they follow your account across devices), re-run `supabase/schema.sql`. It adds a `details` column to `match_history` and a newer `record_match` function. The game works either way.
+`supabase/schema.sql` is safe to re-run and always holds the full current schema. After pulling changes, paste the whole file into **Supabase Dashboard → SQL Editor** and run it. The November 2026 additions (seasons, challenges, commends and reports) need it; until then those features stay hidden and the rest of the game works normally.
 
 ## Controls
 
@@ -93,6 +99,9 @@ Weapon, accuracy, rival and death-location stats are always kept in the browser.
 | Equip / save preset (in buy menu) | 1–3 / Shift+1–3 |
 | Plant / defuse | Hold E |
 | Emote wheel | Hold G, move the mouse, release |
+| Ping / ping wheel | Tap Z / hold Z, move the mouse, release |
+| Inspect weapon | V |
+| Pick up a hostage | Hold E |
 | Skip kill cam | Space |
 | Open / close door, resupply at ammo crate | E |
 | Scoreboard | Tab |
@@ -108,8 +117,9 @@ Any controller the browser sees as a standard gamepad works (Xbox, PlayStation, 
 | Move (light push walks) / look | Left stick / right stick |
 | Fire / aim or scope | RT / LT |
 | Jump / crouch / reload | A / B / X |
-| Last weapon / next weapon / knife / grenade / charge | Y / D-pad ↓ / R3 / LB / L3 |
-| Use, plant, defuse | RB (hold to plant or defuse) |
+| Last weapon / next weapon / grenade | Y / D-pad ↓ / LB |
+| Ping (hold for the wheel) / inspect | R3 / L3 |
+| Use, plant, defuse, pick up a hostage | RB (hold to plant, defuse or pick up) |
 | Buy menu / rebuy | D-pad ← / D-pad → |
 | Emote wheel | Hold D-pad ↑, point with the right stick |
 | Scoreboard / pause | View / Menu |
@@ -133,8 +143,8 @@ Limitations:
 
 ## Dev tools
 
-- `tools/check-spawns.html`: open in the browser after editing any map. Every map must show 0 spawn sightlines and 0 unreachable spots.
-- `tools/audit-ui.js`: in the browser console, `await (await import('/tools/audit-ui.js')).auditMenus()` (and `auditGame()`) checks that every button on every screen can be scrolled to and clicked. Run it at a few window sizes.
+- `tools/check-spawns.html`: open in the browser after editing any map. Every map must show 0 spawn sightlines and 0 unreachable spots. (Retakes picks defender spawns per site at match start, hidden from the whole site.)
+- `tools/audit-ui.js`: in the browser console, `await (await import('/tools/audit-ui.js')).auditMenus()` (and `auditGame()`) checks that every button on every screen can be scrolled to and clicked, and that nothing is cut off sideways without a scrollbar. Run it at a few window sizes.
 
 Fonts are self-hosted in `fonts/` (Latin subsets) with their SIL Open Font License files.
 

@@ -5,7 +5,8 @@ const LARGE = ['dustline', 'harbor', 'canopy', 'frostbite'];
 const ALL = [...SMALL, ...LARGE];
 
 // Game modes. `teamSize` is players per team (ffa-style modes use `maxPlayers`).
-// kind: 'rounds' | 'bomb' (round based) · 'ffa' | 'tdm' | 'gungame' (respawn based)
+// kind: 'rounds' | 'bomb' | 'retake' | 'hostage' (round based) · 'ffa' | 'tdm' | 'gungame' (respawn based)
+//       'training' (the offline range, no opponents)
 export const MODES = {
   duel: {
     id: 'duel', name: '1v1 Duel', short: '1V1', teamSize: 1, kind: 'rounds',
@@ -28,6 +29,16 @@ export const MODES = {
     roundsToWin: 9, halftime: 8, roundTime: 115, buyTime: 15, bombTime: 40, plantTime: 3.2, defuseTime: 7,
     maps: LARGE,
   },
+  hostage: {
+    id: 'hostage', name: 'Hostage Rescue', short: 'HR', teamSize: 5, kind: 'hostage',
+    desc: 'Two hostages are held at one of the sites. Attackers carry one back to their spawn to win; defenders hold them until time runs out. Full economy. First to 9.',
+    roundsToWin: 9, halftime: 8, roundTime: 120, buyTime: 15, pickupTime: 1.2, maps: LARGE,
+  },
+  retake: {
+    id: 'retake', name: 'Retakes', short: 'RTK', teamSize: 4, kind: 'retake',
+    desc: 'The charge is already planted. Attackers start on the site and guard it; defenders push in and defuse before it blows. Free loadouts. First to 8.',
+    roundsToWin: 8, halftime: 7, roundTime: 45, buyTime: 6, bombTime: 45, defuseTime: 6, maps: LARGE,
+  },
   tdm: {
     id: 'tdm', name: 'Team Deathmatch', short: 'TDM', teamSize: 5, kind: 'tdm',
     desc: 'Five-a-side with instant respawns and free loadouts. First team to 60 kills or 8 minutes.',
@@ -43,22 +54,33 @@ export const MODES = {
     desc: 'Everyone for themselves. Instant respawns. First to 25 kills or 6 minutes.',
     killsToWin: 25, timeLimit: 360, maps: ALL,
   },
+  training: {
+    id: 'training', name: 'Training Range', short: 'GYM', maxPlayers: 1, kind: 'training', offlineOnly: true,
+    desc: 'Aim drills, moving targets, spray practice and grenade line-ups. Infinite ammo, every weapon free.',
+    maps: ['range'],
+  },
 };
 
 // Money rules for a mode, or null when loadouts are free.
 export function econFor(mode) {
-  if (mode.kind === 'bomb') return ECON;
+  if (mode.kind === 'bomb' || mode.kind === 'hostage') return ECON;
   return mode.economy ? DUEL_ECON : null;
 }
 
 export const RESPAWN_KINDS = new Set(['ffa', 'tdm', 'gungame']);
-export const SOLO_KINDS = new Set(['ffa', 'gungame']);
+export const SOLO_KINDS = new Set(['ffa', 'gungame', 'training']);
+// Modes with a charge to plant or defuse.
+export const BOMB_KINDS = new Set(['bomb', 'retake']);
+// Attack/defend modes: named sides and played on the large maps with sites.
+export const SIDED_KINDS = new Set(['bomb', 'retake', 'hostage']);
+export const needsSites = (mode) => SIDED_KINDS.has(mode.kind);
 
 // Short, always-visible description of how a match is won.
 export function goalText(mode) {
   switch (mode.kind) {
     case 'rounds': return `First to ${mode.roundsToWin} rounds`;
-    case 'bomb': return `First to ${mode.roundsToWin} rounds · sides swap after ${mode.halftime}`;
+    case 'bomb': case 'retake': case 'hostage': return `First to ${mode.roundsToWin} rounds · sides swap after ${mode.halftime}`;
+    case 'training': return 'Practice at your own pace';
     case 'ffa': return `First to ${mode.killsToWin} kills`;
     case 'tdm': return `First team to ${mode.killsToWin} kills`;
     case 'gungame': return `First through all ${GUN_GAME_ORDER.length} weapons`;

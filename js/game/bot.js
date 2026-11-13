@@ -70,7 +70,8 @@ export class BotBrain {
 
   chooseGoal() {
     const g = this.g, p = this.p, w = g.world, kind = g.mode.kind;
-    if (kind === 'bomb') {
+    if (kind === 'hostage') return this.hostageGoal();
+    if (kind === 'bomb' || kind === 'retake') {
       const b = g.state.bomb || {};
       if (p.team === 0) {
         if (b.state === 'dropped') return new THREE.Vector3(...b.pos);
@@ -102,6 +103,35 @@ export class BotBrain {
     if (!enemies.length) return null;
     const e = enemies[Math.floor(Math.random() * enemies.length)];
     return e.pos.clone();
+  }
+
+  // Attackers fetch the nearest free hostage and carry it home; defenders guard the hostage site.
+  hostageGoal() {
+    const g = this.g, p = this.p, w = g.world, list = g.state.hostages || [];
+    if (p.team === 0) {
+      if (list.some((h) => h.carrier === p.id)) {
+        if (!this.homeSpot) this.homeSpot = w.randomCellIn(g.mapDef.spawns[0]);
+        return this.homeSpot;
+      }
+      this.homeSpot = null;
+      let best = null, bd = Infinity;
+      for (const h of list) {
+        if (h.state !== 'idle') continue;
+        const d = Math.hypot(p.pos.x - h.pos[0], p.pos.z - h.pos[2]);
+        if (d < bd) { bd = d; best = h; }
+      }
+      // Escort whoever is carrying, or head for a hostage.
+      const carried = list.find((h) => h.state === 'carried');
+      if (!best && carried) return new THREE.Vector3(...carried.pos);
+      if (this.lastSeen && this.lostT < 4 && bd > 12) return this.lastSeen;
+      return best ? new THREE.Vector3(...best.pos) : null;
+    }
+    const carried = list.find((h) => h.state === 'carried');
+    if (carried) return new THREE.Vector3(...carried.pos);
+    if (this.lastSeen && this.lostT < 6) return this.lastSeen;
+    const site = list[0]?.site;
+    if (site && (!this.holdSpot || this.holdSite !== site)) { this.holdSite = site; this.holdSpot = w.randomCellIn(w.sites[site].cells); }
+    return this.holdSpot || null;
   }
 
   update(dt) {
@@ -206,13 +236,16 @@ export class BotBrain {
 
     // Objectives
     const b = g.state.bomb || {};
-    if (g.mode.kind === 'bomb' && g.state.phase === 'live') {
+    if ((g.mode.kind === 'bomb' || g.mode.kind === 'retake') && g.state.phase === 'live') {
       if (p.team === 0 && b.state === 'carried' && b.carrier === p.id && g.world.siteAt(p.pos.x, p.pos.z) && !this.action) {
         this.action = 'plant'; this.actionT = 0;
       }
       if (p.team === 1 && b.state === 'planted' && Math.hypot(p.pos.x - b.pos[0], p.pos.z - b.pos[2]) < 1.8 && !this.action) {
         this.action = 'defuse'; this.actionT = 0;
       }
+    }
+    if (g.mode.kind === 'hostage' && g.state.phase === 'live' && !this.action && g.hostageView?.usable(p)) {
+      this.action = 'pickup'; this.actionT = 0; this.pickup = g.hostageView.usable(p).i;
     }
     this.goalT -= 0.2;
     const goal = this.chooseGoal();
@@ -248,7 +281,7 @@ export class BotBrain {
   navigate() {
     const p = this.p;
     if (!this.path || this.pathI >= this.path.length) {
-      this.lookAt = this.g.mode.kind === 'bomb' && p.team === 1 ? new THREE.Vector3(this.g.world.size.x / 2, 0, this.g.world.size.z / 2) : null;
+      this.lookAt = (this.g.mode.kind === 'bomb' || this.g.mode.kind === 'hostage') && p.team === 1 ? new THREE.Vector3(this.g.world.size.x / 2, 0, this.g.world.size.z / 2) : null;
       return new THREE.Vector3();
     }
     const wp = this.path[this.pathI];
@@ -272,6 +305,10 @@ export class BotBrain {
       if (b.state !== 'carried' || b.carrier !== p.id) { this.action = null; return; }
       p.plantProgress = this.actionT / g.actionTime('plant', p);
       if (this.actionT >= g.actionTime('plant', p)) { g.request('plant', { pos: [p.pos.x, p.pos.y, p.pos.z] }, p); this.action = null; p.plantProgress = 0; }
+    } else if (this.action === 'pickup') {
+      const h = g.state.hostages?.[this.pickup];
+      if (!h || h.state !== 'idle' || Math.hypot(p.pos.x - h.pos[0], p.pos.z - h.pos[2]) > 2.2) { this.action = null; return; }
+      if (this.actionT >= g.mode.pickupTime) { g.request('pickup', { i: this.pickup }, p); this.action = null; }
     } else if (this.action === 'defuse') {
       if (b.state !== 'planted') { this.action = null; return; }
       if (this.actionT >= g.actionTime('defuse', p)) { g.request('defuse', {}, p); this.action = null; }

@@ -425,3 +425,29 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .pad-gate-status { font-weight: 600; color: var(--muted); }
 .pad-gate.ready .pad-gate-status { color: var(--good); }
 .pad-gate-help { font-size: 12px; color: var(--muted); margin-top: 8px !important; }
+.drills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+/* ───────────── pings ───────────── */
+.ping-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+.ping { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 1px; color: var(--c); text-shadow: 0 1px 4px #000; transition: opacity .2s; }
+.ping i { font-style: normal; font-size: 22px; line-height: 1; animation: ping-pop .35s ease-out; }
+.ping b { font-family: var(--display); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+.ping span { font-size: 11px; color: #e8e4da; }
+.ping.edge b, .ping.edge span { display: none; }
+@keyframes ping-pop { from { transform: scale(2.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.ping-wheel { position: absolute; left: 50%; top: 50%; width: 260px; height: 260px; margin: -130px; pointer-events: none; z-index: 6; }
+.ping-wheel::before { content: ''; position: absolute; inset: 40px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); background: radial-gradient(circle, rgba(10,12,16,.7), rgba(10,12,16,.3)); }
+.pw-slot { position: absolute; width: 92px; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; background: rgba(12,14,18,.82); border: 1px solid rgba(255,255,255,.12); color: var(--c); transition: transform .12s, border-color .12s; }
+.pw-slot i { font-style: normal; font-size: 20px; line-height: 1; }
+.pw-slot span { font-family: var(--display); font-weight: 700; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: #fff; text-align: center; }
+.pw-slot.sel { border-color: var(--c); transform: translate(-50%, -50%) scale(1.12); box-shadow: 0 0 18px color-mix(in srgb, var(--c) 45%, transparent); }
+@media (prefers-reduced-motion: reduce) { .ping i { animation: none; } }
+.kc-tag.hl i { background: var(--accent); }
+.hl-overlay { background: none !important; pointer-events: none; align-items: flex-end; justify-content: flex-end; padding: 24px; }
+.hl-overlay .btn { pointer-events: auto; margin: auto 0 0 auto; }
+.btn.tiny { padding: 3px 8px; font-size: 12px; min-width: 30px; }
+.tbl td.rate { white-space: nowrap; text-align: right; }
+.tbl td.rate .btn + .btn { margin-left: 4px; }
+
+/* Anything wider than its container scrolls sideways instead of being cut off. */
+.modal, .overlay .panel, .buy-menu, .scoreboard, .m-panel { overflow-x: auto; }
