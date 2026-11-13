@@ -10,6 +10,7 @@ import { WEAPONS, GRENADES, itemInfo, GUN_GAME_ORDER, nadeDef, isKnife } from '.
 import { Player } from './player.js';
 import { Input } from './input.js';
 import { pad, BTN } from '../engine/gamepad.js';
+import { censor } from '../data/profanity.js';
 import { Rules } from './rules.js';
 import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
@@ -1799,7 +1800,7 @@ export class Game {
   chat(text) {
     const lp = this.local;
     if (!text.trim() || !lp) return;
-    this.broadcast('chat', { name: lp.name, text: text.slice(0, 120), team: lp.team });
+    this.broadcast('chat', { name: lp.name, text: censor(text.slice(0, 120)), team: lp.team });
   }
 
   // ───────────────────────── camera ─────────────────────────

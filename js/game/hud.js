@@ -5,6 +5,7 @@ import { RARITIES, KINDS } from '../data/skins.js';
 import { itemSwatch, emoteName, cardImage } from '../ui/cards.js';
 import { spreadFor } from './combat.js';
 import { pad, padHelp } from '../engine/gamepad.js';
+import { censor } from '../data/profanity.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtTime = (t) => { t = Math.max(0, Math.ceil(t)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
@@ -233,7 +234,8 @@ export class Hud {
     const ln = document.createElement('div');
     ln.className = 'ln';
     const color = team === 0 ? 'var(--t)' : team === 1 ? 'var(--ct)' : 'var(--muted)';
-    ln.innerHTML = name ? `<b style="color:${color}">${esc(name)}:</b> ${esc(text)}` : `<i class="muted">${esc(text)}</i>`;
+    // Player messages are filtered here, on every screen that shows them.
+    ln.innerHTML = name ? `<b style="color:${color}">${esc(name)}:</b> ${esc(censor(text))}` : `<i class="muted">${esc(text)}</i>`;
     const input = this.el.chat.querySelector('input');
     this.el.chat.insertBefore(ln, input);
     setTimeout(() => ln.classList.add('old'), 8000);

@@ -13,6 +13,7 @@ import { PASSWORD_RULES, OTP_LENGTH, assertPassword } from '../data/auth.js';
 import { mountTurnstile } from './turnstile.js';
 import { cardImage, itemSwatch } from './cards.js';
 import { applyPadSettings, padHelp } from '../engine/gamepad.js';
+import { censor } from '../data/profanity.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
@@ -447,7 +448,7 @@ export class UI {
     this.searchModal = m;
   }
 
-  partyChat(d) { this.toast(`${d.name}: ${d.text}`); }
+  partyChat(d) { this.toast(`${d.name}: ${censor(String(d.text ?? ''))}`); }
 
   // ───────────────────────── play ─────────────────────────
   renderPlay(el) {
