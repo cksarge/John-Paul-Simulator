@@ -31,6 +31,7 @@ export class Effects {
     this.scene = scene;
     this.items = [];
     this.smokes = [];
+    this.fires = [];
     this.flashTex = radialTexture('rgba(255,240,200,1)', 'rgba(255,140,30,0)');
     this.sparkTex = radialTexture('rgba(255,230,160,1)', 'rgba(255,160,60,0)', 32);
     this.dustTex = radialTexture('rgba(200,190,170,0.8)', 'rgba(200,190,170,0)', 32);
@@ -78,6 +79,72 @@ export class Effects {
     this.scene.add(m);
     const dir = new THREE.Vector3().subVectors(to, from).normalize();
     this.items.push({ obj: m, life: Math.min(0.12, len / 280), max: 0.12, vel: dir.multiplyScalar(280), fade: true, mat: m.material });
+  }
+
+  // Rail shot: a bright line that lingers briefly.
+  beam(from, to) {
+    const len = from.distanceTo(to);
+    if (len < 0.5) return;
+    for (const [w, color, life] of [[0.05, 0x6fc8ff, 0.35], [0.016, 0xffffff, 0.25]]) {
+      const m = new THREE.Mesh(this.tracerGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.position.copy(from); m.lookAt(to);
+      m.scale.set(w / 0.012, w / 0.012, len);
+      this.scene.add(m);
+      this.items.push({ obj: m, life, max: life, fade: true });
+    }
+    this.light.position.copy(from); this.light.color.set(0x6fc8ff); this.light.intensity = 10; this.lightT = 0.08;
+  }
+
+  shatter(pos) {
+    for (let i = 0; i < 26; i++) {
+      const v = new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 2.5, (Math.random() - 0.5) * 5);
+      this.sprite(this.sparkTex, pos.clone().add(new THREE.Vector3(0, (Math.random() - 0.5) * 2, 0)), 0.07 + Math.random() * 0.06, 0.7, { vel: v, grav: 14, color: 0xcfe8ff });
+    }
+  }
+
+  flash(pos) {
+    this.sprite(this.flashTex, pos, 6, 0.25, { additive: true, color: 0xffffff });
+    this.sprite(this.sparkTex, pos, 2.5, 0.5, { additive: true, grow: 1 });
+    this.light.position.copy(pos); this.light.color.set(0xffffff);
+    this.light.intensity = 120; this.light.distance = 30; this.lightT = 0.12;
+  }
+
+  // Burning area. Returns a handle the game passes back to endFire.
+  fire(pos, radius, duration) {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    const parts = [];
+    const n = Math.round(radius * radius * 3.2);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * radius * 0.92;
+      const m = new THREE.SpriteMaterial({ map: this.fireTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, color: 0xffa040 });
+      const sp = new THREE.Sprite(m);
+      sp.position.set(Math.cos(a) * r, 0.3, Math.sin(a) * r);
+      sp.userData = { base: 0.55 + Math.random() * 0.6, ph: Math.random() * 10, sp: 6 + Math.random() * 6 };
+      group.add(sp); parts.push(sp);
+    }
+    const scorch = new THREE.Mesh(new THREE.CircleGeometry(radius, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
+    scorch.rotation.x = -Math.PI / 2; scorch.position.y = 0.02;
+    group.add(scorch);
+    const light = new THREE.PointLight(0xff7a2a, 0, radius * 4, 2);
+    light.position.y = 0.8;
+    group.add(light);
+    this.scene.add(group);
+    const f = { group, parts, light, life: duration, t: 0, emberT: 0, pos: pos.clone(), radius };
+    this.fires.push(f);
+    return f;
+  }
+
+  endFire(f) {
+    if (!f) return;
+    f.group.removeFromParent();
+    f.parts.forEach((p) => p.material.dispose());
+    this.fires = this.fires.filter((x) => x !== f);
+  }
+
+  // True if a smoke cloud covers `pos` (smoke puts out incendiaries).
+  smokeCovers(pos) {
+    return this.smokes.some((s) => s.t > 0.3 && Math.hypot(s.pos.x - pos.x, s.pos.z - pos.z) < s.radius);
   }
 
   impact(point, normal, { blood = false } = {}) {
@@ -164,7 +231,25 @@ export class Effects {
       if (it.grow) it.obj.scale.multiplyScalar(1 + it.grow * dt);
       if (it.fade) it.obj.material.opacity = Math.min(1, (it.life / it.max) * 1.5);
     }
-    if (this.lightT > 0) { this.lightT -= dt; if (this.lightT <= 0) { this.light.intensity = 0; this.light.distance = 10; } }
+    if (this.lightT > 0) { this.lightT -= dt; if (this.lightT <= 0) { this.light.intensity = 0; this.light.distance = 10; this.light.color.set(0xffb060); } }
+    for (const f of this.fires) {
+      f.t += dt;
+      const k = Math.min(1, f.t * 4) * Math.min(1, f.life / 1.2);
+      for (const p of f.parts) {
+        const u = p.userData, flick = 0.75 + Math.sin(f.t * u.sp + u.ph) * 0.25;
+        p.scale.set(u.base * flick * k, u.base * 1.6 * flick * k, 1);
+        p.position.y = 0.25 + u.base * 0.6 * flick;
+      }
+      f.light.intensity = (14 + Math.sin(f.t * 23) * 3 + Math.sin(f.t * 7) * 3) * k;
+      f.emberT -= dt;
+      if (f.emberT <= 0 && k > 0.3) {
+        f.emberT = 0.08;
+        const a = Math.random() * Math.PI * 2, r = Math.random() * f.radius;
+        const at = f.pos.clone().add(new THREE.Vector3(Math.cos(a) * r, 0.6, Math.sin(a) * r));
+        if (Math.random() < 0.5) this.sprite(this.sparkTex, at, 0.06, 0.9, { vel: new THREE.Vector3((Math.random() - 0.5), 2 + Math.random() * 2, (Math.random() - 0.5)), additive: true });
+        else this.sprite(this.smokeTex, at.setY(at.y + 1), 1.2, 1.8, { vel: new THREE.Vector3(0, 1.4, 0), grow: 0.8, color: 0x2a2624 });
+      }
+    }
     for (let i = this.smokes.length - 1; i >= 0; i--) {
       const s = this.smokes[i];
       s.t += dt;

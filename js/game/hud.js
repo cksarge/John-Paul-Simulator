@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WEAPONS, GRENADES, BUY_MENU, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
-import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText } from '../data/modes.js';
+import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText, econFor } from '../data/modes.js';
 import { RARITIES, finishSwatch, outfitSwatch } from '../data/skins.js';
 import { spreadFor } from './combat.js';
 
@@ -32,6 +32,7 @@ export class Hud {
       <div class="hitmarker"></div>
       <div class="dmg-ind"></div>
       <div class="flash"></div>
+      <div class="blind"></div>
       <div class="scope hidden"></div>
       <div class="center-msg"></div>
       <div class="info-msg"></div>
@@ -53,7 +54,7 @@ export class Hud {
     const q = (s) => r.querySelector(s);
     this.el = {
       radar: q('.radar canvas'), fps: q('.fps'), top: q('.topscore'), alive: q('.alive-row'), kf: q('.killfeed'),
-      ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), scope: q('.scope'),
+      ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), blind: q('.blind'), scope: q('.scope'),
       center: q('.center-msg'), goal: q('.goal-pill'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
       money: q('.money'), hp: q('.hp'), ar: q('.ar'), slots: q('.slots'), wname: q('.weapon-name'), ammo: q('.ammo .hud-num'),
       chat: q('.chat'), ovl: q('.ovl'),
@@ -144,12 +145,12 @@ export class Hud {
 
   refreshBuy() {
     if (this.overlay !== 'buy') return;
-    const g = this.g, p = g.local, free = g.mode.kind !== 'bomb';
-    const owned = (id) => (WEAPONS[id] && p.inv[WEAPONS[id].slot] === id) || (GRENADES[id] && p.inv.nades.includes(id)) || (id === 'kevlar' && p.armor >= 100) || (id === 'helmet' && p.helmet && p.armor >= 100);
+    const g = this.g, p = g.local, free = !econFor(g.mode);
+    const owned = (id) => (WEAPONS[id] && p.inv[WEAPONS[id].slot] === id && !(free && id === 'knife')) || (GRENADES[id] && p.inv.nades.includes(id)) || (id === 'kevlar' && p.armor >= 100) || (id === 'helmet' && p.helmet && p.armor >= 100);
     const cats = BUY_MENU.map((c) => `<div class="buy-cat"><h3>${c.title}</h3>${c.items.map((id) => {
       const info = itemInfo(id), price = g.priceOf(id);
       const cls = owned(id) ? 'owned' : p.money < price ? 'no' : '';
-      return `<div class="buy-item ${cls}" data-id="${id}"><span>${esc(info.name)}</span><b>${free ? 'FREE' : '$' + price}</b></div>`;
+      return `<div class="buy-item ${cls}" data-id="${id}"><span>${esc(info.name)}</span><b>${free || !price ? 'FREE' : '$' + price}</b></div>`;
     }).join('')}</div>`).join('');
     this.el.ovl.innerHTML = `<div class="overlay" data-close><div class="buy-menu">
       <div class="row"><h2 style="margin:0">${free ? 'Choose loadout' : 'Buy menu'}</h2><span class="spacer"></span>
@@ -196,7 +197,7 @@ export class Hud {
     const g = this.g, all = [...g.players.values()];
     let body;
     if (SOLO_KINDS.has(g.mode.kind)) body = `<div class="sb-team">${this.scoreTable(all, false)}</div>`;
-    else body = [0, 1].map((t) => `<div class="sb-team"><div class="sb-head ${TEAM_CLASS[t]}"><span>${g.teamName(t)}</span><span>${g.state.scores[t]}</span></div>${this.scoreTable(all.filter((p) => p.team === t), g.mode.kind === 'bomb')}</div>`).join('');
+    else body = [0, 1].map((t) => `<div class="sb-team"><div class="sb-head ${TEAM_CLASS[t]}"><span>${g.teamName(t)}</span><span>${g.state.scores[t]}</span></div>${this.scoreTable(all.filter((p) => p.team === t), !!econFor(g.mode))}</div>`).join('');
     this.el.ovl.innerHTML = `<div class="overlay" style="pointer-events:none;background:none"><div class="scoreboard">
       <div class="row"><h2 style="margin:0">${esc(g.mode.name)}</h2><span class="muted">${esc(g.mapDef.name)}${RESPAWN_KINDS.has(g.mode.kind) ? '' : ' · Round ' + g.state.round}</span><span class="spacer"></span><span class="goal-tag">${esc(goalText(g.mode))}</span></div>${body}</div></div>`;
   }
@@ -232,7 +233,21 @@ export class Hud {
     this.centerT = time;
   }
 
-  info(text, time = 3) { this.el.info.textContent = text; this.infoT = time; this.el.info.style.opacity = 1; }
+  // Timed message. Persistent context hints (buy phase, plant here…) go through `hint` instead, so the
+  // two never fight over the same line and nothing flickers when one expires.
+  info(text, time = 3) { this.infoT = time; this.infoText = text; this.showInfoLine(); }
+
+  showInfoLine() {
+    const text = this.infoT > 0 ? this.infoText : this.hint || '';
+    if (this.el.info.textContent !== text) this.el.info.textContent = text;
+    this.el.info.style.opacity = text ? 1 : 0;
+  }
+
+  // Flashbang: white-out that fades over the last part of `time`.
+  blind(time) {
+    if (time <= 0.05) return;
+    this.blindT = Math.max(this.blindT || 0, time);
+  }
 
   hitmarker(head, kill) {
     const h = this.el.hm;
@@ -261,7 +276,7 @@ export class Hud {
     const e = document.createElement('div');
     const lp = this.g.local;
     e.className = 'kf' + ((k && k === lp) || v === lp ? ' mine' : '');
-    const wname = WEAPONS[w]?.name || GRENADES[w]?.name || (w === 'bomb' ? 'Charge' : w);
+    const wname = itemInfo(w)?.name || { bomb: 'Charge', barrel: 'Exploding barrel' }[w] || w;
     e.innerHTML = `${k && k !== v ? `<span class="${cls(k)}">${esc(k.name)}</span>` : ''}<span class="w">${esc(wname)}</span>${hs ? '<span class="hs">◉ HS</span>' : ''}<span class="${cls(v)}">${esc(v.name)}</span>`;
     this.el.kf.prepend(e);
     while (this.el.kf.children.length > 6) this.el.kf.lastChild.remove();
@@ -309,7 +324,13 @@ export class Hud {
     const g = this.g, p = g.local, el = this.el, s = g.state;
     this.t += dt;
     if (this.centerT > 0) { this.centerT -= dt; if (this.centerT <= 0) el.center.style.opacity = 0; }
-    if (this.infoT > 0) { this.infoT -= dt; if (this.infoT <= 0) el.info.style.opacity = 0; }
+    if (this.infoT > 0) { this.infoT -= dt; if (this.infoT <= 0) this.showInfoLine(); }
+    if (this.blindT > 0 || this.blindShown) {
+      this.blindT = Math.max(0, (this.blindT || 0) - dt);
+      const o = Math.min(1, this.blindT / 1.6);
+      el.blind.style.opacity = o.toFixed(3);
+      this.blindShown = o > 0;
+    }
     if (!p) return;
 
     // Crosshair (every frame — dynamic spread)
@@ -369,7 +390,7 @@ export class Hud {
     el.hp.classList.toggle('hp-low', p.hp <= 25);
     el.ar.querySelector('.hud-num').textContent = p.armor;
     el.ar.querySelector('.hud-label').textContent = p.helmet ? 'Armor + Helmet' : 'Armor';
-    el.money.textContent = g.mode.kind === 'bomb' ? `$${p.money}` : '';
+    el.money.textContent = econFor(g.mode) ? `$${p.money}` : '';
     el.bomb.classList.toggle('hidden', !p.hasBomb);
     if (w) {
       el.wname.textContent = w.name;
@@ -380,7 +401,7 @@ export class Hud {
     else if (p.slot === 'bomb') { el.wname.textContent = 'Demolition Charge'; el.ammo.innerHTML = ''; }
     const slotNames = [['primary', '1'], ['secondary', '2'], ['melee', '3'], ['nade', '4'], ['bomb', '5']];
     el.slots.innerHTML = slotNames.map(([sl, key]) => {
-      let label = sl === 'nade' ? p.inv.nades.map((n) => GRENADES[n].name.split(' ')[0]).join(' · ') : sl === 'bomb' ? (p.hasBomb ? 'Charge' : '') : WEAPONS[p.inv[sl]]?.name;
+      let label = sl === 'nade' ? p.inv.nades.map((n) => GRENADES[n]?.short || n).join(' · ') : sl === 'bomb' ? (p.hasBomb ? 'Charge' : '') : WEAPONS[p.inv[sl]]?.name;
       if (!label) return '';
       return `<div class="${p.slot === sl ? 'cur' : ''}"><b>${key}</b>${esc(label)}</div>`;
     }).join('');
@@ -390,12 +411,16 @@ export class Hud {
     el.spec.classList.toggle('hidden', p.alive || !st || s.phase === 'over');
     if (!p.alive && st) el.spec.innerHTML = `Spectating <b>${esc(st.name)}</b> · ${st.hp} HP <span class="muted small">(click to switch)</span>`;
 
-    // Contextual hints
-    if (p.alive && s.phase === 'live' && this.infoT <= 0) {
-      if (bomb.state === 'carried' && bomb.carrier === p.id && g.world.siteAt(p.pos.x, p.pos.z)) this.info('Hold E to plant the charge', 0.3);
-      else if (planted && p.team === 1 && Math.hypot(p.pos.x - bomb.pos[0], p.pos.z - bomb.pos[2]) < 2.2) this.info('Hold E to defuse', 0.3);
+    // Contextual hints: recomputed every tick and shown whenever no timed message is up.
+    let hint = '';
+    if (p.alive && s.phase === 'live') {
+      if (bomb.state === 'carried' && bomb.carrier === p.id && g.world.siteAt(p.pos.x, p.pos.z)) hint = 'Hold E to plant the charge';
+      else if (planted && p.team === 1 && Math.hypot(p.pos.x - bomb.pos[0], p.pos.z - bomb.pos[2]) < 2.2) hint = 'Hold E to defuse';
+      else hint = g.interactHint?.() || '';
     }
-    if (s.phase === 'buy' && this.infoT <= 0 && !this.overlay) this.info(g.mode.kind === 'bomb' ? 'Buy phase — press B to open the buy menu' : 'Press B to choose your loadout', 0.3);
+    if (s.phase === 'buy' && !this.overlay && p.alive) hint = econFor(g.mode) ? 'Buy phase — press B to open the buy menu' : 'Press B to choose your loadout';
+    this.hint = hint;
+    this.showInfoLine();
   }
 
   drawRadar() {
@@ -427,6 +452,12 @@ export class Hud {
       if (!visible) continue;
       ctx.fillStyle = friendly ? (o.team === 0 ? '#e8833a' : '#4ea3ff') : '#ff4040';
       ctx.beginPath(); ctx.arc(o.pos.x * S, o.pos.z * S, 6 / zoom * 0.6, 0, Math.PI * 2); ctx.fill();
+    }
+    // Decoys look like an enemy firing.
+    for (const d of g.decoys || []) {
+      if (!p.alive || d.firingT <= 0 || (!SOLO_KINDS.has(g.mode.kind) && d.team === p.team) || d.owner === p.id) continue;
+      ctx.fillStyle = '#ff4040';
+      ctx.beginPath(); ctx.arc(d.pos.x * S, d.pos.z * S, 6 / zoom * 0.6, 0, Math.PI * 2); ctx.fill();
     }
     const b = g.state.bomb || {};
     if ((b.state === 'dropped' || b.state === 'planted') && (g.mode.kind === 'bomb' && (p.team === 0 || b.state === 'planted'))) {

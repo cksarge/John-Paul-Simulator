@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CELL } from '../engine/world.js';
-import { ECON, GUN_GAME_ORDER } from '../data/weapons.js';
-import { RESPAWN_KINDS } from '../data/modes.js';
+import { GUN_GAME_ORDER, isKnife } from '../data/weapons.js';
+import { RESPAWN_KINDS, econFor } from '../data/modes.js';
 
 // Host-only match logic. Everything it decides is broadcast as events that every client applies.
 export class Rules {
@@ -9,6 +9,7 @@ export class Rules {
     this.g = game;
     this.mode = game.mode;
     this.respawnQueue = new Map();
+    this.econ = econFor(this.mode);
     this.syncT = 0;
   }
 
@@ -21,7 +22,7 @@ export class Rules {
     s.round = 0;
     s.scores = [0, 0];
     s.lossStreak = [0, 0];
-    for (const p of this.g.players.values()) p.money = this.mode.kind === 'bomb' ? ECON.start : 0;
+    for (const p of this.g.players.values()) p.money = this.econ ? this.econ.start : 0;
     this.g.broadcast('phase', { phase: s.phase, time: s.time });
   }
 
@@ -116,35 +117,54 @@ export class Rules {
     return out;
   }
 
+  // True if any part of a body standing at `e` can be seen from a player standing at `pt`
+  // (standing or crouched eye, against head, chest and knees).
+  canSeeBody(pt, e) {
+    const w = this.g.world;
+    for (const eyeH of [1.64, 1.14]) {
+      const eye = new THREE.Vector3(pt[0], pt[1] + eyeH, pt[2]);
+      for (const h of [1.75, 1.15, 0.45]) if (w.lineOfSight(eye, new THREE.Vector3(e[0], e[1] + h, e[2]))) return true;
+    }
+    return false;
+  }
+
   // Picks a starting view direction with no enemy in sight. Prefers facing `preferYaw`
   // (the map centre); falls back to the direction that shows the fewest enemies.
   safeYaw(pt, enemies, preferYaw) { return this.safeYawInfo(pt, enemies, preferYaw).yaw; }
 
-  // Returns {yaw, seen}: the chosen direction and how many enemies are still in view from it.
+  // Returns {yaw, seen, visible}: the chosen direction, how many enemies are still on screen
+  // from it, and how many have any line of sight at all.
   safeYawInfo(pt, enemies, preferYaw) {
-    const w = this.g.world;
-    const eye = new THREE.Vector3(pt[0], pt[1] + 1.64, pt[2]);
-    const targets = enemies.map((e) => new THREE.Vector3(e[0], e[1] + 1.2, e[2]));
-    const visible = targets.filter((t) => w.lineOfSight(eye, t));
-    if (!visible.length) return { yaw: preferYaw, seen: 0 };
-    const HALF_VIEW = THREE.MathUtils.degToRad(75); // a bit wider than the widest horizontal FOV
+    const visible = enemies.filter((e) => this.canSeeBody(pt, e));
+    // Wider than the widest view: 110° vertical FOV on a 21:9 screen is ~74° each side.
+    // Each enemy also gets a small angular margin for its body width.
+    const HALF_VIEW = THREE.MathUtils.degToRad(84);
     const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
     let best = preferYaw, bestScore = -Infinity, bestSeen = 0;
-    for (let i = 0; i < 24; i++) {
-      const yaw = (i / 24) * Math.PI * 2;
-      const seen = visible.filter((t) => Math.abs(wrap(Math.atan2(-(t.x - eye.x), -(t.z - eye.z)) - yaw)) < HALF_VIEW).length;
-      const score = -seen * 10 + Math.cos(wrap(yaw - preferYaw));
+    const w = this.g.world, eye = new THREE.Vector3(pt[0], pt[1] + 1.64, pt[2]);
+    for (let i = 0; i < 36; i++) {
+      const yaw = (i / 36) * Math.PI * 2;
+      const seen = visible.filter((t) => Math.abs(wrap(Math.atan2(-(t[0] - pt[0]), -(t[2] - pt[2])) - yaw)) < HALF_VIEW).length;
+      // Prefer looking toward the map centre and down open space rather than into a nearby wall.
+      const hit = w.raycast(eye, new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)), 14);
+      const open = hit ? hit.dist / 14 : 1;
+      const score = -seen * 10 + Math.cos(wrap(yaw - preferYaw)) + open * 1.6;
       if (score > bestScore) { bestScore = score; best = yaw; bestSeen = seen; }
     }
-    return { yaw: best, seen: bestSeen };
+    return { yaw: best, seen: bestSeen, visible: visible.length };
   }
 
   // Applies safeYaw to a set of spawns given the positions enemies will appear at.
+  // Returns how many spawns still have an enemy on screen (0 when every spawn is safe).
   faceAwayFromEnemies(spawns, teamOf) {
+    let unsafe = 0;
     for (const [id, pt] of Object.entries(spawns)) {
       const enemies = Object.entries(spawns).filter(([oid]) => oid !== id && teamOf(oid) !== teamOf(id)).map(([, e]) => e);
-      pt[3] = this.safeYaw(pt, enemies, pt[3]);
+      const info = this.safeYawInfo(pt, enemies, pt[3]);
+      pt[3] = info.yaw;
+      if (info.seen) unsafe++;
     }
+    return unsafe;
   }
 
   startRound() {
@@ -152,15 +172,20 @@ export class Rules {
     s.round++;
     s.phase = 'buy';
     s.time = m.buyTime;
-    const spawns = {}, resetKit = [];
-    for (const team of [0, 1]) {
-      const ps = [...g.players.values()].filter((p) => p.team === team);
-      const pts = this.spawnPoints(team, ps.length);
-      ps.forEach((p, i) => { spawns[p.id] = pts[i]; });
+    // Spawn zones are built so they can't see each other; re-rolling is a second safety net.
+    let spawns = {};
+    const resetKit = [];
+    for (let attempt = 0; attempt < 12; attempt++) {
+      spawns = {};
+      for (const team of [0, 1]) {
+        const ps = [...g.players.values()].filter((p) => p.team === team);
+        const pts = this.spawnPoints(team, ps.length);
+        ps.forEach((p, i) => { spawns[p.id] = pts[i]; });
+      }
+      if (!this.faceAwayFromEnemies(spawns, (id) => g.players.get(id)?.team)) break;
     }
-    this.faceAwayFromEnemies(spawns, (id) => g.players.get(id)?.team);
     for (const p of g.players.values()) {
-      if (!p.alive || m.kind !== 'bomb' || s.round === 1 || this.justSwapped) resetKit.push(p.id);
+      if (!p.alive || !this.econ || s.round === 1 || this.justSwapped) resetKit.push(p.id);
     }
     this.justSwapped = false;
     if (m.kind === 'bomb') {
@@ -173,7 +198,7 @@ export class Rules {
     g.broadcast('round', {
       round: s.round, time: s.time, scores: s.scores, spawns, resetKit, money, bomb: s.bomb,
       teams: Object.fromEntries([...g.players.values()].map((p) => [p.id, p.team])),
-      freeArmor: m.kind !== 'bomb',
+      freeArmor: !this.econ,
     });
   }
 
@@ -182,15 +207,18 @@ export class Rules {
     s.phase = 'post';
     s.time = 5;
     if (winner >= 0) s.scores[winner]++;
-    if (m.kind === 'bomb' && winner >= 0) {
+    const E = this.econ;
+    if (E && winner >= 0) {
       const loser = 1 - winner;
-      const winAmt = reason === 'bomb' ? ECON.winBomb : reason === 'defuse' ? ECON.winDefuse : ECON.winElim;
-      const lossAmt = Math.min(ECON.lossMax, ECON.lossBase + ECON.lossStep * s.lossStreak[loser]);
+      const winAmt = reason === 'bomb' ? E.winBomb : reason === 'defuse' ? E.winDefuse : E.winElim;
+      const lossAmt = Math.min(E.lossMax, E.lossBase + E.lossStep * s.lossStreak[loser]);
       s.lossStreak[winner] = Math.max(0, s.lossStreak[winner] - 1);
       s.lossStreak[loser] = Math.min(4, s.lossStreak[loser] + 1);
       for (const p of g.players.values()) {
-        p.money = Math.min(ECON.max, p.money + (p.team === winner ? winAmt : lossAmt));
+        p.money = Math.min(E.max, p.money + (p.team === winner ? winAmt : lossAmt));
       }
+    } else if (E) {
+      for (const p of g.players.values()) p.money = Math.min(E.max, p.money + E.lossBase);
     }
     const over = this.matchWinner();
     g.broadcast('roundEnd', { winner, reason, scores: s.scores, money: Object.fromEntries([...g.players.values()].map((p) => [p.id, p.money])), over: over !== null });
@@ -210,7 +238,7 @@ export class Rules {
     const w = this.matchWinner();
     if (w !== null) return this.finish(w, 'score');
     if (m.halftime && s.round === m.halftime) {
-      for (const p of g.players.values()) { p.team = 1 - p.team; p.money = ECON.start; }
+      for (const p of g.players.values()) { p.team = 1 - p.team; p.money = this.econ.start; }
       s.scores = [s.scores[1], s.scores[0]];
       s.lossStreak = [0, 0];
       this.justSwapped = true;
@@ -231,60 +259,54 @@ export class Rules {
     s.phase = 'live'; s.time = this.mode.timeLimit; s.round = 1; s.scores = [0, 0];
     s.bomb = { state: 'none' };
     const spawns = {};
-    for (const p of g.players.values()) { p.gg = 0; spawns[p.id] = this.respawnPoint(p); }
-    // Everyone spawns at once here, so check against each other's spawn points too.
-    this.faceAwayFromEnemies(spawns, (id) => (this.mode.kind === 'tdm' ? g.players.get(id)?.team : id));
+    const teamOf = (id) => (this.mode.kind === 'tdm' ? g.players.get(id)?.team : id);
+    // Everyone appears at once, so place players one by one, each out of sight of those already placed.
+    for (const p of g.players.values()) {
+      p.gg = 0;
+      const enemies = Object.entries(spawns).filter(([id]) => teamOf(id) !== teamOf(p.id)).map(([, e]) => e);
+      spawns[p.id] = this.respawnPoint(p, enemies) || this.respawnPoint(p, enemies, true);
+    }
+    this.faceAwayFromEnemies(spawns, teamOf);
     g.broadcast('round', {
       round: 1, time: s.time, scores: [0, 0], spawns, resetKit: [...g.players.keys()], money: {}, bomb: s.bomb,
       teams: Object.fromEntries([...g.players.values()].map((p) => [p.id, p.team])), freeArmor: true, phase: 'live',
     });
   }
 
-  // Team modes spawn in the team's zone; solo modes pick the open cell furthest from everyone.
-  respawnPoint(p) {
+  // Finds a respawn spot with no living enemy on screen. Team modes search outward from the team's
+  // zone; solo modes prefer spots far from everyone. Spots no enemy can see at all win over spots where
+  // enemies are only behind you. Returns null when nothing is safe yet (the caller retries shortly);
+  // `force` returns the least-bad spot instead.
+  respawnPoint(p, enemies = null, force = false) {
+    const g = this.g, w = g.world;
+    if (!enemies) enemies = [...g.players.values()].filter((o) => o !== p && o.alive && g.canDamage(p, o)).map((o) => [o.pos.x, o.pos.y, o.pos.z]);
+    const center = [w.size.x / 2, w.size.z / 2];
+    let cells;
     if (this.mode.kind === 'tdm') {
-      const pts = this.spawnPoints(p.team, 6);
-      let best = pts[0], bestD = -1;
-      for (const pt of pts) {
-        let minD = 999;
-        for (const o of this.g.players.values()) if (o !== p && o.alive && o.team !== p.team) minD = Math.min(minD, Math.hypot(o.pos.x - pt[0], o.pos.z - pt[2]));
-        if (minD > bestD) { bestD = minD; best = pt; }
-      }
-      return this.faceAway(p, best);
+      const zone = w.spawnCells[p.team] || w.allFloor;
+      const zc = zone.reduce((a, c) => [a[0] + c.x / zone.length, a[1] + c.y / zone.length], [0, 0]);
+      const shuffled = [...zone].sort(() => Math.random() - 0.5);
+      const near = w.allFloor.filter((c) => !zone.includes(c)).map((c) => ({ c, d: Math.hypot(c.x - zc[0], c.y - zc[1]) + Math.random() * 3 }))
+        .sort((a, b) => a.d - b.d).slice(0, 60).map((o) => o.c);
+      cells = [...shuffled, ...near];
+    } else {
+      const others = [...g.players.values()].filter((o) => o !== p && o.alive);
+      cells = [];
+      for (let i = 0; i < 60; i++) cells.push(w.allFloor[Math.floor(Math.random() * w.allFloor.length)]);
+      const far = (c) => Math.min(999, ...others.map((o) => Math.hypot(o.pos.x - (c.x + 0.5) * CELL, o.pos.z - (c.y + 0.5) * CELL)));
+      cells = cells.map((c) => ({ c, d: far(c) })).sort((a, b) => b.d - a.d).map((o) => o.c);
     }
-    // Solo modes: skip spots where every direction has an enemy in view.
-    let fallback = null;
-    for (let tries = 0; tries < 8; tries++) {
-      const pt = this.ffaSpawn(p);
-      const seen = this.faceAway(p, pt, true);
-      if (!seen) return pt;
-      if (!fallback || seen < fallback.seen) fallback = { pt, seen };
-    }
-    return fallback.pt;
-  }
-
-  // Respawns: look away from any living enemy that would be in view.
-  // Returns the spawn, or (with returnSeen) how many enemies are still visible from it.
-  faceAway(p, pt, returnSeen = false) {
-    const w = this.g.world;
-    const enemies = [...this.g.players.values()].filter((o) => o !== p && o.alive && this.g.canDamage(p, o)).map((o) => [o.pos.x, o.pos.y, o.pos.z]);
-    const prefer = pt[3] ?? Math.atan2(-(w.size.x / 2 - pt[0]), -(w.size.z / 2 - pt[2]));
-    const info = this.safeYawInfo(pt, enemies, prefer);
-    pt[3] = info.yaw;
-    return returnSeen ? info.seen : pt;
-  }
-
-  ffaSpawn(p) {
-    const w = this.g.world;
-    let best = null, bestD = -1;
-    for (let i = 0; i < 40; i++) {
-      const c = w.allFloor[Math.floor(Math.random() * w.allFloor.length)];
+    let behind = null, least = null;
+    for (const c of cells.slice(0, 70)) {
       const x = (c.x + 0.5) * CELL, z = (c.y + 0.5) * CELL;
-      let minD = 999;
-      for (const o of this.g.players.values()) if (o !== p && o.alive) minD = Math.min(minD, Math.hypot(o.pos.x - x, o.pos.z - z));
-      if (minD > bestD) { bestD = minD; best = [x, 0, z, Math.random() * Math.PI * 2]; }
+      const pt = [x, w.heightAt(x, z), z, Math.atan2(-(center[0] - x), -(center[1] - z))];
+      const info = this.safeYawInfo(pt, enemies, pt[3]);
+      pt[3] = info.yaw;
+      if (!info.visible) return pt;
+      if (!info.seen) behind = behind || pt;
+      if (!least || info.seen < least.seen) least = { pt, seen: info.seen };
     }
-    return best;
+    return behind || (force ? least?.pt : null);
   }
 
   onKill(killer, victim, weapon) {
@@ -304,7 +326,7 @@ export class Rules {
         if (valid) {
           if ((killer.gg || 0) >= last) return this.finish(killer.id, 'gungame');
           this.g.broadcast('gg', { id: killer.id, level: (killer.gg || 0) + 1 });
-          if (weapon === 'knife' && (victim.gg || 0) > 0) this.g.broadcast('gg', { id: victim.id, level: victim.gg - 1, demoted: true });
+          if (isKnife(weapon) && (victim.gg || 0) > 0) this.g.broadcast('gg', { id: victim.id, level: victim.gg - 1, demoted: true });
         } else if ((victim.gg || 0) > 0) {
           this.g.broadcast('gg', { id: victim.id, level: victim.gg - 1, demoted: true });
         }
@@ -323,9 +345,13 @@ export class Rules {
     for (const [id, t] of this.respawnQueue) {
       const nt = t - dt;
       if (nt > 0) { this.respawnQueue.set(id, nt); continue; }
-      this.respawnQueue.delete(id);
       const p = g.players.get(id);
-      if (p) g.broadcast('respawn', { id, at: this.respawnPoint(p) });
+      if (!p) { this.respawnQueue.delete(id); continue; }
+      // Never respawn someone with an enemy on screen: wait a moment and try again instead.
+      const at = this.respawnPoint(p);
+      if (!at) { this.respawnQueue.set(id, 0.25); continue; }
+      this.respawnQueue.delete(id);
+      g.broadcast('respawn', { id, at });
     }
     if (s.time <= 0) {
       const kind = this.mode.kind;
@@ -344,7 +370,7 @@ export class Rules {
     const site = this.g.world.siteAt(pos[0], pos[2]);
     if (!site || p.pos.distanceTo(new THREE.Vector3(...pos)) > 2) return;
     s.bomb = { state: 'planted', pos, site, time: this.mode.bombTime, planter: p.id };
-    p.money = Math.min(ECON.max, p.money + ECON.plant);
+    p.money = Math.min(this.econ.max, p.money + this.econ.plant);
     this.g.broadcast('bomb', s.bomb);
   }
 

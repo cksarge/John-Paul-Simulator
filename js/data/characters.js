@@ -8,7 +8,7 @@ export const PERKS = {
   sixth: { name: 'Sixth Sense', desc: 'Enemies within 14 m always appear on your radar.' },
   breath: { name: 'Steady Breath', desc: 'Snipers and DMRs fire 20% faster.' },
   fortified: { name: 'Fortified', desc: 'Start every round with at least a kevlar vest.' },
-  utility: { name: 'Utility Belt', desc: 'Carry 3 grenades. Grenades cost half price.' },
+  utility: { name: 'Utility Belt', desc: 'Carry 5 grenades and one extra of each type. Grenades cost half price.' },
   quickhands: { name: 'Quick Hands', desc: 'Plant and defuse the charge 30% faster.' },
   blastsuit: { name: 'Blast Suit', desc: 'Take 40% less damage from explosions.' },
   speedloader: { name: 'Speed Loader', desc: 'Reload every weapon 20% faster.' },

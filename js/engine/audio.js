@@ -89,6 +89,19 @@ const GUN = {
   trident: { body: 1300, len: 0.2, thump: 125, gain: 0.75 },
   falcon: { body: 850, len: 0.45, thump: 85, gain: 1 },
   sparrow: { body: 1000, len: 0.5, thump: 90, gain: 0.95 },
+  hornet: { body: 2100, len: 0.11, thump: 190, gain: 0.5 },
+  mako: { body: 1250, len: 0.18, thump: 120, gain: 0.7 },
+  coach: { body: 600, len: 0.55, thump: 60, gain: 1.15 },
+  striker: { body: 750, len: 0.4, thump: 75, gain: 0.95 },
+  mauler: { body: 1050, len: 0.26, thump: 100, gain: 0.85 },
+  hailstorm: { body: 1600, len: 0.16, thump: 140, gain: 0.7 },
+  anvil: { body: 800, len: 0.36, thump: 80, gain: 1.05 },
+  kodiak: { body: 750, len: 0.6, thump: 70, gain: 1.05 },
+  warden: { body: 900, len: 0.42, thump: 85, gain: 0.95 },
+  nailer: { body: 2600, len: 0.08, thump: 260, gain: 0.45, metal: true },
+  crossbow: { body: 3000, len: 0.1, thump: 220, gain: 0.3, twang: true },
+  thumper: { body: 300, len: 0.3, thump: 70, gain: 0.8 },
+  rail: { body: 2400, len: 0.5, thump: 160, gain: 0.9, zap: true },
 };
 
 export const sfx = {
@@ -97,6 +110,13 @@ export const sfx = {
     const s = GUN[weapon]; if (!s) return;
     const dst = out(pos, s.gain, 140); if (!dst) return;
     const t = ctx.currentTime;
+    if (s.twang) {
+      tone(dst, t, 0.25, { type: 'triangle', freq: 220, freqEnd: 150, gain: 0.8 });
+      noise(dst, t, 0.08, { type: 'bandpass', freq: 3000, q: 2, gain: 0.6 });
+      return;
+    }
+    if (s.zap) tone(dst, t, 0.45, { type: 'sawtooth', freq: 1800, freqEnd: 120, gain: 0.5 });
+    if (s.metal) tone(dst, t, 0.05, { type: 'square', freq: 3200, freqEnd: 1800, gain: 0.25 });
     noise(dst, t, 0.03, { type: 'highpass', freq: 3000, gain: 0.9 });
     noise(dst, t, s.len, { freq: s.body * 2, freqEnd: s.body / 3, gain: 1, q: 0.5 });
     tone(dst, t, s.len * 0.6, { type: 'triangle', freq: s.thump * 2, freqEnd: s.thump / 2, gain: 0.9 });
@@ -131,6 +151,28 @@ export const sfx = {
     noise(dst, t, 1.4, { freq: 1200, freqEnd: 60, gain: 1 });
     tone(dst, t, 0.8, { type: 'sine', freq: 90, freqEnd: 30, gain: 1 });
   },
+  flash(pos) {
+    if (!ctx) return; const dst = out(pos, 1.1, 150); if (!dst) return; const t = ctx.currentTime;
+    noise(dst, t, 0.35, { type: 'highpass', freq: 2500, freqEnd: 900, gain: 1 });
+    tone(dst, t, 0.3, { type: 'sine', freq: 140, freqEnd: 50, gain: 0.8 });
+  },
+  ringing() { if (!ctx) return; const d = out(null, 0.18); tone(d, ctx.currentTime, 2.5, { type: 'sine', freq: 3800, gain: 0.25, attack: 0.05 }); },
+  fire(pos) {
+    if (!ctx) return; const dst = out(pos, 0.8, 60); if (!dst) return; const t = ctx.currentTime;
+    noise(dst, t, 0.4, { type: 'bandpass', freq: 900, freqEnd: 300, gain: 0.9 });
+    noise(dst, t + 0.1, 2.5, { type: 'lowpass', freq: 500, gain: 0.35, attack: 0.3 });
+  },
+  door(pos) {
+    if (!ctx) return; const dst = out(pos, 0.5, 30); if (!dst) return; const t = ctx.currentTime;
+    noise(dst, t, 0.45, { type: 'bandpass', freq: 380, freqEnd: 260, q: 1.5, gain: 0.7 });
+    tone(dst, t + 0.4, 0.08, { type: 'triangle', freq: 160, gain: 0.5 });
+  },
+  glass(pos) {
+    if (!ctx) return; const dst = out(pos, 0.8, 60); if (!dst) return; const t = ctx.currentTime;
+    for (let i = 0; i < 6; i++) tone(dst, t + i * 0.025 + Math.random() * 0.02, 0.15, { type: 'sine', freq: 2500 + Math.random() * 3500, gain: 0.25 });
+    noise(dst, t, 0.3, { type: 'highpass', freq: 4000, gain: 0.6 });
+  },
+  pickup() { if (!ctx) return; const d = out(null, 0.3); const t = ctx.currentTime; noise(d, t, 0.06, { type: 'bandpass', freq: 2000, q: 3, gain: 0.6 }); noise(d, t + 0.12, 0.06, { type: 'bandpass', freq: 2600, q: 3, gain: 0.6 }); },
   smoke(pos) { if (!ctx) return; const dst = out(pos, 0.6, 50); if (!dst) return; noise(dst, ctx.currentTime, 2.0, { type: 'highpass', freq: 1500, freqEnd: 600, gain: 0.5, attack: 0.1 }); },
   bounce(pos) { if (!ctx) return; const dst = out(pos, 0.3, 30); if (!dst) return; tone(dst, ctx.currentTime, 0.05, { type: 'triangle', freq: 700, gain: 0.5 }); },
   beep(pos) { if (!ctx) return; const dst = out(pos, 0.5, 120); if (!dst) return; tone(dst, ctx.currentTime, 0.12, { type: 'square', freq: 1950, gain: 0.35 }); },

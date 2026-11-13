@@ -42,7 +42,9 @@ export function bestSlot(p) {
 
 // Perk-adjusted timings.
 export function reloadTime(p, w) { return w.reload * (p.char?.perk === 'speedloader' ? 0.8 : 1); }
-export function maxNades(p) { return p.char?.perk === 'utility' ? 3 : 2; }
+export function maxNades(p) { return p.char?.perk === 'utility' ? 5 : 4; }
+// How many of one grenade type a player may carry.
+export function nadeLimit(p, kind) { return (kind === 'flash' ? 2 : 1) + (p.char?.perk === 'utility' ? 1 : 0); }
 
 export function startReload(p) {
   const w = p.weapon;
@@ -115,6 +117,20 @@ export function traceBullet(game, shooter, origin, dir, range = 200) {
   if (best) return { ...best, end: origin.clone().addScaledVector(dir, best.dist), normal: dir.clone().negate() };
   if (wall) return { end: wall.point, normal: wall.normal, dist: wall.dist };
   return { end: origin.clone().addScaledVector(dir, range), normal: null, dist: range };
+}
+
+// Traces a piercing shot: every damageable player before the first wall, nearest first.
+export function tracePierce(game, shooter, origin, dir, range = 200) {
+  const wall = game.world.raycast(origin, dir, range);
+  const maxD = wall ? wall.dist : range;
+  const hits = [];
+  for (const p of game.players.values()) {
+    if (p === shooter || !p.alive || !game.canDamage(shooter, p)) continue;
+    const h = p.hitTest(origin, dir, maxD);
+    if (h) hits.push({ victim: p, part: h.part, dist: h.dist });
+  }
+  hits.sort((a, b) => a.dist - b.dist);
+  return { hits, end: wall ? wall.point : origin.clone().addScaledVector(dir, range), normal: wall ? wall.normal : null };
 }
 
 export function bulletDamage(w, part, dist) {

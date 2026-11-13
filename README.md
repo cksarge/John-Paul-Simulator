@@ -2,12 +2,14 @@
 
 A browser-based 3D tactical FPS. There is no build step: it is plain ES modules loaded straight from the folder, so it runs on GitHub Pages as-is.
 
-- **Modes:** Ranked 1v1 (ELO), 1v1 Duel, 2v2 Wingman, 5v5 Bomb Defusal (full economy), Team Deathmatch, Gun Game, Free For All. Every mode shows its win condition ("First to …") on the HUD and scoreboard.
+- **Modes:** Ranked 1v1 (ELO), 1v1 Duel (both 1v1s have a round economy: winning pays more than losing), 2v2 Wingman, 5v5 Bomb Defusal (full economy), Team Deathmatch, Gun Game, Free For All. Every mode shows its win condition ("First to …") on the HUD and scoreboard.
 - **Online:** quick-match queues, custom lobbies with join codes, a lobby browser, an online-players list and in-match chat
-- **Offline:** every mode against bots (Easy / Normal / Hard / Elite)
-- **Maps:** small: Vault, Courtyard, Foundry, Outpost · large (with bomb sites): Dustline, Harbor, Canopy, Frostbite. Quick play rotates each mode through its whole map pool.
-- **Operators:** 8 presets, each with a perk (less recoil, faster movement, radar sense, faster snipers, free kevlar, 3 grenades, faster plant/defuse, blast resistance, faster reloads). The custom operator picks any perk.
-- **Weapons:** 16 in total: knife, 4 pistols (incl. machine pistol), 2 SMGs, 2 shotguns (pump and auto), LMG, burst rifle, 2 assault rifles, DMR, scout and heavy sniper. Plus frag and smoke grenades, kevlar and helmet.
+- **Offline:** every mode against bots (Easy / Normal / Hard / Elite). Bots throw grenades, open doors and can be flashed.
+- **Maps:** small: Vault, Courtyard, Foundry, Outpost · large (with bomb sites): Dustline, Harbor, Canopy, Frostbite. Quick play rotates each mode through its whole map pool. Spawn zones are walled so the two teams can never see each other at a round start, and respawns wait until a spot with no enemy in view is free.
+- **Interactive maps:** sliding doors (E), breakable glass, explosive barrels that chain, and ammo crates (E to resupply). Every map has its own dressing: trims, lights, signs pointing to bomb sites, pipes, furnaces, vines, puddles, weather particles and scenery beyond the walls.
+- **Operators:** 8 presets, each with a perk (less recoil, faster movement, radar sense, faster snipers, free kevlar, extra grenades, faster plant/defuse, blast resistance, faster reloads). The custom operator picks any perk.
+- **Weapons:** 32 in eight classes: Pistols (4), SMGs (4), Shotguns (4), Rifles (4), LMGs (4), Snipers (4, including the AWP, which kills with one shot to the head or body), Knives (4) and Other (nail gun, crossbow, grenade launcher, piercing rail gun).
+- **Grenades:** frag, flashbang, smoke, incendiary (smoke puts it out), proximity mine and decoy. Up to 4 carried (5 with Utility Belt). Plus kevlar and helmet.
 - **Collection (Armory):** 18 weapon finishes and 11 outfits across 5 rarities. Finishes work on any gun and outfits on any operator, and other players see them. Earned as post-match drops (wins always drop).
 - **Loadouts:** your purchases are saved. Press **F** to rebuy them, or **K** to toggle *Keep loadout* so they're re-equipped automatically every round or respawn.
 - **Accounts:** sign-up with email confirmation, forgot/reset password, profiles, match history, XP levels, and leaderboards for ELO, kills, wins and level
@@ -78,6 +80,7 @@ The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, g
 | Buy menu | B |
 | Rebuy last loadout / toggle keep loadout | F / K |
 | Plant / defuse | Hold E |
+| Open / close door, resupply at ammo crate | E |
 | Scoreboard | Tab |
 | Chat (online) | Y or Enter |
 | Pause / settings | Esc |

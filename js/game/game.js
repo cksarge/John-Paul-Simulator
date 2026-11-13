@@ -5,21 +5,27 @@ import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
 import { sfx, setListener, initAudio, setVolume } from '../engine/audio.js';
 import { MAPS } from '../data/maps.js';
-import { MODES, RESPAWN_KINDS, SOLO_KINDS, goalText } from '../data/modes.js';
-import { WEAPONS, GRENADES, GEAR, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
+import { MODES, RESPAWN_KINDS, SOLO_KINDS, goalText, econFor } from '../data/modes.js';
+import { WEAPONS, GRENADES, itemInfo, GUN_GAME_ORDER, nadeDef, isKnife } from '../data/weapons.js';
 import { Player } from './player.js';
 import { Input } from './input.js';
 import { Rules } from './rules.js';
 import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
 import {
-  switchSlot, cycleSlot, startReload, tickWeapon, ready, spreadFor, applySpread, traceBullet, bulletDamage, bestSlot, hasSlot,
-  reloadTime, maxNades,
+  switchSlot, cycleSlot, startReload, tickWeapon, ready, spreadFor, applySpread, traceBullet, tracePierce, bulletDamage, bestSlot, hasSlot,
+  reloadTime, maxNades, nadeLimit,
 } from './combat.js';
 
-const FFA_WEAPONS = ['ar7', 'm5', 'vex', 'longshot', 'breacher', 'trident', 'falcon', 'kestrel', 'reaper', 'bulldog', 'sparrow', 'ar7', 'm5'];
-const BOT_TDM_WEAPONS = ['ar7', 'm5', 'trident', 'kestrel', 'falcon', 'vex', 'reaper'];
-const loadoutKey = (kind) => 'jps_loadout_' + (kind === 'bomb' ? 'bomb' : 'free');
+const FFA_WEAPONS = [
+  'ar7', 'm5', 'vex', 'longshot', 'breacher', 'trident', 'falcon', 'kestrel', 'reaper', 'bulldog', 'sparrow', 'hornet', 'mako',
+  'coach', 'striker', 'mauler', 'anvil', 'hailstorm', 'warden', 'kodiak', 'crossbow', 'nailer', 'rail', 'ar7', 'm5',
+];
+const FFA_NADES = ['he', 'flash', 'fire', 'mine', 'decoy', 'smoke', 'he'];
+const BOT_TDM_WEAPONS = ['ar7', 'm5', 'trident', 'kestrel', 'falcon', 'vex', 'reaper', 'mako', 'mauler', 'warden', 'hornet', 'striker'];
+const BOT_SMGS = ['vex', 'kestrel', 'breacher', 'sparrow', 'hornet', 'mako', 'coach', 'striker', 'nailer'];
+const BOT_NADES = ['he', 'smoke', 'flash', 'fire', 'mine', 'he'];
+const loadoutKey = (mode) => 'jps_loadout_' + (econFor(mode) ? 'bomb' : 'free');
 
 // One match. Runs identically online and offline; when `net` is null this client is the host.
 export class Game {
@@ -28,6 +34,7 @@ export class Game {
     this.engine = app.engine;
     this.opts = opts;
     this.mode = MODES[opts.mode];
+    this.econ = econFor(this.mode);
     this.mapDef = MAPS[opts.map];
     this.net = opts.net || null;
     this.online = !!this.net;
@@ -43,6 +50,9 @@ export class Game {
     this.state = { phase: 'warmup', time: 0, round: 0, scores: [0, 0], bomb: { state: 'none' } };
     this.botPlan = { site: 'A', ctIndex: 0 };
     this.nades = [];
+    this.fires = [];
+    this.decoys = [];
+    this.nadeSeq = 0;
     this.punch = 0;
     this.lookDX = 0; this.lookDY = 0;
     this.outShots = new Map();
@@ -56,7 +66,7 @@ export class Game {
     this.spectateIdx = 0;
     this.lastFrame = performance.now();
     this.roundBuys = [];
-    try { this.savedBuys = JSON.parse(localStorage.getItem(loadoutKey(this.mode.kind)) || '[]'); } catch { this.savedBuys = []; }
+    try { this.savedBuys = JSON.parse(localStorage.getItem(loadoutKey(this.mode)) || '[]'); } catch { this.savedBuys = []; }
   }
 
   get local() { return this.players.get(this.localId); }
@@ -222,6 +232,8 @@ export class Game {
     }
     this.updateNades(dt);
     this.updateBomb(dt);
+    this.world.update(dt);
+    if (this.isHost && RESPAWN_KINDS.has(this.mode.kind)) this.tickPropRespawn(dt);
     if (this.pendingLeave.size) this.tickPendingLeaves(dt);
     this.effects.update(dt);
     if (this.online) this.netSend(dt);
@@ -278,6 +290,7 @@ export class Game {
       }
     }
     if (!acting) this.action = null;
+    if (!ui && !acting && inp.pressed('KeyE')) this.interact(p);
 
     // Move
     const wish = new THREE.Vector3();
@@ -353,7 +366,7 @@ export class Game {
   }
 
   priceOf(item, p = this.local) {
-    if (this.mode.kind !== 'bomb') return 0;
+    if (!this.econ) return 0;
     const price = itemInfo(item)?.price ?? 0;
     return GRENADES[item] && p?.char?.perk === 'utility' ? Math.round(price / 2) : price;
   }
@@ -389,7 +402,7 @@ export class Game {
     if (!this.roundBuys.length) return;
     this.savedBuys = this.roundBuys;
     this.roundBuys = [];
-    try { localStorage.setItem(loadoutKey(this.mode.kind), JSON.stringify(this.savedBuys)); } catch { /* ignore */ }
+    try { localStorage.setItem(loadoutKey(this.mode), JSON.stringify(this.savedBuys)); } catch { /* ignore */ }
   }
 
   buy(item) {
@@ -467,6 +480,7 @@ export class Game {
     }
     p.triggerHeld = true;
     p.firingT = 0.12;
+    if (w.projectile) { this.fireProjectile(p, w, isLocal); this.recoil(p, w, isLocal); return; }
     const origin = p.eye();
     const pitch = p.pitch + (isLocal ? this.punch : 0);
     const cp = Math.cos(pitch);
@@ -474,30 +488,53 @@ export class Game {
     const spread = spreadFor(p);
     const dmgBy = new Map();
     const shots = [];
+    const addHit = (victim, part, dist) => {
+      const d = bulletDamage(w, part, dist);
+      const prev = dmgBy.get(victim) || { d: 0, part: 'legs' };
+      prev.d += d;
+      if (part === 'head' || (part === 'body' && prev.part === 'legs')) prev.part = part;
+      dmgBy.set(victim, prev);
+    };
     for (let i = 0; i < (w.pellets || 1); i++) {
       const dir = applySpread(base, spread);
+      if (w.pierce) {
+        // Rail: passes through every player on the line and stops at the first wall.
+        const tr = tracePierce(this, p, origin, dir);
+        for (const h of tr.hits) {
+          addHit(h.victim, h.part, h.dist);
+          this.effects.impact(origin.clone().addScaledVector(dir, h.dist), dir.clone().negate(), { blood: true });
+        }
+        if (tr.normal) { this.effects.impact(tr.end, tr.normal); this.shootProp(p, tr.end, tr.normal, w.damage); }
+        this.effects.beam(this.muzzlePos(p, isLocal), tr.end);
+        this.breakGlassAlong(origin, tr.end, p);
+        shots.push([+tr.end.x.toFixed(2), +tr.end.y.toFixed(2), +tr.end.z.toFixed(2), 2]);
+        continue;
+      }
       const tr = traceBullet(this, p, origin, dir);
+      this.breakGlassAlong(origin, tr.end, p);
       if (tr.victim) {
-        const d = bulletDamage(w, tr.part, tr.dist);
-        const prev = dmgBy.get(tr.victim) || { d: 0, part: 'legs' };
-        prev.d += d;
-        if (tr.part === 'head' || (tr.part === 'body' && prev.part === 'legs')) prev.part = tr.part;
-        dmgBy.set(tr.victim, prev);
+        addHit(tr.victim, tr.part, tr.dist);
         this.effects.impact(tr.end, tr.normal, { blood: true });
         shots.push([+tr.end.x.toFixed(2), +tr.end.y.toFixed(2), +tr.end.z.toFixed(2), 1]);
       } else if (tr.normal) {
         this.effects.impact(tr.end, tr.normal);
+        this.shootProp(p, tr.end, tr.normal, w.damage);
         shots.push([+tr.end.x.toFixed(2), +tr.end.y.toFixed(2), +tr.end.z.toFixed(2), 0, tr.normal.x, tr.normal.y, tr.normal.z]);
       } else shots.push([+tr.end.x.toFixed(1), +tr.end.y.toFixed(1), +tr.end.z.toFixed(1), 2]);
-      if (i < 3) this.effects.tracer(this.muzzlePos(p, isLocal), tr.end);
+      if (i < 3 && !w.silent) this.effects.tracer(this.muzzlePos(p, isLocal), tr.end);
     }
     for (const [victim, { d, part }] of dmgBy) {
       this.request('hit', { v: victim.id, d: Math.round(d), part, w: w.id }, p);
       if (isLocal) this.hud.hitmarker(part === 'head', false);
       if (isLocal) sfx.hit(part === 'head');
     }
+    this.recoil(p, w, isLocal);
+    if (isLocal && w.type === 'sniper' && !w.keepScope) p.ws.scope = 0;
+    this.queueShot(p, w.id, shots);
+  }
+
+  recoil(p, w, isLocal) {
     p.ws.spray++;
-    // Recoil
     const steady = p.char?.perk === 'steady' && (w.type === 'rifle' || w.type === 'lmg') ? 0.75 : 1;
     const kick = w.recoil * steady * (1 + Math.min(p.ws.spray, 10) * 0.1);
     const yawKick = (Math.random() - 0.5) * 2 * w.recoilYaw * (p.ws.spray > 6 ? 1.6 : 1);
@@ -505,18 +542,26 @@ export class Game {
       this.punch += kick * 0.45;
       p.pitch = Math.min(1.5, p.pitch + kick * 0.55);
       p.yaw += yawKick;
-      this.viewmodel.fire(w.type === 'sniper' || w.type === 'shotgun' ? 1.8 : 1);
-      if (w.type === 'sniper') p.ws.scope = 0;
+      this.viewmodel.fire(w.type === 'sniper' || w.type === 'shotgun' || w.projectile ? 1.8 : 1, !w.silent);
     } else {
       p.pitch += kick * 0.35;
     }
     sfx.shot(w.id, isLocal ? null : p.pos);
-    if (!isLocal) this.effects.muzzle(this.muzzlePos(p, false), w.type === 'pistol' ? 0.7 : 1);
-    this.queueShot(p, w.id, shots);
+    if (!isLocal && !w.silent) this.effects.muzzle(this.muzzlePos(p, false), w.type === 'pistol' ? 0.7 : 1);
+  }
+
+  fireProjectile(p, w, isLocal) {
+    const def = nadeDef(w.projectile);
+    const pitch = p.pitch + (isLocal ? this.punch : 0), cp = Math.cos(pitch);
+    const f = new THREE.Vector3(-Math.sin(p.yaw) * cp, Math.sin(pitch), -Math.cos(p.yaw) * cp);
+    const o = p.eye().addScaledVector(f, 0.5);
+    const v = f.multiplyScalar(def.speed).add(new THREE.Vector3(0, 1.2, 0));
+    this.broadcast('nade', { nid: this.newNid(p), id: p.id, team: p.team, kind: w.projectile, w: w.id, o: [o.x, o.y, o.z], v: [v.x, v.y, v.z] });
+    this.queueShot(p, w.id, []);
   }
 
   knife(p, heavy) {
-    const w = WEAPONS.knife;
+    const w = p.weapon?.type === 'knife' ? p.weapon : WEAPONS.knife;
     p.ws.cooldown = heavy ? w.altRate : w.fireRate;
     p.firingT = 0.2;
     if (p.isLocal) this.viewmodel.swingKnife(heavy);
@@ -536,13 +581,14 @@ export class Game {
       const victimFwd = best.o.forward().setY(0).normalize();
       const back = victimFwd.dot(dir.clone().setY(0).normalize()) > 0.5;
       const dmg = (heavy ? w.altDamage : w.damage) * (back ? w.backstab : 1);
-      this.request('hit', { v: best.o.id, d: Math.round(dmg), part: 'body', w: 'knife' }, p);
+      this.request('hit', { v: best.o.id, d: Math.round(dmg), part: 'body', w: w.id }, p);
       const pt = origin.clone().addScaledVector(dir, best.dist);
       this.effects.impact(pt, dir.clone().negate(), { blood: true });
       if (p.isLocal) { this.hud.hitmarker(false, false); sfx.hit(false); }
-      this.queueShot(p, 'knife', [[+pt.x.toFixed(2), +pt.y.toFixed(2), +pt.z.toFixed(2), 1]]);
+      this.queueShot(p, w.id, [[+pt.x.toFixed(2), +pt.y.toFixed(2), +pt.z.toFixed(2), 1]]);
     } else if (wall) {
       this.effects.impact(wall.point, wall.normal);
+      this.shootProp(p, wall.point, wall.normal, w.damage);
       sfx.impact(wall.point);
     }
   }
@@ -562,10 +608,11 @@ export class Game {
   playShots(p, list) {
     for (const s of list) {
       const w = s[0];
-      if (w === 'knife') { sfx.knife(p.pos); continue; }
+      if (isKnife(w)) { sfx.knife(p.pos); continue; }
+      const wd = WEAPONS[w];
       sfx.shot(w, p.pos);
       const muzzle = this.muzzlePos(p, false);
-      this.effects.muzzle(muzzle, w === 'p9' ? 0.7 : 1);
+      if (!wd?.silent) this.effects.muzzle(muzzle, wd?.type === 'pistol' ? 0.7 : 1);
       p.firingT = 0.12;
       for (let i = 1; i < s.length;) {
         const end = new THREE.Vector3(s[i], s[i + 1], s[i + 2]), kind = s[i + 3];
@@ -576,12 +623,15 @@ export class Game {
           if (kind === 1) this.effects.impact(end, new THREE.Vector3(0, 1, 0), { blood: true });
           i += 4;
         }
-        this.effects.tracer(muzzle, end);
+        if (wd?.pierce) this.effects.beam(muzzle, end);
+        else if (!wd?.silent) this.effects.tracer(muzzle, end);
       }
     }
   }
 
   // ───────────────────────── grenades ─────────────────────────
+  newNid(p) { return `${p.id}:${++this.nadeSeq}:${Math.random().toString(36).slice(2, 5)}`; }
+
   throwNade(p) {
     const kind = p.weaponId;
     if (!GRENADES[kind]) return;
@@ -589,9 +639,9 @@ export class Game {
     if (i >= 0) p.inv.nades.splice(i, 1);
     const f = p.forward();
     const o = p.eye().addScaledVector(f, 0.4);
-    const v = f.clone().multiplyScalar(15).add(new THREE.Vector3(p.vel.x * 0.5, 2.2, p.vel.z * 0.5));
+    const v = f.clone().multiplyScalar(kind === 'mine' ? 9 : 15).add(new THREE.Vector3(p.vel.x * 0.5, 2.2, p.vel.z * 0.5));
     p.ws.cooldown = 0.6;
-    this.broadcast('nade', { id: p.id, kind, o: [o.x, o.y, o.z], v: [v.x, v.y, v.z] });
+    this.broadcast('nade', { nid: this.newNid(p), id: p.id, team: p.team, kind, o: [o.x, o.y, o.z], v: [v.x, v.y, v.z] });
     switchSlot(p, bestSlot(p));
     if (p.isLocal) this.viewmodel.setWeapon(p.weaponId, p.char);
   }
@@ -600,66 +650,347 @@ export class Game {
     const mesh = buildGun(d.kind);
     mesh.scale.setScalar(1.6);
     this.scene.add(mesh);
-    this.nades.push({ ...d, pos: new THREE.Vector3(...d.o), vel: new THREE.Vector3(...d.v), t: 0, mesh, still: 0 });
+    // Each player keeps at most two mines down; the oldest is removed first.
+    if (d.kind === 'mine') {
+      const mine = this.nades.filter((n) => n.kind === 'mine' && n.id === d.id);
+      if (mine.length >= 2) this.removeNade(this.nades.indexOf(mine[0]));
+    }
+    const shooter = this.players.get(d.id);
+    this.nades.push({ ...d, pos: new THREE.Vector3(...d.o), vel: new THREE.Vector3(...d.v), t: 0, mesh, still: 0, state: 'fly', shooter });
+  }
+
+  // Moves one grenade a step with bounces. Returns {floor, wall} for what it hit this frame.
+  stepNade(n, dt) {
+    const W = this.world, steps = 3, h = dt / steps;
+    const hit = { floor: false, wall: false, player: false };
+    for (let s = 0; s < steps; s++) {
+      n.vel.y -= 20 * h;
+      const next = n.pos.clone().addScaledVector(n.vel, h);
+      // Launcher rounds burst on contact with anyone but the shooter (shortly after leaving the barrel).
+      if (nadeDef(n.kind).impact) {
+        const seg = next.clone().sub(n.pos), len = seg.length();
+        if (len > 0) {
+          seg.divideScalar(len);
+          for (const o of this.players.values()) {
+            if (!o.alive || (o === n.shooter && n.t < 0.25)) continue;
+            if (o.hitTest(n.pos, seg, len)) { hit.player = true; return hit; }
+          }
+        }
+      }
+      const hNext = W.heightAt(next.x, next.z);
+      if (next.y < hNext) {
+        const hCur = W.heightAt(n.pos.x, n.pos.z);
+        let bounced = false;
+        if (n.pos.y >= hNext - 0.01 && hCur <= n.pos.y) {
+          n.vel.y = -n.vel.y * 0.4; n.vel.x *= 0.7; n.vel.z *= 0.7; bounced = true; next.y = hNext + 0.01; hit.floor = true;
+        } else {
+          if (W.heightAt(next.x, n.pos.z) > n.pos.y) { n.vel.x = -n.vel.x * 0.45; next.x = n.pos.x; bounced = true; }
+          if (W.heightAt(n.pos.x, next.z) > n.pos.y) { n.vel.z = -n.vel.z * 0.45; next.z = n.pos.z; bounced = true; }
+          if (!bounced) { n.vel.x = -n.vel.x * 0.45; n.vel.z = -n.vel.z * 0.45; next.x = n.pos.x; next.z = n.pos.z; }
+          hit.wall = true;
+        }
+        if (n.vel.length() > 2) sfx.bounce(n.pos);
+      }
+      n.pos.copy(next);
+    }
+    return hit;
   }
 
   updateNades(dt) {
     const W = this.world;
     for (let i = this.nades.length - 1; i >= 0; i--) {
       const n = this.nades[i];
+      const g = nadeDef(n.kind);
       n.t += dt;
-      const steps = 3, h = dt / steps;
-      for (let s = 0; s < steps; s++) {
-        n.vel.y -= 20 * h;
-        const next = n.pos.clone().addScaledVector(n.vel, h);
-        const hNext = W.heightAt(next.x, next.z);
-        if (next.y < hNext) {
-          const hCur = W.heightAt(n.pos.x, n.pos.z);
-          let bounced = false;
-          if (n.pos.y >= hNext - 0.01 && hCur <= n.pos.y) { n.vel.y = -n.vel.y * 0.4; n.vel.x *= 0.7; n.vel.z *= 0.7; bounced = true; next.y = hNext + 0.01; }
-          else {
-            if (W.heightAt(next.x, n.pos.z) > n.pos.y) { n.vel.x = -n.vel.x * 0.45; next.x = n.pos.x; bounced = true; }
-            if (W.heightAt(n.pos.x, next.z) > n.pos.y) { n.vel.z = -n.vel.z * 0.45; next.z = n.pos.z; bounced = true; }
-            if (!bounced) { n.vel.x = -n.vel.x * 0.45; n.vel.z = -n.vel.z * 0.45; next.x = n.pos.x; next.z = n.pos.z; }
-          }
-          if (bounced && n.vel.length() > 2) sfx.bounce(n.pos);
-        }
-        n.pos.copy(next);
+      let hit = { floor: false, wall: false, player: false };
+      if (n.state === 'fly') {
+        hit = this.stepNade(n, dt);
+        n.mesh.rotation.x += dt * n.vel.length() * 2;
+        if (n.vel.length() < 0.4) n.still += dt;
       }
       n.mesh.position.copy(n.pos);
-      n.mesh.rotation.x += dt * n.vel.length() * 2;
-      if (n.vel.length() < 0.4) n.still += dt;
-      const g = GRENADES[n.kind];
-      if (n.kind === 'he' && n.t >= g.fuse) {
-        this.effects.explosion(n.pos);
-        sfx.explosion(n.pos);
-        if (this.isHost) this.nadeDamage(n);
-        this.removeNade(i);
-      } else if (n.kind === 'smoke' && (n.still > 0.3 || n.t > 3) && n.t >= 1) {
-        this.effects.smoke(n.pos.clone().setY(W.heightAt(n.pos.x, n.pos.z)), g.radius, g.duration);
-        sfx.smoke(n.pos);
-        this.removeNade(i);
+      const floorY = () => W.heightAt(n.pos.x, n.pos.z);
+      if (g.impact) {
+        if (hit.floor || hit.wall || hit.player || n.t >= g.fuse) this.detonate(i);
+      } else if (n.kind === 'he') {
+        if (n.t >= g.fuse) this.detonate(i);
+      } else if (n.kind === 'flash') {
+        if (n.t >= g.fuse) { this.flashBurst(n.pos.clone(), g); this.removeNade(i); }
+      } else if (n.kind === 'smoke') {
+        if ((n.still > 0.3 || n.t > 3) && n.t >= 1) {
+          this.effects.smoke(n.pos.clone().setY(floorY()), g.radius, g.duration);
+          sfx.smoke(n.pos);
+          // Smoke puts out fires it covers.
+          for (const f of this.fires) if (f.pos.distanceTo(n.pos) < f.radius + g.radius) f.t = Math.min(f.t, 0.4);
+          this.removeNade(i);
+        }
+      } else if (n.kind === 'fire') {
+        if ((hit.floor && n.t > 0.2) || n.t >= g.fuse) { this.ignite(n.pos.clone().setY(floorY()), g, n); this.removeNade(i); }
+      } else if (n.kind === 'mine') {
+        if (n.state === 'fly' && (n.still > 0.15 || n.t > 4)) {
+          n.state = 'set'; n.armT = g.arm; n.vel.set(0, 0, 0);
+          n.pos.y = floorY(); n.mesh.position.copy(n.pos); n.mesh.rotation.set(0, n.mesh.rotation.y, 0);
+          sfx.beep(n.pos);
+        }
+        if (n.state === 'set') {
+          n.armT -= dt;
+          const led = n.mesh.getObjectByName('led');
+          if (led) led.visible = n.armT > 0 ? true : Math.floor(n.t * 2.5) % 2 === 0;
+          if (this.isHost && n.armT <= 0 && !n.triggered && this.state.phase !== 'post') {
+            for (const o of this.players.values()) {
+              if (!o.alive || o.id === n.id || (!SOLO_KINDS.has(this.mode.kind) && o.team === n.team)) continue;
+              if (Math.hypot(o.pos.x - n.pos.x, o.pos.z - n.pos.z) < g.trigger && Math.abs(o.pos.y - n.pos.y) < 1.6) {
+                n.triggered = true;
+                this.broadcast('boom', { nid: n.nid });
+                break;
+              }
+            }
+          }
+        }
+      } else if (n.kind === 'decoy') {
+        if ((n.still > 0.3 || n.t > 3) && n.t >= g.fuse) {
+          const owner = this.players.get(n.id);
+          const wid = owner?.inv.primary || owner?.inv.secondary || 'ar7';
+          this.decoys.push({ pos: n.pos.clone().setY(floorY()), t: g.duration, owner: n.id, team: n.team, weapon: wid, nextT: 0.3, firingT: 0, mesh: n.mesh });
+          this.nades.splice(i, 1);
+        }
       }
     }
+    this.updateFires(dt);
+    this.updateDecoys(dt);
   }
 
   removeNade(i) {
+    if (i < 0 || !this.nades[i]) return;
     this.nades[i].mesh.removeFromParent();
     this.nades.splice(i, 1);
   }
 
-  nadeDamage(n) {
-    const g = GRENADES.he;
-    const thrower = this.players.get(n.id);
-    const c = n.pos.clone().setY(n.pos.y + 0.3);
+  // Explosion for frags, launcher rounds and triggered mines.
+  detonate(i) {
+    const n = this.nades[i];
+    if (!n) return;
+    const g = nadeDef(n.kind);
+    const pos = n.pos.clone();
+    if (n.kind === 'mine') pos.y += 0.15;
+    this.effects.explosion(pos);
+    sfx.explosion(pos);
+    this.removeNade(i);
+    this.breakGlassAround(pos, g.radius * 0.6);
+    if (this.isHost) {
+      this.blastDamage(pos, g, this.players.get(n.id), n.w || n.kind);
+      this.chainBarrels(pos, g.radius, n.id);
+    }
+  }
+
+  blastDamage(center, g, thrower, weapon) {
+    const c = center.clone().setY(center.y + 0.3);
     for (const p of this.players.values()) {
       if (!p.alive) continue;
       if (p !== thrower && thrower && !this.canDamage(thrower, p)) continue;
       const chest = p.pos.clone().setY(p.pos.y + 1.1);
       const d = chest.distanceTo(c);
       if (d > g.radius || !this.world.lineOfSight(c, chest)) continue;
-      this.hostDamage(thrower, p, g.damage * (1 - d / g.radius) * (p === thrower ? 0.5 : 1), 'body', 'he');
+      this.hostDamage(thrower || null, p, g.damage * (1 - d / g.radius) * (p === thrower ? 0.5 : 1), 'body', weapon);
     }
+  }
+
+  // Flashbang: every client works out its own player's blindness; the host also blinds bots.
+  flashBurst(pos, g) {
+    this.effects.flash(pos);
+    sfx.flash(pos);
+    const lp = this.local;
+    if (lp?.alive) this.hud.blind(this.blindAmount(lp, pos, g));
+    if (this.isHost) for (const [id, brain] of this.brains) { const p = this.players.get(id); if (p?.alive) brain.blind(this.blindAmount(p, pos, g)); }
+  }
+
+  blindAmount(p, pos, g) {
+    const eye = p.eye(), d = eye.distanceTo(pos);
+    if (d > g.radius || !this.world.lineOfSight(eye, pos) || this.effects.smokeBlocks(eye, pos)) return 0;
+    const facing = p.forward().dot(pos.clone().sub(eye).normalize());
+    const look = facing > 0.55 ? 1 : facing > 0 ? 0.55 : 0.2;
+    return g.blind * look * Math.max(0.15, 1 - d / g.radius);
+  }
+
+  ignite(pos, g, n) {
+    if (this.effects.smokeCovers(pos)) { sfx.smoke(pos); return; }
+    sfx.fire(pos);
+    this.fires.push({ pos, radius: g.radius, t: g.duration, dps: g.dps, owner: n.id, tick: 0, vis: this.effects.fire(pos, g.radius, g.duration) });
+  }
+
+  updateFires(dt) {
+    for (let i = this.fires.length - 1; i >= 0; i--) {
+      const f = this.fires[i];
+      f.t -= dt;
+      f.vis.life = f.t;
+      if (f.t <= 0) { this.effects.endFire(f.vis); this.fires.splice(i, 1); continue; }
+      if (!this.isHost) continue;
+      f.tick -= dt;
+      if (f.tick > 0) continue;
+      f.tick = 0.25;
+      const owner = this.players.get(f.owner) || null;
+      for (const p of this.players.values()) {
+        if (!p.alive || Math.hypot(p.pos.x - f.pos.x, p.pos.z - f.pos.z) > f.radius || Math.abs(p.pos.y - f.pos.y) > 1.2) continue;
+        if (owner && p !== owner && !this.canDamage(owner, p)) continue;
+        this.hostDamage(owner, p, f.dps * 0.25 * (p === owner ? 0.5 : 1), 'legs', 'fire');
+      }
+    }
+  }
+
+  // Decoys fake bursts of the thrower's gun and show up on enemy radar while "firing".
+  updateDecoys(dt) {
+    for (let i = this.decoys.length - 1; i >= 0; i--) {
+      const d = this.decoys[i];
+      d.t -= dt; d.nextT -= dt; d.firingT -= dt;
+      if (d.t <= 0) { d.mesh.removeFromParent(); sfx.bounce(d.pos); this.decoys.splice(i, 1); continue; }
+      if (d.nextT <= 0) {
+        sfx.shot(d.weapon, d.pos);
+        d.firingT = 0.8;
+        d.burst = (d.burst || 0) - 1;
+        if (d.burst <= 0) { d.burst = 1 + Math.floor(Math.random() * 5); d.nextT = 0.7 + Math.random() * 1.6; }
+        else d.nextT = WEAPONS[d.weapon]?.auto ? WEAPONS[d.weapon].fireRate : 0.25;
+      }
+    }
+  }
+
+  clearNades() {
+    for (const n of this.nades) n.mesh.removeFromParent();
+    for (const d of this.decoys) d.mesh.removeFromParent();
+    for (const f of this.fires) this.effects.endFire(f.vis);
+    this.nades = []; this.decoys = []; this.fires = [];
+  }
+
+  // ───────────────────────── interactive props ─────────────────────────
+  // Nearest door or ammo crate the player can use, or null.
+  usableProp(p) {
+    const eye = p.eye(), f = p.forward().setY(0).normalize();
+    let best = null, bd = Infinity;
+    for (const pr of this.world.props.values()) {
+      if (pr.ch !== 'D' && pr.ch !== 'A') continue;
+      const cx = (pr.x + 0.5) * CELL, cz = (pr.y + 0.5) * CELL;
+      const dx = cx - eye.x, dz = cz - eye.z, dist = Math.hypot(dx, dz);
+      if (dist > (pr.ch === 'D' ? 2.7 : 2.4)) continue;
+      if (dist > 1.2 && (dx * f.x + dz * f.z) / dist < 0.35) continue;
+      if (dist < bd) { bd = dist; best = pr; }
+    }
+    return best;
+  }
+
+  interactHint() {
+    const p = this.local;
+    if (!p?.alive) return '';
+    const pr = this.usableProp(p);
+    if (!pr) return '';
+    if (pr.ch === 'D') return `Press E to ${pr.open ? 'close' : 'open'} the door`;
+    const wait = Math.ceil((p.resupplyAt || 0) - performance.now() / 1000);
+    return wait > 0 ? `Ammo crate restocking · ${wait}s` : 'Press E to resupply ammo';
+  }
+
+  interact(p) {
+    const pr = this.usableProp(p);
+    if (!pr) return;
+    if (pr.ch === 'D') return this.request('door', { cell: [pr.x, pr.y] }, p);
+    const now = performance.now() / 1000;
+    if ((p.resupplyAt || 0) > now) return;
+    let topped = false;
+    for (const id of [p.inv.primary, p.inv.secondary]) {
+      const w = WEAPONS[id], a = p.ammo[id];
+      if (w && a && a.reserve < w.reserve) { a.reserve = w.reserve; topped = true; }
+    }
+    if (!topped) { this.hud.info('Your ammo is already full', 1.5); return; }
+    p.resupplyAt = now + 25;
+    sfx.pickup();
+    this.hud.info('Ammo resupplied', 1.5);
+  }
+
+  hostToggleDoor(p, cell) {
+    const pr = this.world.prop(cell[0], cell[1]);
+    if (!pr || pr.ch !== 'D' || !p.alive) return;
+    if (Math.hypot(p.pos.x - (pr.x + 0.5) * CELL, p.pos.z - (pr.y + 0.5) * CELL) > 3.6) return;
+    const open = !pr.open;
+    // Don't shut a door on someone standing in the doorway.
+    if (!open) for (const o of this.players.values()) {
+      if (o.alive && Math.abs(o.pos.x - (pr.x + 0.5) * CELL) < 1 + o.radius && Math.abs(o.pos.z - (pr.y + 0.5) * CELL) < 1 + o.radius) return;
+    }
+    this.broadcast('door', { cell, open });
+  }
+
+  // A bullet or blade hit a solid: damage the barrel behind it, if any.
+  shootProp(p, point, normal, dmg) {
+    const cell = this.world.cellBehind(point, normal);
+    const pr = this.world.prop(cell[0], cell[1]);
+    if (pr && pr.ch === 'B' && !pr.broken) this.request('prop', { cell, d: Math.round(dmg) }, p);
+  }
+
+  breakGlassAlong(a, b, p) {
+    for (const cell of this.world.glassAlong(a, b)) this.request('prop', { cell, glass: true }, p);
+  }
+
+  // Host only: shatter glass near an explosion.
+  breakGlassAround(pos, r) {
+    if (!this.isHost) return;
+    for (const pr of this.world.props.values()) {
+      if (pr.ch === 'G' && !pr.broken && Math.hypot(pos.x - (pr.x + 0.5) * CELL, pos.z - (pr.y + 0.5) * CELL) < r + 1) this.broadcast('prop', { cell: [pr.x, pr.y], kind: 'glass' });
+    }
+  }
+
+  // Host only: barrels caught in a blast go off a moment later.
+  chainBarrels(pos, r, byId) {
+    for (const pr of this.world.props.values()) {
+      if (pr.ch !== 'B' || pr.broken || pr.chained) continue;
+      if (Math.hypot(pos.x - (pr.x + 0.5) * CELL, pos.z - (pr.y + 0.5) * CELL) > r + 0.8) continue;
+      pr.chained = true;
+      setTimeout(() => { pr.chained = false; if (!pr.broken && !this.ended) this.broadcast('prop', { cell: [pr.x, pr.y], kind: 'barrel', by: byId }); }, 120 + Math.random() * 160);
+    }
+  }
+
+  hostPropRequest(p, d) {
+    const pr = this.world.prop(d.cell?.[0], d.cell?.[1]);
+    if (!pr || pr.broken) return;
+    if (d.glass && pr.ch === 'G') this.broadcast('prop', { cell: d.cell, kind: 'glass' });
+    else if (pr.ch === 'B' && d.d > 0) {
+      pr.hp -= Math.min(200, d.d);
+      if (pr.hp <= 0) this.broadcast('prop', { cell: d.cell, kind: 'barrel', by: p.id });
+    }
+  }
+
+  applyPropBreak(d) {
+    if (d.restore) {
+      for (const [x, y] of d.restore) { const pr = this.world.prop(x, y); if (pr) this.world.restoreProp(pr); }
+      return;
+    }
+    const pr = this.world.breakProp(d.cell[0], d.cell[1]);
+    if (!pr) return;
+    const pos = new THREE.Vector3((pr.x + 0.5) * CELL, 0, (pr.y + 0.5) * CELL);
+    if (pr.ch === 'G') {
+      this.effects.shatter(pos.setY(1.5));
+      sfx.glass(pos);
+      return;
+    }
+    pos.y = 0.7;
+    this.effects.explosion(pos);
+    this.effects.explosion(pos.clone().setY(1.6));
+    sfx.explosion(pos);
+    if (this.isHost) {
+      this.blastDamage(pos, { damage: 120, radius: 5.5 }, this.players.get(d.by) || null, 'barrel');
+      this.chainBarrels(pos, 5.5, d.by);
+      this.breakGlassAround(pos, 4);
+    }
+  }
+
+  // Respawn modes: broken glass and barrels come back after a while (not under anyone's feet).
+  tickPropRespawn(dt) {
+    this.propT = (this.propT ?? 35) - dt;
+    if (this.propT > 0) return;
+    this.propT = 35;
+    const restore = [];
+    for (const pr of this.world.props.values()) {
+      if (!pr.broken) continue;
+      const cx = (pr.x + 0.5) * CELL, cz = (pr.y + 0.5) * CELL;
+      if ([...this.players.values()].some((o) => o.alive && Math.abs(o.pos.x - cx) < 1.6 && Math.abs(o.pos.z - cz) < 1.6)) continue;
+      restore.push([pr.x, pr.y]);
+    }
+    if (restore.length) this.broadcast('prop', { restore });
   }
 
   // ───────────────────────── bomb ─────────────────────────
@@ -694,6 +1025,8 @@ export class Game {
       if (!v || !p.alive || data.d <= 0 || data.d > 700) return;
       this.hostDamage(p, v, data.d, data.part, data.w);
     } else if (type === 'buy') this.hostBuy(p, data.item);
+    else if (type === 'door') this.hostToggleDoor(p, data.cell);
+    else if (type === 'prop') this.hostPropRequest(p, data);
     else if (type === 'plant') this.rules.onPlant(p, data.pos);
     else if (type === 'defuse') this.rules.onDefuse(p);
   }
@@ -702,7 +1035,8 @@ export class Game {
     if (!victim.alive || (this.state.phase !== 'live' && this.state.phase !== 'post')) return;
     if (attacker && attacker !== victim && !this.canDamage(attacker, victim)) return;
     const w = WEAPONS[weapon];
-    if ((weapon === 'he' || weapon === 'bomb') && victim.char?.perk === 'blastsuit') raw *= 0.6;
+    const explosive = nadeDef(weapon)?.explosive || weapon === 'bomb' || weapon === 'barrel' || !!WEAPONS[weapon]?.projectile;
+    if (explosive && victim.char?.perk === 'blastsuit') raw *= 0.6;
     let dmg = raw, armorLoss = 0;
     const armored = part === 'head' ? victim.helmet : part !== 'legs' && victim.armor > 0;
     if (armored && victim.armor > 0) {
@@ -716,8 +1050,8 @@ export class Game {
     if (attacker) attacker.damage += Math.min(victim.hp, dmg);
     this.broadcast('hp', { id: victim.id, hp, armor, by: attacker?.id ?? null });
     if (hp <= 0) {
-      const killReward = this.mode.kind === 'bomb' && attacker && attacker !== victim ? (w?.killReward ?? 300) : 0;
-      if (attacker && killReward) attacker.money = Math.min(16000, attacker.money + killReward);
+      const killReward = this.econ && attacker && attacker !== victim ? (w?.killReward ?? 300) : 0;
+      if (attacker && killReward) attacker.money = Math.min(this.econ.max, attacker.money + killReward);
       this.broadcast('kill', { killer: attacker?.id ?? null, victim: victim.id, w: weapon, hs: part === 'head', money: attacker ? attacker.money : 0 });
       this.rules.onKill(attacker, victim, weapon);
     }
@@ -732,7 +1066,7 @@ export class Game {
     if (WEAPONS[item]) { if (p.inv[WEAPONS[item].slot] === item) return; }
     else if (GRENADES[item]) {
       const dupes = p.inv.nades.filter((n) => n === item).length;
-      if (p.inv.nades.length >= maxNades(p) || dupes >= (p.char?.perk === 'utility' ? 2 : 1)) return;
+      if (p.inv.nades.length >= maxNades(p) || dupes >= nadeLimit(p, item)) return;
     }
     else if (item === 'kevlar') { if (p.armor >= 100) return; }
     else if (item === 'helmet') { if (p.armor >= 100 && p.helmet) return; }
@@ -741,22 +1075,24 @@ export class Game {
   }
 
   botBuys() {
+    const pick = (list) => list[Math.floor(Math.random() * list.length)];
     for (const p of this.players.values()) {
       if (!p.isBot || !p.alive) continue;
-      if (this.mode.kind !== 'bomb') {
-        const pick = FFA_WEAPONS[Math.floor(Math.random() * FFA_WEAPONS.length)];
-        this.hostBuy(p, pick);
+      if (!this.econ) {
+        this.hostBuy(p, pick(FFA_WEAPONS));
         if (Math.random() < 0.4) this.hostBuy(p, 'magnum');
+        if (Math.random() < 0.5) this.hostBuy(p, pick(BOT_NADES));
         continue;
       }
-      const rifle = p.team === 0 ? (Math.random() < 0.7 ? 'ar7' : 'trident') : (Math.random() < 0.7 ? 'm5' : 'falcon');
+      const rifle = p.team === 0 ? pick(['ar7', 'ar7', 'trident', 'mauler']) : pick(['m5', 'm5', 'falcon', 'trident']);
       if (!p.inv.primary) {
         if (p.money >= 5800 && Math.random() < 0.15) this.hostBuy(p, 'longshot');
         else if (p.money >= 3700) this.hostBuy(p, rifle);
-        else if (p.money >= 2200) this.hostBuy(p, ['vex', 'kestrel', 'breacher', 'sparrow'][Math.floor(Math.random() * 4)]);
+        else if (p.money >= 2200) this.hostBuy(p, pick(BOT_SMGS));
       }
       if (p.money >= 1000 && (p.armor < 100 || !p.helmet)) this.hostBuy(p, p.money >= 1600 ? 'helmet' : 'kevlar');
-      if (p.money >= 300 && Math.random() < 0.5) this.hostBuy(p, Math.random() < 0.5 ? 'he' : 'smoke');
+      if (p.money >= 400 && Math.random() < 0.6) this.hostBuy(p, pick(BOT_NADES));
+      if (p.money >= 300 && Math.random() < 0.3) this.hostBuy(p, pick(BOT_NADES));
       if (!p.inv.primary && p.money >= 700 && Math.random() < 0.4) this.hostBuy(p, 'magnum');
     }
   }
@@ -838,7 +1174,7 @@ export class Game {
           this.action = null;
           this.spectateIdx = 0;
           this.killer = k;
-          this.hud.center('YOU DIED', k ? `${k.name} · ${(WEAPONS[d.w] || GRENADES[d.w])?.name || d.w}${d.hs ? ' · headshot' : ''}` : '', 2.5);
+          this.hud.center('YOU DIED', k ? `${k.name} · ${itemInfo(d.w)?.name || { fire: 'Incendiary', barrel: 'Exploding barrel' }[d.w] || d.w}${d.hs ? ' · headshot' : ''}` : '', 2.5);
         }
         if (this.mode.kind === 'bomb' && this.state.bomb?.carrier === v.id) v.hasBomb = false;
         break;
@@ -874,6 +1210,9 @@ export class Game {
       }
       case 'give': this.applyGive(d); break;
       case 'nade': this.spawnNade(d); break;
+      case 'boom': { const i = this.nades.findIndex((n) => n.nid === d.nid); if (i >= 0) this.detonate(i); break; }
+      case 'door': this.world.setDoor(d.cell, d.open); sfx.door(this.world.cellCenter(...d.cell)); break;
+      case 'prop': this.applyPropBreak(d); break;
       case 'chat': this.hud.chatLine(d.name, d.text, d.team); break;
       case 'msg': this.hud.center(d.text, d.sub || '', d.time || 3); break;
       case 'end': this.onEnd(d); break;
@@ -936,7 +1275,7 @@ export class Game {
 
   setGunGameWeapon(p) {
     const id = GUN_GAME_ORDER[Math.min(p.gg || 0, GUN_GAME_ORDER.length - 1)];
-    p.inv = { primary: null, secondary: null, melee: 'knife', nades: [] };
+    p.inv = { primary: null, secondary: null, melee: p.knifePref || 'knife', nades: [] };
     const w = WEAPONS[id];
     if (w.slot !== 'melee') { p.inv[w.slot] = id; p.giveAmmo(id); }
     p.slot = '';
@@ -948,7 +1287,7 @@ export class Game {
     const idx = Math.abs(Math.floor((seedArr?.[0] || 0) * 13 + (seedArr?.[2] || 0) * 7)) % FFA_WEAPONS.length;
     const wid = FFA_WEAPONS[idx];
     p.inv.primary = wid; p.giveAmmo(wid);
-    p.inv.nades = ['he'];
+    p.inv.nades = [FFA_NADES[idx % FFA_NADES.length]];
     switchSlot(p, 'primary');
     if (p.isLocal) this.viewmodel.setWeapon(p.weaponId, p.char);
   }
@@ -957,8 +1296,8 @@ export class Game {
     const s = this.state;
     s.round = d.round; s.time = d.time; s.scores = d.scores; s.phase = d.phase || 'buy'; s.bomb = d.bomb;
     this.effects.clearRound();
-    for (const n of this.nades) n.mesh.removeFromParent();
-    this.nades = [];
+    this.clearNades();
+    if (!RESPAWN_KINDS.has(this.mode.kind)) this.world.resetProps();
     for (const [id, team] of Object.entries(d.teams || {})) { const p = this.players.get(id); if (p) this.setTeam(p, team); }
     for (const [id, m] of Object.entries(d.money || {})) { const p = this.players.get(id); if (p) p.money = m; }
     const reset = new Set(d.resetKit || []);
@@ -996,6 +1335,7 @@ export class Game {
     if (WEAPONS[it]) {
       const w = WEAPONS[it];
       p.inv[w.slot] = it;
+      if (w.type === 'knife') p.knifePref = it;
       p.giveAmmo(it);
       switchSlot(p, w.slot);
     } else if (GRENADES[it]) p.inv.nades.push(it);
@@ -1011,7 +1351,7 @@ export class Game {
   // ───────────────────────── networking ─────────────────────────
   bindNet() {
     const n = this.net;
-    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg'];
+    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg', 'boom', 'door', 'prop'];
     for (const e of evs) n.on(e, (d) => this.onEvent(e, d));
     n.on('S', (d) => this.onStates(d));
     n.on('req', (d) => { if (this.isHost) this.handleRequest(d.type, d.data, d.from); });
@@ -1041,7 +1381,7 @@ export class Game {
     for (const p of this.players.values()) {
       pstate[p.id] = { alive: p.alive, pos: [p.pos.x, p.pos.y, p.pos.z], yaw: p.yaw, hp: p.hp, armor: p.armor, helmet: p.helmet, gg: p.gg || 0 };
     }
-    return { hostId: this.localId, state: this.state, roster: this.rosterPayload(), sync: this.syncPayload(), pstate };
+    return { hostId: this.localId, state: this.state, roster: this.rosterPayload(), sync: this.syncPayload(), pstate, props: this.world.propState() };
   }
 
   applySnapshot(d) {
@@ -1058,6 +1398,7 @@ export class Game {
     }
     Object.assign(this.state, d.state);
     this.onEvent('sync', d.sync);
+    if (d.props) this.world.applyPropState(d.props);
     if (this.rejoin && first) {
       // Put our own player back where the host last saw it.
       const lp = this.local, st = d.pstate?.[this.localId];
@@ -1324,7 +1665,7 @@ export class Game {
     this.input?.dispose();
     this.hud?.unmount();
     this.net?.leave();
-    for (const n of this.nades) n.mesh.removeFromParent();
+    this.clearNades();
     this.engine.clearScene();
   }
 }

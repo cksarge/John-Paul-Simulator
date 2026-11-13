@@ -1,4 +1,4 @@
-import { GUN_GAME_ORDER } from './weapons.js';
+import { GUN_GAME_ORDER, ECON, DUEL_ECON } from './weapons.js';
 
 const SMALL = ['vault', 'courtyard', 'foundry', 'outpost'];
 const LARGE = ['dustline', 'harbor', 'canopy', 'frostbite'];
@@ -9,13 +9,13 @@ const ALL = [...SMALL, ...LARGE];
 export const MODES = {
   duel: {
     id: 'duel', name: '1v1 Duel', short: '1V1', teamSize: 1, kind: 'rounds',
-    desc: 'Head-to-head rounds on a compact map. Free loadout every round. First to 7.',
-    roundsToWin: 7, roundTime: 75, buyTime: 7, maps: SMALL,
+    desc: 'Head-to-head rounds on a compact map. Round wins pay more than losses, so the winner can afford better guns. First to 7.',
+    economy: true, roundsToWin: 7, roundTime: 75, buyTime: 7, maps: SMALL,
   },
   ranked: {
     id: 'ranked', name: 'Ranked 1v1', short: '1V1', teamSize: 1, kind: 'rounds', ranked: true,
-    desc: 'Competitive 1v1 that moves your ELO. First to 7 rounds. Leaving counts as a loss.',
-    roundsToWin: 7, roundTime: 75, buyTime: 7, maps: SMALL,
+    desc: 'Competitive 1v1 with an economy that rewards winning rounds. Moves your ELO. First to 7. Leaving counts as a loss.',
+    economy: true, roundsToWin: 7, roundTime: 75, buyTime: 7, maps: SMALL,
   },
   duo: {
     id: 'duo', name: '2v2 Wingman', short: '2V2', teamSize: 2, kind: 'rounds',
@@ -44,6 +44,12 @@ export const MODES = {
     killsToWin: 25, timeLimit: 360, maps: ALL,
   },
 };
+
+// Money rules for a mode, or null when loadouts are free.
+export function econFor(mode) {
+  if (mode.kind === 'bomb') return ECON;
+  return mode.economy ? DUEL_ECON : null;
+}
 
 export const RESPAWN_KINDS = new Set(['ffa', 'tdm', 'gungame']);
 export const SOLO_KINDS = new Set(['ffa', 'gungame']);

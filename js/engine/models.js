@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TEAM_COLORS } from '../data/modes.js';
 import { WEAPON_SKINS, OUTFITS } from '../data/skins.js';
+import { WEAPONS, GRENADES } from '../data/weapons.js';
 
 // ───────────────────────── weapons ─────────────────────────
 const gunMats = {};
@@ -288,6 +289,224 @@ function buildGunInner(id) {
       muzzle = new THREE.Vector3(0, 0.055, -0.97);
       break;
     }
+    // ───── knives ─────
+    case 'karambit': {
+      part(g, 0.026, 0.03, 0.09, 0, 0, 0.02, 'polymer');
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.005, 6, 14), matFor('metal'));
+      ring.rotation.y = Math.PI / 2; ring.position.set(0, 0, 0.075); g.add(ring);
+      for (let i = 0; i < 4; i++) {
+        const seg = part(g, 0.005, 0.022, 0.045, 0, 0.004 - i * i * 0.006, -0.045 - i * 0.04, 'steel');
+        seg.rotation.x = 0.25 + i * 0.22;
+      }
+      muzzle = new THREE.Vector3(0, -0.04, -0.2);
+      break;
+    }
+    case 'machete': {
+      part(g, 0.03, 0.034, 0.12, 0, 0, 0.03, 'wood');
+      part(g, 0.05, 0.012, 0.016, 0, 0.0, -0.04, 'metal');
+      part(g, 0.006, 0.05, 0.36, 0, 0.012, -0.22, 'steel');
+      part(g, 0.006, 0.03, 0.06, 0, 0.026, -0.41, 'steel').rotation.x = -0.4;
+      muzzle = new THREE.Vector3(0, 0, -0.44);
+      break;
+    }
+    case 'hatchet': {
+      part(g, 0.028, 0.03, 0.3, 0, 0, -0.06, 'wood');
+      part(g, 0.016, 0.1, 0.05, 0, 0.04, -0.2, 'steel');
+      part(g, 0.008, 0.13, 0.025, 0, 0.05, -0.235, 'steel');
+      part(g, 0.02, 0.04, 0.05, 0, -0.03, -0.2, 'metal');
+      muzzle = new THREE.Vector3(0, 0.05, -0.25);
+      break;
+    }
+    // ───── SMGs ─────
+    case 'hornet': {
+      part(g, 0.045, 0.065, 0.26, 0, 0.04, -0.08, 'polymer');
+      part(g, 0.035, 0.12, 0.04, 0, -0.04, 0.0, 'polymer', 0.18);
+      part(g, 0.03, 0.2, 0.04, 0, -0.08, -0.1, 'metal', 0.05);
+      cyl(g, 0.014, 0.1, 0, 0.05, -0.25, 'metal');
+      part(g, 0.012, 0.012, 0.22, 0, 0.03, 0.14, 'metal');
+      part(g, 0.04, 0.05, 0.012, 0, 0.03, 0.25, 'metal');
+      muzzle = new THREE.Vector3(0, 0.05, -0.3);
+      break;
+    }
+    case 'mako': {
+      part(g, 0.06, 0.09, 0.34, 0, 0.04, -0.09, 'tan');
+      part(g, 0.04, 0.12, 0.045, 0, -0.05, 0.02, 'polymer', 0.2);
+      part(g, 0.04, 0.14, 0.05, 0, -0.06, -0.14, 'polymer');
+      cyl(g, 0.02, 0.12, 0, 0.05, -0.32, 'metal');
+      part(g, 0.05, 0.07, 0.2, 0, 0.03, 0.18, 'polymer');
+      part(g, 0.03, 0.035, 0.07, 0, 0.11, -0.07, 'metal');
+      part(g, 0.032, 0.03, 0.02, 0, 0.11, -0.11, 'glass');
+      muzzle = new THREE.Vector3(0, 0.05, -0.39);
+      break;
+    }
+    // ───── shotguns ─────
+    case 'coach': {
+      for (const sx of [-1, 1]) cyl(g, 0.016, 0.62, sx * 0.017, 0.05, -0.42, 'metal');
+      part(g, 0.06, 0.05, 0.16, 0, 0.03, -0.04, 'steel');
+      part(g, 0.05, 0.04, 0.24, 0, 0.02, -0.3, 'wood');
+      part(g, 0.04, 0.11, 0.045, 0, -0.04, 0.05, 'wood', 0.25);
+      part(g, 0.048, 0.1, 0.3, 0, -0.01, 0.24, 'wood', -0.1);
+      muzzle = new THREE.Vector3(0, 0.05, -0.73);
+      break;
+    }
+    case 'striker': {
+      part(g, 0.06, 0.09, 0.36, 0, 0.04, -0.12, 'olive');
+      cyl(g, 0.02, 0.36, 0, 0.06, -0.46, 'metal');
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 20), matFor('metal'));
+      drum.rotation.x = Math.PI / 2; drum.position.set(0, 0.0, -0.18); drum.castShadow = true; g.add(drum);
+      part(g, 0.04, 0.11, 0.045, 0, -0.04, 0.03, 'polymer', 0.2);
+      part(g, 0.035, 0.11, 0.04, 0, -0.05, -0.36, 'polymer');
+      part(g, 0.014, 0.014, 0.28, 0, 0.06, 0.2, 'metal');
+      muzzle = new THREE.Vector3(0, 0.06, -0.66);
+      break;
+    }
+    // ───── LMGs ─────
+    case 'mauler': {
+      part(g, 0.07, 0.11, 0.62, 0, 0.04, 0.0, 'polymer');
+      cyl(g, 0.017, 0.3, 0, 0.05, -0.45, 'metal');
+      part(g, 0.08, 0.12, 0.13, 0, -0.06, 0.12, 'metal');
+      part(g, 0.04, 0.11, 0.045, 0, -0.05, -0.16, 'polymer', 0.2);
+      part(g, 0.035, 0.05, 0.1, 0, 0.12, -0.1, 'metal');
+      part(g, 0.036, 0.035, 0.02, 0, 0.12, -0.15, 'glass');
+      muzzle = new THREE.Vector3(0, 0.05, -0.62);
+      break;
+    }
+    case 'hailstorm': {
+      part(g, 0.1, 0.11, 0.42, 0, 0.03, -0.06, 'metal');
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        cyl(g, 0.01, 0.46, Math.cos(a) * 0.028, 0.04 + Math.sin(a) * 0.028, -0.48, 'steel', 8);
+      }
+      const box = part(g, 0.12, 0.14, 0.16, 0.0, -0.08, -0.04, 'olive');
+      box.castShadow = true;
+      part(g, 0.04, 0.11, 0.045, 0, -0.04, 0.12, 'polymer', 0.2);
+      part(g, 0.02, 0.09, 0.02, 0, 0.12, -0.2, 'metal');
+      muzzle = new THREE.Vector3(0, 0.04, -0.72);
+      break;
+    }
+    case 'anvil': {
+      part(g, 0.09, 0.12, 0.55, 0, 0.04, -0.12, 'olive');
+      cyl(g, 0.026, 0.5, 0, 0.05, -0.62, 'metal');
+      cyl(g, 0.036, 0.1, 0, 0.05, -0.9, 'metal');
+      part(g, 0.1, 0.15, 0.15, 0, -0.07, -0.12, 'olive');
+      part(g, 0.04, 0.11, 0.045, 0, -0.045, 0.08, 'polymer', 0.22);
+      part(g, 0.05, 0.12, 0.28, 0, 0.0, 0.3, 'polymer');
+      part(g, 0.05, 0.03, 0.4, 0, 0.12, -0.2, 'metal');
+      for (const sx of [-1, 1]) { const leg = part(g, 0.014, 0.2, 0.014, sx * 0.04, -0.06, -0.72, 'metal'); leg.rotation.z = sx * 0.35; }
+      muzzle = new THREE.Vector3(0, 0.05, -0.96);
+      break;
+    }
+    // ───── snipers ─────
+    case 'kodiak': {
+      part(g, 0.055, 0.08, 0.5, 0, 0.03, -0.1, 'wood');
+      cyl(g, 0.016, 0.56, 0, 0.055, -0.62, 'metal');
+      part(g, 0.04, 0.1, 0.045, 0, -0.045, 0.06, 'wood', 0.25);
+      part(g, 0.05, 0.12, 0.3, 0, 0.0, 0.3, 'wood');
+      part(g, 0.03, 0.08, 0.05, 0, -0.05, -0.08, 'metal');
+      cyl(g, 0.026, 0.3, 0, 0.13, -0.08, 'metal');
+      cyl(g, 0.034, 0.05, 0, 0.13, -0.24, 'metal');
+      part(g, 0.012, 0.012, 0.05, 0.035, 0.07, 0.04, 'steel');
+      muzzle = new THREE.Vector3(0, 0.055, -0.9);
+      break;
+    }
+    case 'warden': {
+      part(g, 0.06, 0.1, 0.48, 0, 0.03, -0.08, 'tan');
+      part(g, 0.06, 0.07, 0.24, 0, 0.04, -0.42, 'polymer');
+      cyl(g, 0.014, 0.36, 0, 0.05, -0.7, 'metal');
+      part(g, 0.04, 0.15, 0.06, 0, -0.07, -0.12, 'metal', -0.12);
+      part(g, 0.04, 0.11, 0.045, 0, -0.05, 0.06, 'polymer', 0.22);
+      part(g, 0.05, 0.11, 0.3, 0, 0.0, 0.28, 'tan');
+      cyl(g, 0.026, 0.3, 0, 0.13, -0.1, 'metal');
+      cyl(g, 0.034, 0.05, 0, 0.13, -0.27, 'metal');
+      muzzle = new THREE.Vector3(0, 0.05, -0.88);
+      break;
+    }
+    // ───── other ─────
+    case 'nailer': {
+      part(g, 0.07, 0.12, 0.34, 0, 0.04, -0.1, 'olive');
+      part(g, 0.05, 0.05, 0.12, 0, 0.04, -0.33, 'metal');
+      part(g, 0.04, 0.12, 0.05, 0, -0.06, 0.04, 'polymer', 0.2);
+      part(g, 0.03, 0.06, 0.3, 0, -0.04, -0.12, 'steel').rotation.x = 0.05;
+      const coil = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 16), matFor('metal'));
+      coil.rotation.z = Math.PI / 2; coil.position.set(0.0, -0.05, -0.2); g.add(coil);
+      part(g, 0.06, 0.02, 0.22, 0, 0.11, -0.1, 'red');
+      muzzle = new THREE.Vector3(0, 0.04, -0.4);
+      break;
+    }
+    case 'crossbow': {
+      part(g, 0.04, 0.05, 0.6, 0, 0.02, -0.1, 'wood');
+      part(g, 0.6, 0.02, 0.03, 0, 0.04, -0.36, 'metal');
+      for (const sx of [-1, 1]) part(g, 0.004, 0.004, 0.3, sx * 0.15, 0.045, -0.24, 'steel').rotation.y = sx * -1.1;
+      part(g, 0.006, 0.006, 0.4, 0, 0.06, -0.24, 'steel');
+      part(g, 0.04, 0.11, 0.045, 0, -0.05, 0.05, 'wood', 0.25);
+      part(g, 0.045, 0.1, 0.24, 0, 0.0, 0.3, 'wood');
+      cyl(g, 0.02, 0.22, 0, 0.1, -0.1, 'metal');
+      muzzle = new THREE.Vector3(0, 0.06, -0.45);
+      break;
+    }
+    case 'thumper': {
+      cyl(g, 0.045, 0.42, 0, 0.05, -0.28, 'olive', 16);
+      cyl(g, 0.05, 0.05, 0, 0.05, -0.49, 'metal', 16);
+      part(g, 0.06, 0.08, 0.2, 0, 0.02, -0.02, 'metal');
+      part(g, 0.04, 0.12, 0.045, 0, -0.06, 0.04, 'polymer', 0.2);
+      part(g, 0.04, 0.12, 0.05, 0, -0.04, -0.3, 'polymer');
+      part(g, 0.045, 0.09, 0.26, 0, 0.0, 0.22, 'olive');
+      part(g, 0.03, 0.06, 0.02, 0, 0.12, -0.15, 'metal');
+      muzzle = new THREE.Vector3(0, 0.05, -0.52);
+      break;
+    }
+    case 'rail': {
+      part(g, 0.07, 0.1, 0.5, 0, 0.04, -0.12, 'metal');
+      for (const sy of [-1, 1]) part(g, 0.05, 0.016, 0.5, 0, 0.05 + sy * 0.035, -0.6, 'steel');
+      const coilMat = new THREE.MeshStandardMaterial({ color: 0x1a3d66, emissive: 0x3aa8ff, emissiveIntensity: 1.6, roughness: 0.3 });
+      for (let i = 0; i < 5; i++) {
+        const c = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.008, 6, 16), coilMat);
+        c.position.set(0, 0.05, -0.42 - i * 0.07); g.add(c);
+      }
+      part(g, 0.04, 0.11, 0.045, 0, -0.05, 0.04, 'polymer', 0.2);
+      part(g, 0.05, 0.11, 0.28, 0, 0.0, 0.26, 'polymer');
+      part(g, 0.035, 0.05, 0.12, 0, 0.12, -0.1, 'metal');
+      muzzle = new THREE.Vector3(0, 0.05, -0.86);
+      break;
+    }
+    // ───── grenades & projectiles ─────
+    case 'flash': {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.12, 14), gm('steel'));
+      g.add(c);
+      for (let i = 0; i < 3; i++) part(g, 0.062, 0.008, 0.062, 0, -0.035 + i * 0.035, 0, 'polymer');
+      part(g, 0.016, 0.03, 0.016, 0, 0.075, 0, 'metal');
+      break;
+    }
+    case 'fire': {
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.038, 0.1, 14), new THREE.MeshStandardMaterial({ color: 0x8a4a12, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 }));
+      g.add(body);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.03, 0.05, 10), body.material); neck.position.y = 0.075; g.add(neck);
+      const rag = part(g, 0.02, 0.04, 0.02, 0, 0.115, 0, 'tan'); rag.rotation.z = 0.3;
+      break;
+    }
+    case 'mine': {
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.035, 18), gm('olive'));
+      disc.position.y = 0.017; g.add(disc);
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.02, 14), gm('metal'));
+      top.position.y = 0.045; g.add(top);
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff2a2a, toneMapped: false }));
+      led.name = 'led'; led.position.set(0.03, 0.04, 0); g.add(led);
+      break;
+    }
+    case 'decoy': {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.11, 12), gm('tan'));
+      g.add(c);
+      part(g, 0.058, 0.014, 0.058, 0, 0.03, 0, 'red');
+      part(g, 0.014, 0.03, 0.014, 0, 0.07, 0, 'steel');
+      break;
+    }
+    case 'gl': {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.06, 12), gm('olive'));
+      c.rotation.x = Math.PI / 2; g.add(c);
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), gm('steel'));
+      tip.position.z = -0.03; g.add(tip);
+      break;
+    }
     case 'he': {
       const s = new THREE.Mesh(new THREE.SphereGeometry(0.04, 14, 10), gm('green'));
       s.scale.y = 1.25; g.add(s);
@@ -311,6 +530,7 @@ function buildGunInner(id) {
     }
     default:
       part(g, 0.04, 0.06, 0.3, 0, 0, -0.1, 'metal');
+      g.userData.generic = true;
   }
   g.userData.muzzle = muzzle;
   return g;
@@ -516,7 +736,8 @@ export class CharacterModel {
     const g = buildGun(id, skin);
     g.scale.setScalar(1.05);
     this.gunHolder.add(g);
-    const pistol = ['p9', 'magnum', 'viper', 'tac45', 'knife', 'he', 'smoke', 'bomb'].includes(id);
+    const type = WEAPONS[id]?.type;
+    const pistol = type === 'pistol' || type === 'knife' || !!GRENADES[id] || id === 'bomb';
     this.pistolPose = pistol;
     this.gunHolder.position.set(pistol ? 0.02 : 0.1, pistol ? 0.36 : 0.28, pistol ? -0.42 : -0.3);
   }

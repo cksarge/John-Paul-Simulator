@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { getMaterial, tileSize } from './textures.js';
+import { buildProp, decorate } from './decor.js';
 
 // The world is a grid of CELL-sized columns. Every solid is a column from y=0 to its height,
 // so collision, raycasts and navigation all run directly on the grid.
 export const CELL = 2;
-const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6 };
+// Interactive cells: 'D' door (solid while closed) · 'G' glass pane (blocks movement, not sight or
+// bullets; shatters when shot) · 'B' explosive barrel · 'A' ammo crate (press E to refill).
+const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6, 'D': 6, 'G': 6, 'B': 1.2, 'A': 1.0 };
+export const PROP_CHARS = new Set(['D', 'G', 'B', 'A']);
 const CONTAINER_TINTS = ['#a8432f', '#2f6aa8', '#3d7a45', '#c27a2c', '#7b7f86'];
 
 function heightOf(ch) {
@@ -29,8 +33,13 @@ export class World {
       if (def.mirror) apply([op[0], def.w - 1 - op[1], def.h - 1 - op[2], def.w - 1 - op[3], def.h - 1 - op[4]]);
     }
     this.chars = g;
-    this.H = new Float32Array(def.w * def.h);
-    for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) this.H[y * def.w + x] = heightOf(g[y][x]);
+    this.H = new Float32Array(def.w * def.h);  // what bodies and grenades collide with
+    this.RH = new Float32Array(def.w * def.h); // what bullets and sight lines collide with
+    this.props = new Map();
+    for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) {
+      this.setChar(x, y, g[y][x]);
+      if (PROP_CHARS.has(g[y][x])) this.props.set(x + ',' + y, { x, y, ch: g[y][x], open: false, broken: false, hp: 60, anim: 0 });
+    }
 
     this.sites = {};
     for (const [k, r] of Object.entries(def.sites || {}))
@@ -52,6 +61,79 @@ export class World {
   cellH(cx, cy) {
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return 50;
     return this.H[cy * this.w + cx];
+  }
+  rayH(cx, cy) {
+    if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return 50;
+    return this.RH[cy * this.w + cx];
+  }
+
+  setChar(x, y, ch) {
+    this.chars[y][x] = ch;
+    const h = heightOf(ch);
+    this.H[y * this.w + x] = h;
+    this.RH[y * this.w + x] = ch === 'G' ? 0 : h;
+  }
+
+  // ───────────── interactive props ─────────────
+  prop(x, y) { return this.props.get(x + ',' + y) || null; }
+
+  setDoor([x, y], open) {
+    const p = this.prop(x, y);
+    if (!p || p.ch !== 'D') return;
+    p.open = open;
+    this.setChar(x, y, open ? '.' : 'D');
+  }
+
+  breakProp(x, y) {
+    const p = this.prop(x, y);
+    if (!p || p.broken || (p.ch !== 'G' && p.ch !== 'B')) return null;
+    p.broken = true;
+    this.setChar(x, y, '.');
+    p.view?.setBroken(true);
+    return p;
+  }
+
+  restoreProp(p) {
+    if (p.ch === 'D') { p.open = false; this.setChar(p.x, p.y, 'D'); return; }
+    if (!p.broken) return;
+    p.broken = false; p.hp = 60;
+    this.setChar(p.x, p.y, p.ch);
+    p.view?.setBroken(false);
+  }
+
+  resetProps() { for (const p of this.props.values()) this.restoreProp(p); }
+
+  propState() { return [...this.props.values()].filter((p) => p.open || p.broken).map((p) => [p.x, p.y, p.open ? 1 : 0, p.broken ? 1 : 0]); }
+
+  applyPropState(list) {
+    this.resetProps();
+    for (const [x, y, open, broken] of list || []) {
+      if (open) this.setDoor([x, y], true);
+      if (broken) this.breakProp(x, y);
+    }
+  }
+
+  // Cell of the solid just behind a surface hit (point + normal from raycast).
+  cellBehind(point, normal) {
+    return [Math.floor((point.x - normal.x * 0.05) / CELL), Math.floor((point.z - normal.z * 0.05) / CELL)];
+  }
+
+  // Intact glass cells crossed by the segment a→b below the pane's top edge.
+  glassAlong(a, b) {
+    const out = [], seen = new Set(), d = b.clone().sub(a), len = d.length();
+    for (let t = 0; t <= len; t += 0.4) {
+      const x = a.x + (d.x * t) / len, y = a.y + (d.y * t) / len, z = a.z + (d.z * t) / len;
+      const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL), key = cx + ',' + cy;
+      if (seen.has(key)) continue;
+      const p = this.props.get(key);
+      if (p && p.ch === 'G' && !p.broken && y < 3) { seen.add(key); out.push([cx, cy]); }
+    }
+    return out;
+  }
+
+  update(dt) {
+    for (const p of this.props.values()) p.view?.update?.(dt, p);
+    this.decor?.update(dt);
   }
   heightAt(x, z) { return this.cellH(Math.floor(x / CELL), Math.floor(z / CELL)); }
   cellCenter(cx, cy) { return new THREE.Vector3((cx + 0.5) * CELL, this.cellH(cx, cy), (cy + 0.5) * CELL); }
@@ -129,7 +211,7 @@ export class World {
     const tGround = d.y < 0 ? -o.y / d.y : Infinity;
     for (let iter = 0; iter < 512; iter++) {
       const tExit = Math.min(tMaxX, tMaxZ);
-      const H = this.cellH(cx, cz);
+      const H = this.rayH(cx, cz);
       if (H > 0) {
         const yEnter = o.y + d.y * tEnter;
         if (yEnter < H && tEnter > 0) {
@@ -174,6 +256,7 @@ export class World {
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return null;
     const ch = this.chars[cy][cx];
     if (ch === '.' || (ch >= '1' && ch <= '4')) return this.H[cy * this.w + cx];
+    if (ch === 'D') return 0; // bots open doors on their way through
     return null;
   }
 
@@ -240,19 +323,22 @@ export class World {
     group.name = 'world';
     const buckets = new Map();
     const bucket = (mat, fit) => {
-      if (!buckets.has(mat)) buckets.set(mat, { pos: [], nrm: [], uv: [], idx: [], fit });
+      if (!buckets.has(mat)) buckets.set(mat, { pos: [], nrm: [], uv: [], idx: [], col: [], fit });
       return buckets.get(mat);
     };
     const matFor = (ch, i) => {
       if (ch === '#') return theme.wall;
       if (ch === 'X') return theme.wall2;
       if (ch === 'h') return theme.half;
-      if (ch === 'c' || ch === 'C') return 'wood';
+      if (ch === 'c') return theme.crate || 'wood';
+      if (ch === 'C') return theme.crate2 || theme.crate || 'wood';
       if (ch === 'M') return 'container:' + CONTAINER_TINTS[i % CONTAINER_TINTS.length];
       return theme.platform;
     };
     // Greedy-merge equal cells into boxes.
     const seen = new Uint8Array(this.w * this.h);
+    // Interactive cells get their own meshes so they can open, shatter or explode.
+    for (const p of this.props.values()) { seen[p.y * this.w + p.x] = 1; p.view = buildProp(this, p, theme); group.add(p.view.root); }
     let boxIndex = 0;
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
@@ -284,10 +370,11 @@ export class World {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(b.nrm, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
       geo.setIndex(b.idx);
       geo.computeTangents?.();
       const [tex, tint] = name.split(':');
-      const mesh = new THREE.Mesh(geo, getMaterial(tex, tint));
+      const mesh = new THREE.Mesh(geo, getMaterial(tex, tint, true));
       mesh.castShadow = true; mesh.receiveShadow = true;
       group.add(mesh);
     }
@@ -303,6 +390,7 @@ export class World {
     group.add(floor);
     // Bomb site decals
     for (const [k, s] of Object.entries(this.sites)) group.add(siteDecal(k, s));
+    this.decor = decorate(this, group, theme);
     scene.add(group);
     this.group = group;
     return group;
@@ -315,7 +403,7 @@ export class World {
     const ctx = c.getContext('2d');
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
-      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : ch === 'h' || ch === 'c' || ch === 'C' || ch === 'M' ? '#4a515b' : ch === '.' ? '#7c8591' : '#959eaa';
+      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' ? '#7c8591' : '#959eaa';
       ctx.fillRect(x * scale, y * scale, scale, scale);
     }
     for (const [k, s] of Object.entries(this.sites)) {
@@ -333,23 +421,33 @@ export class World {
   }
 }
 
+// Darkening toward the floor fakes ambient occlusion where walls meet the ground.
+const aoAt = (y) => (y <= 0.001 ? 0.52 : y >= 1.6 ? 1 : 0.52 + (y / 1.6) * 0.48);
+
 function addBox(b, x0, y0, z0, x1, y1, z1, name, ch) {
   const tex = name.split(':')[0];
   const t = tileSize(tex);
   const fit = b.fit;
-  const faces = [
-    { n: [1, 0, 0], v: [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], u: (q) => [(z1 - q[2]), q[1] - y0] },
-    { n: [-1, 0, 0], v: [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], u: (q) => [(q[2] - z0), q[1] - y0] },
-    { n: [0, 0, 1], v: [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], u: (q) => [(q[0] - x0), q[1] - y0] },
-    { n: [0, 0, -1], v: [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], u: (q) => [(x1 - q[0]), q[1] - y0] },
-    { n: [0, 1, 0], v: [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], u: (q) => [(q[0] - x0), (z1 - q[2])] },
-  ];
   const h = y1 - y0;
+  // Tall sides are split at 1.6 m so the occlusion gradient stays near the floor.
+  const bands = h > 2 ? [[y0, y0 + 1.6], [y0 + 1.6, y1]] : [[y0, y1]];
+  const faces = [];
+  for (const [ya, yb] of bands) {
+    faces.push(
+      { n: [1, 0, 0], v: [[x1, ya, z1], [x1, ya, z0], [x1, yb, z0], [x1, yb, z1]], u: (q) => [(z1 - q[2]), q[1] - y0] },
+      { n: [-1, 0, 0], v: [[x0, ya, z0], [x0, ya, z1], [x0, yb, z1], [x0, yb, z0]], u: (q) => [(q[2] - z0), q[1] - y0] },
+      { n: [0, 0, 1], v: [[x0, ya, z1], [x1, ya, z1], [x1, yb, z1], [x0, yb, z1]], u: (q) => [(q[0] - x0), q[1] - y0] },
+      { n: [0, 0, -1], v: [[x1, ya, z0], [x0, ya, z0], [x0, yb, z0], [x1, yb, z0]], u: (q) => [(x1 - q[0]), q[1] - y0] },
+    );
+  }
+  faces.push({ n: [0, 1, 0], v: [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], u: (q) => [(q[0] - x0), (z1 - q[2])] });
   for (const f of faces) {
     const base = b.pos.length / 3;
     for (const q of f.v) {
       b.pos.push(q[0], q[1], q[2]);
       b.nrm.push(...f.n);
+      const ao = f.n[1] === 1 ? 1 : aoAt(q[1]);
+      b.col.push(ao, ao, ao);
       let [u, v] = f.u(q);
       if (fit) {
         // Crates/containers: one texture across each 2 m footprint and the full height.

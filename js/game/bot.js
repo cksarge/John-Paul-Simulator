@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import { switchSlot, startReload, bestSlot } from './combat.js';
 
+// reaction: seconds before a bot starts shooting at someone it just spotted.
+// error: aim offset (radians) when it starts; settle: how fast that offset shrinks per second.
+// minErr: the fraction of the error that never goes away. nades: chance to throw utility when it can.
 export const BOT_LEVELS = {
-  easy: { reaction: 0.7, turn: 3.2, error: 0.1, fov: 100, headChance: 0.1, strafe: 0.1, burst: 3 },
-  normal: { reaction: 0.42, turn: 6, error: 0.055, fov: 110, headChance: 0.3, strafe: 0.35, burst: 5 },
-  hard: { reaction: 0.26, turn: 10, error: 0.03, fov: 120, headChance: 0.55, strafe: 0.6, burst: 7 },
-  elite: { reaction: 0.16, turn: 16, error: 0.016, fov: 130, headChance: 0.75, strafe: 0.8, burst: 9 },
+  easy: { reaction: 0.95, turn: 2.4, error: 0.14, settle: 0.45, minErr: 0.45, fov: 95, headChance: 0.04, strafe: 0.08, burst: 3, nades: 0.03 },
+  normal: { reaction: 0.68, turn: 3.6, error: 0.095, settle: 0.7, minErr: 0.3, fov: 100, headChance: 0.12, strafe: 0.22, burst: 4, nades: 0.06 },
+  hard: { reaction: 0.3, turn: 9, error: 0.035, settle: 1.2, minErr: 0.15, fov: 120, headChance: 0.5, strafe: 0.55, burst: 7, nades: 0.12 },
+  elite: { reaction: 0.16, turn: 16, error: 0.016, settle: 1.3, minErr: 0.15, fov: 130, headChance: 0.75, strafe: 0.8, burst: 9, nades: 0.18 },
 };
 
 const BOT_NAMES = ['Hollis', 'Brandt', 'Vasquez', 'Petrov', 'Kade', 'Moreau', 'Sato', 'Novak', 'Ibarra', 'Quinn', 'Rourke', 'Falk', 'Abara', 'Dunmore', 'Lark', 'Ostrova', 'Teague', 'Wilder'];
@@ -34,7 +37,10 @@ export class BotBrain {
     this.strafeDir = Math.random() < 0.5 ? -1 : 1; this.strafeT = 0;
     this.holdSpot = null; this.action = null; this.actionT = 0; this.burstLeft = 0; this.pauseT = 0;
     this.site = null;
+    this.blindT = 0;
   }
+
+  blind(t) { this.blindT = Math.max(this.blindT, t); if (t > 0.6) { this.target = null; this.seenT = 0; } }
 
   enemies() {
     const out = [];
@@ -43,6 +49,7 @@ export class BotBrain {
   }
 
   canSee(o) {
+    if (this.blindT > 0.4) return false;
     const eye = this.p.eye(), dst = o.eye().setY(o.eyeY() - 0.35);
     const d = dst.clone().sub(eye);
     const dist = d.length();
@@ -101,6 +108,7 @@ export class BotBrain {
     const p = this.p, g = this.g;
     if (!p.alive) return;
     this.hurtT = (this.hurtT || 0) - dt;
+    this.blindT = Math.max(0, this.blindT - dt);
     this.thinkT -= dt;
     const frozen = g.state.phase === 'buy' || g.state.phase === 'warmup';
     if (this.thinkT <= 0) { this.thinkT = 0.15 + Math.random() * 0.1; this.think(); }
@@ -123,7 +131,7 @@ export class BotBrain {
       const eye = p.eye();
       const d = aimPoint.sub(eye);
       const dist = d.length();
-      const errScale = this.L.error * Math.max(0.15, 1 - (this.seenT - this.L.reaction) * 1.3);
+      const errScale = this.L.error * Math.max(this.L.minErr, 1 - (this.seenT - this.L.reaction) * this.L.settle) * (1 + Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 5) * 0.5);
       const wantYaw = Math.atan2(-d.x, -d.z) + this.aimErr.x * errScale;
       const wantPitch = Math.atan2(d.y, Math.hypot(d.x, d.z)) + this.aimErr.y * errScale * 0.6;
       const k = Math.min(1, dt * this.L.turn);
@@ -193,6 +201,8 @@ export class BotBrain {
       this.lostT += 0.2;
     }
     if (this.target) return;
+    if (this.blindT > 0) return;
+    this.maybeThrow();
 
     // Objectives
     const b = g.state.bomb || {};
@@ -218,6 +228,23 @@ export class BotBrain {
     this.lastPos.copy(p.pos);
   }
 
+  // Lobs a grenade toward where an enemy was last seen, now and then.
+  maybeThrow() {
+    const p = this.p, g = this.g;
+    if (g.state.phase !== 'live' || !this.lastSeen || this.lostT < 0.4 || this.lostT > 3 || this.action) return;
+    const kinds = p.inv.nades.filter((k) => k === 'he' || k === 'fire' || k === 'flash' || k === 'mine');
+    if (!kinds.length || Math.random() > this.L.nades) return;
+    const d = this.lastSeen.clone().sub(p.pos), dist = Math.hypot(d.x, d.z);
+    if (dist < 6 || dist > 26) return;
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    p.yaw = Math.atan2(-d.x, -d.z);
+    p.pitch = THREE.MathUtils.clamp(0.08 + dist * 0.012, 0.1, 0.45);
+    switchSlot(p, 'nade');
+    p.ws.nadeIdx = p.inv.nades.indexOf(kind);
+    p.ws.drawT = 1; p.ws.cooldown = 0;
+    g.throwNade(p);
+  }
+
   navigate() {
     const p = this.p;
     if (!this.path || this.pathI >= this.path.length) {
@@ -227,6 +254,12 @@ export class BotBrain {
     const wp = this.path[this.pathI];
     const dx = wp.x - p.pos.x, dz = wp.z - p.pos.z;
     const d = Math.hypot(dx, dz);
+    // Open closed doors on the route.
+    const cx = Math.floor(wp.x / 2), cy = Math.floor(wp.z / 2), door = this.g.world.prop(cx, cy);
+    if (door && door.ch === 'D' && !door.open && d < 2.6 && !(this.doorT > performance.now())) {
+      this.doorT = performance.now() + 1000;
+      this.g.request('door', { cell: [cx, cy] }, p);
+    }
     if (d < 0.7) { this.pathI++; return this.navigate(); }
     return new THREE.Vector3(dx / d, 0, dz / d);
   }

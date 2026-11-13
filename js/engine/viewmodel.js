@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildGun } from './models.js';
+import { WEAPONS, GRENADES, PROJECTILES } from '../data/weapons.js';
 
 const OFFSETS = {
   knife: [0.24, -0.24, -0.46], p9: [0.17, -0.17, -0.5], magnum: [0.17, -0.18, -0.52],
@@ -10,8 +11,14 @@ const OFFSETS = {
   reaper: [0.2, -0.22, -0.5], bulldog: [0.21, -0.23, -0.52], trident: [0.19, -0.2, -0.48],
   falcon: [0.2, -0.21, -0.52], sparrow: [0.2, -0.21, -0.5],
 };
-const PISTOLS = new Set(['p9', 'magnum', 'viper', 'tac45']);
-const ONE_HAND = new Set(['knife', 'he', 'smoke']);
+// Defaults by weapon class for anything without a hand-tuned offset.
+const CLASS_OFFSETS = {
+  pistol: [0.17, -0.17, -0.5], knife: [0.24, -0.24, -0.46], smg: [0.19, -0.19, -0.5], shotgun: [0.2, -0.22, -0.5],
+  rifle: [0.2, -0.21, -0.52], lmg: [0.21, -0.23, -0.52], sniper: [0.2, -0.21, -0.5], other: [0.2, -0.22, -0.5], nade: [0.2, -0.2, -0.46],
+};
+const typeOf = (id) => WEAPONS[id]?.type || (GRENADES[id] || PROJECTILES[id] ? 'nade' : null);
+const isPistol = (id) => typeOf(id) === 'pistol';
+const isOneHand = (id) => typeOf(id) === 'knife' || typeOf(id) === 'nade';
 
 function sleeve(len, mat, glove) {
   const g = new THREE.Group();
@@ -56,9 +63,9 @@ export class Viewmodel {
     right.position.set(0.01, -0.06, 0.04);
     right.rotation.set(0.5, 0.12, 0);
     gun.add(right);
-    if (!ONE_HAND.has(id)) {
+    if (!isOneHand(id)) {
       const left = sleeve(0.55, sleeveM, gloveM);
-      const pistol = PISTOLS.has(id);
+      const pistol = isPistol(id);
       left.position.set(pistol ? -0.025 : -0.03, pistol ? -0.06 : -0.02, pistol ? 0.02 : -0.3);
       left.rotation.set(pistol ? 0.5 : 0.35, pistol ? -0.35 : -0.55, 0);
       gun.add(left);
@@ -70,14 +77,14 @@ export class Viewmodel {
     this.holder.add(gun);
     this.holder.scale.setScalar(0.8);
     this.root.add(this.holder);
-    this.base = new THREE.Vector3(...(OFFSETS[id] || OFFSETS.ar7));
+    this.base = new THREE.Vector3(...(OFFSETS[id] || CLASS_OFFSETS[typeOf(id)] || OFFSETS.ar7));
     this.drawT = 0;
   }
 
-  fire(strength = 1) {
+  fire(strength = 1, flash = true) {
     this.kick = Math.min(0.08, this.kick + 0.035 * strength);
     this.kickRot = Math.min(0.25, this.kickRot + 0.08 * strength);
-    if (this.id !== 'knife') {
+    if (flash && typeOf(this.id) !== 'knife') {
       this.flash.visible = true;
       this.flash.scale.setScalar(0.12 + Math.random() * 0.06);
       this.flash.material.rotation = Math.random() * 6;

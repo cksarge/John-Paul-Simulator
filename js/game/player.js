@@ -44,7 +44,7 @@ export class Player {
   }
 
   resetKit() {
-    this.inv = { primary: null, secondary: 'p9', melee: 'knife', nades: [] };
+    this.inv = { primary: null, secondary: 'p9', melee: this.knifePref || 'knife', nades: [] };
     this.ammo = {};
     this.giveAmmo('p9');
     this.slot = 'secondary';
@@ -118,6 +118,8 @@ export class Player {
 
   // Buffered snapshot interpolation for players simulated elsewhere.
   pushState(s, now) {
+    // Packets sent before a respawn can arrive after it; don't drag the player back to where they died.
+    if (now - (this.snapAt || 0) < 700 && Math.hypot(s.p[0] - this.pos.x, s.p[2] - this.pos.z) > 5) return;
     this.buffer.push({ t: now, x: s.p[0], y: s.p[1], z: s.p[2], yaw: s.y, pitch: s.pi, crouch: s.c, w: s.w, g: s.g });
     if (this.buffer.length > 30) this.buffer.shift();
   }
@@ -153,5 +155,6 @@ export class Player {
     if (yaw !== undefined) this.yaw = yaw;
     this.pitch = 0;
     this.buffer = [];
+    this.snapAt = performance.now();
   }
 }

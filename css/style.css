@@ -310,6 +310,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .dmg-ind i { position: absolute; left: 50%; top: 0; width: 70px; height: 18px; margin-left: -35px; background: radial-gradient(ellipse at center, rgba(255,40,40,.85), transparent 70%); transform-origin: 50% 130px; transition: opacity .6s; }
 .flash { position: absolute; inset: 0; background: radial-gradient(circle, transparent 40%, rgba(160,0,0,.45)); opacity: 0; transition: opacity .5s; }
 .flash.on { opacity: 1; transition: none; }
+.blind { position: absolute; inset: 0; background: #fffdf6; opacity: 0; pointer-events: none; z-index: 5; }
 .radar { position: absolute; left: 18px; top: 18px; width: 200px; height: 200px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); background: rgba(10,12,16,.55); overflow: hidden; }
 .radar canvas { width: 100%; height: 100%; }
 .scope { position: absolute; inset: 0; background: radial-gradient(circle at center, transparent 0, transparent 34vh, #000 34.2vh); }
