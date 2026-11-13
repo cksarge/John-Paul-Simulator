@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { World, CELL, WOOD_HP } from '../engine/world.js';
+import { World, CELL, WOOD_HP, DECK_LO } from '../engine/world.js';
 import { Effects } from '../engine/effects.js';
 import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
@@ -608,7 +608,14 @@ export class Game {
     if (p.mantle) return this.stepMantle(p, dt);
     if (p.onGround) p.groundY = p.pos.y;
     // Ladders: push toward the platform to climb; otherwise slide down slowly.
-    const lad = this.world.ladderAt(p.pos.x, p.pos.z);
+    let lad = this.world.ladderAt(p.pos.x, p.pos.z);
+    // Only the strip in front of the ladder itself counts, not the whole cell.
+    if (lad) {
+      const cx = (lad.cx - lad.dx + 0.5) * CELL, cz = (lad.cy - lad.dz + 0.5) * CELL;
+      const ox = p.pos.x - cx, oz = p.pos.z - cz;
+      const side = Math.abs(ox * lad.dz - oz * lad.dx), toFace = CELL / 2 - (ox * lad.dx + oz * lad.dz);
+      if (side > 0.5 || toFace > p.radius + 0.6) lad = null;
+    }
     p.climbing = false;
     if (lad && p.pos.y < lad.top - 0.02) {
       if (wish.x * lad.dx + wish.z * lad.dz > 0.4) { p.climbing = true; v.y = 3.6 + 20 * dt; p.onGround = false; }
@@ -917,15 +924,19 @@ export class Game {
           }
         }
       }
-      const hNext = W.heightAt(next.x, next.z);
+      // Bounce off the underside of a bridge deck.
+      if (n.pos.y < DECK_LO && next.y >= DECK_LO && W.isDeck(Math.floor(next.x / CELL), Math.floor(next.z / CELL))) {
+        n.vel.y = -n.vel.y * 0.4; next.y = DECK_LO - 0.01; hit.wall = true;
+      }
+      const hNext = W.floorAt(next.x, next.z, n.pos.y);
       if (next.y < hNext) {
-        const hCur = W.heightAt(n.pos.x, n.pos.z);
+        const hCur = W.floorAt(n.pos.x, n.pos.z, n.pos.y);
         let bounced = false;
         if (n.pos.y >= hNext - 0.01 && hCur <= n.pos.y) {
           n.vel.y = -n.vel.y * 0.4; n.vel.x *= 0.7; n.vel.z *= 0.7; bounced = true; next.y = hNext + 0.01; hit.floor = true;
         } else {
-          if (W.heightAt(next.x, n.pos.z) > n.pos.y) { n.vel.x = -n.vel.x * 0.45; next.x = n.pos.x; bounced = true; }
-          if (W.heightAt(n.pos.x, next.z) > n.pos.y) { n.vel.z = -n.vel.z * 0.45; next.z = n.pos.z; bounced = true; }
+          if (W.floorAt(next.x, n.pos.z, n.pos.y) > n.pos.y) { n.vel.x = -n.vel.x * 0.45; next.x = n.pos.x; bounced = true; }
+          if (W.floorAt(n.pos.x, next.z, n.pos.y) > n.pos.y) { n.vel.z = -n.vel.z * 0.45; next.z = n.pos.z; bounced = true; }
           if (!bounced) { n.vel.x = -n.vel.x * 0.45; n.vel.z = -n.vel.z * 0.45; next.x = n.pos.x; next.z = n.pos.z; }
           hit.wall = true;
         }
@@ -949,7 +960,7 @@ export class Game {
         if (n.vel.length() < 0.4) n.still += dt;
       }
       n.mesh.position.copy(n.pos);
-      const floorY = () => W.heightAt(n.pos.x, n.pos.z);
+      const floorY = () => W.floorAt(n.pos.x, n.pos.z, n.pos.y + 0.1);
       if (g.impact) {
         if (hit.floor || hit.wall || hit.player || n.t >= g.fuse) this.detonate(i);
       } else if (n.kind === 'he') {

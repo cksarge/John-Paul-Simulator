@@ -409,9 +409,18 @@ export function decorate(world, group, theme) {
       const top = platformH(ch);
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const n = world.chars[y + dy]?.[x + dx];
-        if (n !== '.' && n !== 'L' && !(isPlatform(n) && n < ch)) continue;
+        if (n !== '.' && n !== 'L' && !(isPlatform(n) && n < ch) && !(n === '=' && top < 3)) continue;
         const f = { cx: (x + 0.5) * CELL + dx, cz: (y + 0.5) * CELL + dy, nx: dx, nz: dy, tx: Math.abs(dy), tz: Math.abs(dx) };
         trim.faceBox(f, 0, top - 0.12, CELL, 0.12, 0.02);
+      }
+    }
+    // Hazard edge along bridge decks wherever they end in mid-air.
+    if (ch === '=') {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const n = world.chars[y + dy]?.[x + dx];
+        if (!n || n === '=' || n === '7' || n === '8' || WALLS.has(n)) continue;
+        const f = { cx: (x + 0.5) * CELL + dx, cz: (y + 0.5) * CELL + dy, nx: dx, nz: dy, tx: Math.abs(dy), tz: Math.abs(dx) };
+        trim.faceBox(f, 0, 3.88, CELL, 0.12, 0.02);
       }
     }
   }
@@ -513,7 +522,11 @@ export function decorate(world, group, theme) {
       fixtures.faceBox(f, 0, 3.1, 1.3, 0.1, 0.18);
       fixtures.faceBox(f, 0, 5.0, 1.3, 0.08, 0.1);
       faceQuad(lit ? windowsLit : windowsDark, f, 0, 3.2, 1.1, 1.8, 0.01);
-    } else if (kind === 'vine') faceQuad(vines, f, (rand() - 0.5) * 0.4, 6 - (2.5 + rand() * 3), 1.6, 2.5 + rand() * 3, 0.03, [0, 0, 1, 0, 1, 1, 0, 1]);
+    } else if (kind === 'vine') {
+      // Hangs from just under the wall cap.
+      const len = 2.5 + rand() * 3;
+      faceQuad(vines, f, (rand() - 0.5) * 0.4, 5.9 - len, 1.6, len, 0.03, [0, 0, 1, 0, 1, 1, 0, 1]);
+    }
     else if (kind === 'awning') {
       const a0 = outward(f, -0.9, 3.1, 0), a1 = outward(f, 0.9, 3.1, 0), a2 = outward(f, 0.9, 2.7, 1.1), a3 = outward(f, -0.9, 2.7, 1.1);
       awnings.quad(a0, a1, a2, a3, [f.nx * 0.4, 0.9, f.nz * 0.4], [0, 1, 1, 1, 1, 0, 0, 0]);
@@ -611,9 +624,9 @@ export function decorate(world, group, theme) {
     if (!L) continue;
     // Against the platform's face, on the ladder cell's side.
     const f = { cx: (x + 0.5) * CELL + L.dx, cz: (y + 0.5) * CELL + L.dz, nx: -L.dx, nz: -L.dz, tx: Math.abs(L.dz), tz: Math.abs(L.dx) };
-    const top = L.top + 1.0;
-    for (const sx of [-0.32, 0.32]) ladder.faceBox(f, sx, 0, 0.07, top, 0.07, 0.06);
-    for (let ry = 0.3; ry < top - 0.1; ry += 0.32) ladder.faceBox(f, 0, ry, 0.64, 0.045, 0.045, 0.07);
+    // Rails stop a hand's height above the deck; rungs stay below its edge trim.
+    for (const sx of [-0.32, 0.32]) ladder.faceBox(f, sx, 0.005, 0.07, L.top + 0.3, 0.07, 0.06);
+    for (let ry = 0.3; ry + 0.045 < L.top - 0.15; ry += 0.32) ladder.faceBox(f, 0, ry, 0.64, 0.045, 0.045, 0.07);
   }
   add(ladder.mesh(new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.4, metalness: 0.85 })));
 

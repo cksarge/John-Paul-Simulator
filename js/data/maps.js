@@ -3,6 +3,7 @@
 // Chars: '.' floor · '#' wall · 'X' alt wall · 'h' half wall · 'c' crate (1 m) · 'C' tall crate (2 m)
 //        'M' shipping container · '1'..'4' raised platform (0.5 m per step)
 //        '5'..'8' tall platforms / catwalks (2.5–4 m), reached by ladder 'L' (a floor cell beside the platform)
+//        '=' bridge: a 4 m deck you can walk under; joins '8' catwalks (or step up from '7')
 //        'D' sliding door · 'G' breakable glass pane · 'B' explosive barrels · 'A' ammo crate
 //        'W' wooden barricade · 'k' wooden crate (both can be shot through and destroyed)
 // Every map keeps the two spawn zones out of each other's sight (walls in front of each spawn).
@@ -235,31 +236,45 @@ export const MAPS = {
   },
   frostbite: {
     id: 'frostbite', name: 'Frostbite', size: 'large', w: 46, h: 42,
-    desc: 'Arctic research depot. Container mazes on both sites, open mid.',
+    desc: 'Arctic research depot. Spawns in opposite corners, a split lab in mid and an ice bridge over the B underpass.',
     ops: [
-      ['.', 1, 15, 7, 26],          // attacker spawn
-      ['.', 38, 15, 44, 26],        // defender spawn
-      ['.', 16, 1, 30, 10],         // A site
-      ['.', 16, 31, 30, 40],        // B site
-      ['.', 8, 18, 37, 23],         // mid
-      ['.', 3, 3, 7, 14], ['.', 3, 3, 15, 6],
-      ['.', 3, 27, 7, 38], ['.', 3, 35, 15, 38],
-      ['.', 38, 3, 42, 14], ['.', 31, 3, 42, 6],
-      ['.', 38, 27, 42, 38], ['.', 31, 35, 42, 38],
-      ['.', 21, 11, 24, 17], ['.', 21, 24, 24, 30],
-      ['M', 12, 19, 14, 20], ['M', 30, 21, 32, 22], ['M', 20, 4, 22, 5], ['M', 25, 6, 26, 7],
-      ['M', 24, 35, 26, 36], ['M', 19, 33, 20, 34], ['M', 5, 9, 6, 10], ['M', 39, 31, 40, 32],
-      ['c', 17, 8, 17, 8], ['C', 29, 9, 29, 9], ['c', 28, 2, 28, 2], ['c', 17, 38, 17, 38], ['C', 29, 32, 29, 32],
-      ['c', 10, 21, 10, 21], ['c', 34, 19, 34, 19], ['h', 21, 11, 22, 11], ['h', 23, 30, 24, 30],
-      ['1', 16, 1, 19, 2], ['2', 16, 1, 17, 1], ['1', 27, 39, 30, 40],
-      ['#', 6, 17, 6, 24], ['#', 39, 17, 39, 24],
-      ['B', 17, 8, 17, 8], ['B', 17, 38, 17, 38], ['B', 10, 21, 10, 21], ['B', 34, 19, 34, 19], ['A', 28, 2, 28, 2],
-      ['G', 21, 11, 22, 11], ['G', 23, 30, 24, 30],
-      ['6', 16, 1, 17, 1], ['L', 18, 1, 18, 1], ['6', 29, 40, 30, 40], ['L', 28, 40, 28, 40],
-      ['W', 21, 14, 22, 14], ['W', 23, 27, 24, 27],
+      ['.', 1, 32, 10, 40],         // attacker spawn (south-west)
+      ['.', 35, 1, 44, 7],          // defender spawn (north-east)
+      ['.', 1, 1, 13, 12],          // A site (north-west)
+      ['.', 32, 29, 44, 40],        // B site (south-east)
+      ['.', 2, 13, 6, 31],          // west road: attackers → A
+      ['.', 11, 36, 31, 40],        // south yard: attackers → B
+      ['.', 14, 2, 34, 5],          // north pass: defenders → A
+      ['.', 39, 8, 44, 28],         // east road: defenders → B
+      ['.', 17, 15, 28, 26],        // the lab (mid)
+      ['#', 17, 20, 28, 20],        // lab divider: north hall / south hall
+      ['D', 22, 20, 23, 20], ['G', 18, 20, 19, 20], ['G', 26, 20, 27, 20],
+      ['.', 7, 17, 16, 18],         // west road → north hall
+      ['.', 12, 13, 16, 16],        // north hall → A short
+      ['.', 24, 6, 25, 14],         // north pass → north hall
+      ['.', 20, 27, 21, 35],        // south yard → south hall
+      ['.', 29, 23, 38, 24],        // south hall → east road
+      ['.', 22, 28, 31, 33],        // B underpass
+      ['D', 16, 17, 16, 18], ['D', 29, 23, 29, 24],
+      // ice bridge over the underpass, between two towers
+      ['8', 22, 30, 23, 31], ['L', 21, 30, 21, 30], ['=', 24, 30, 31, 31], ['8', 32, 30, 33, 31], ['L', 34, 30, 34, 30],
+      // A site
+      ['C', 5, 5, 6, 6], ['c', 9, 8, 9, 8], ['M', 2, 9, 4, 10], ['h', 7, 11, 9, 11], ['c', 11, 3, 11, 3], ['A', 4, 3, 4, 3],
+      ['6', 1, 1, 2, 2], ['L', 3, 2, 3, 2], ['k', 9, 8, 9, 8],
+      // B site
+      ['M', 38, 34, 40, 35], ['C', 42, 31, 42, 32], ['c', 36, 38, 36, 38], ['h', 35, 36, 36, 36], ['k', 41, 38, 41, 38], ['B', 43, 39, 43, 39],
+      // lab
+      ['c', 18, 16, 18, 16], ['C', 27, 17, 27, 17], ['c', 19, 25, 19, 25], ['C', 26, 24, 26, 24], ['B', 28, 15, 28, 15], ['h', 21, 23, 22, 23],
+      // lanes
+      ['X', 2, 22, 3, 23], ['c', 6, 27, 6, 27], ['W', 5, 14, 6, 14], ['A', 2, 30, 2, 30],
+      ['M', 15, 38, 17, 39], ['c', 25, 37, 25, 37], ['h', 28, 40, 29, 40], ['W', 20, 33, 21, 33],
+      ['M', 41, 14, 42, 15], ['c', 39, 20, 39, 20], ['X', 43, 24, 44, 25], ['A', 44, 9, 44, 9],
+      ['C', 19, 3, 19, 3], ['c', 29, 4, 29, 4], ['M', 31, 2, 32, 3], ['B', 14, 5, 14, 5],
+      // spawn screens
+      ['#', 5, 32, 8, 32], ['#', 37, 7, 40, 7],
     ],
-    spawns: [[2, 17, 5, 24], [40, 17, 43, 24]],
-    sites: { A: [18, 2, 28, 8], B: [18, 33, 28, 39] },
+    spawns: [[2, 34, 9, 39], [36, 2, 43, 5]],
+    sites: { A: [2, 2, 12, 11], B: [33, 30, 43, 39] },
     theme: {
       wall: 'concrete', wall2: 'panel', half: 'concrete', floor: 'snow', platform: 'grate', crate: 'crate_mil', crate2: 'crate_metal', trim: 'trim', door: 'panel',
       decor: { skyline: 'mountains', particles: 'snow', decals: ['snow', 'oil', 'paint', 'crack'], wall: ['lamp', 'pipe', 'window', 'vent'], lights: 5, lampColor: 0xe4eeff, groundColor: 0xdfe6ee, signs: 10 },

@@ -3,4 +3,4 @@
 export const isPlatform = (ch) => ch >= '1' && ch <= '8';
 export const platformH = (ch) => (isPlatform(ch) ? (ch.charCodeAt(0) - 48) * 0.5 : 0);
 // Cells you can stand on (ladders 'L' are floor with a ladder against the neighbouring platform).
-export const isWalkable = (ch) => ch === '.' || ch === 'L' || isPlatform(ch);
+export const isWalkable = (ch) => ch === '.' || ch === 'L' || ch === '=' || isPlatform(ch);

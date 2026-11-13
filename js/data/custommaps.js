@@ -16,7 +16,7 @@ export const MAP_LIMITS = {
   large: { minW: 30, maxW: 52, minH: 26, maxH: 48, w: 44, h: 40, spawnCells: 5 },
 };
 // Map cell characters (see js/data/maps.js for what each one is).
-export const CHARS = '.#XhcCM12345678LDGBAWk';
+export const CHARS = '.#XhcCM12345678=LDGBAWk';
 const CHAR_SET = new Set(CHARS);
 // Official maps whose look (textures, sky, lighting, dressing) a custom map can borrow.
 export const THEMES = Object.values(MAPS).filter((m) => !m.training).map((m) => [m.id, m.name]);

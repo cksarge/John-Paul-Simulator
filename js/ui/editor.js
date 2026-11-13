@@ -11,6 +11,7 @@ export const PALETTE = [
   ['c', 'Crate, 1 m'], ['C', 'Tall crate, 2 m'], ['M', 'Shipping container'],
   ['1', 'Platform 0.5 m'], ['2', 'Platform 1 m'], ['3', 'Platform 1.5 m'], ['4', 'Platform 2 m'],
   ['5', 'Catwalk 2.5 m'], ['6', 'Catwalk 3 m'], ['7', 'Catwalk 3.5 m'], ['8', 'Catwalk 4 m'],
+  ['=', 'Bridge 4 m (walk under it, joins 4 m catwalks)'],
   ['L', 'Ladder (floor next to a catwalk)'], ['D', 'Sliding door'], ['G', 'Glass pane'], ['B', 'Explosive barrels'],
   ['A', 'Ammo crate'], ['W', 'Wooden barricade'], ['k', 'Wooden crate'],
 ];
@@ -24,6 +25,7 @@ export function cellColor(ch) {
   if (ch === 'D') return '#8a6a3a';
   if (ch === 'G') return '#5f8fb0';
   if (ch === 'L') return '#9aa3ad';
+  if (ch === '=') return '#c3ccd6';
   if (isPlatform(ch)) { const h = platformH(ch); return `rgb(${140 + h * 18},${150 + h * 16},${165 + h * 14})`; }
   return '#7c8591';
 }
