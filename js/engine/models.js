@@ -623,17 +623,24 @@ function roundedBox(w, h, d, r) {
 }
 
 // Procedural operator. Root sits at the feet, faces -Z.
+// In matches every operator is drawn at the same size, matched to the hitboxes in game/player.js
+// (head around the camera eye at 1.64 m), so no body type is easier or harder to hit than another.
+// Height and build only change how an operator looks in the menus.
+export const MATCH_SCALE = 0.92;
+
 export class CharacterModel {
-  constructor(c, { team = -1 } = {}) {
+  // match: true for anything that can be shot (or replayed): fixed size, standard build.
+  constructor(c, { team = -1, match = false } = {}) {
     const outfit = OUTFITS[c.outfit];
     if (outfit) c = { ...c, ...outfit.colors };
     this.c = c;
     this.root = new THREE.Group();
     this.body = new THREE.Group();
     this.root.add(this.body);
-    const s = c.height || 1;
+    const s = match ? MATCH_SCALE : c.height || 1;
+    this.scale = s;
     this.body.scale.setScalar(s);
-    const bw = c.build === 'heavy' ? 1.14 : c.build === 'slim' ? 0.9 : 1;
+    const bw = match ? 1 : c.build === 'heavy' ? 1.14 : c.build === 'slim' ? 0.9 : 1;
 
     const skin = mat(c.skin, 0.6), top = mat(c.top), pants = mat(c.pants), boots = mat(c.boots || '#2a221b', 0.7);
     const gloves = mat(c.gloves || '#1d1d1f', 0.7), hair = mat(c.hairColor, 0.9), vestM = mat(c.vestColor, 0.8);
@@ -865,12 +872,14 @@ export class CharacterModel {
     const swing = Math.sin(this.phase) * 0.6 * sp;
     const cr = st.crouch;
     const air = st.onGround === false;
-    this.legs[0].rotation.x = air ? -0.5 : swing - cr * 1.1;
-    this.legs[1].rotation.x = air ? 0.2 : -swing - cr * 1.1;
-    this.legs[0].userData.knee.rotation.x = air ? 0.9 : Math.max(0, -Math.sin(this.phase) * 0.9 * sp) + cr * 1.9;
-    this.legs[1].userData.knee.rotation.x = air ? 0.4 : Math.max(0, Math.sin(this.phase) * 0.9 * sp) + cr * 1.9;
-    this.body.position.y = -cr * 0.36 + Math.abs(Math.cos(this.phase)) * 0.03 * sp;
-    this.torso.rotation.x = -cr * 0.25 + st.pitch * 0.35;
+    // Crouch depth matches the crouched camera and head hitbox (the eye drops 0.5 m).
+    this.legs[0].rotation.x = air ? -0.5 : swing - cr * 1.4;
+    this.legs[1].rotation.x = air ? 0.2 : -swing - cr * 1.4;
+    this.legs[0].userData.knee.rotation.x = air ? 0.9 : Math.max(0, -Math.sin(this.phase) * 0.9 * sp) + cr * 2.5;
+    this.legs[1].userData.knee.rotation.x = air ? 0.4 : Math.max(0, Math.sin(this.phase) * 0.9 * sp) + cr * 2.5;
+    this.body.position.y = (-cr * 0.52 + Math.abs(Math.cos(this.phase)) * 0.03 * sp) * this.scale;
+    // Only a slight lean with aim pitch, so the head stays where its hitbox is.
+    this.torso.rotation.x = -cr * 0.25 + st.pitch * 0.12;
     this.head.rotation.x = st.pitch * 0.5;
     // arms aim the weapon
     const pistol = this.pistolPose;

@@ -156,8 +156,7 @@ export class BotBrain {
     const t = this.target;
     if (t && t.alive && this.seenT >= this.L.reaction) {
       // Combat: aim, fire in bursts, strafe a little.
-      const aimPoint = t.pos.clone();
-      aimPoint.y = this.aimHead ? t.eyeY() + 0.02 : t.pos.y + t.height() * 0.66;
+      const aimPoint = this.aimHead ? t.headCenter() : t.pos.clone().setY(t.pos.y + t.height() * 0.66);
       const eye = p.eye();
       const d = aimPoint.sub(eye);
       const dist = d.length();

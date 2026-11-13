@@ -49,7 +49,7 @@ export class ReplayViewer {
     this.viewmodel = new Viewmodel(eng.vmScene);
     this.cam = new SpectatorCam(eng.camera, this.world);
     this.models = this.data.players.map((p) => {
-      const m = new CharacterModel(p.char || {}, { team: this.solo ? -1 : p.team });
+      const m = new CharacterModel(p.char || {}, { team: this.solo ? -1 : p.team, match: true });
       m.root.visible = false;
       scene.add(m.root);
       m.everAlive = false;

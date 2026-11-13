@@ -1013,9 +1013,13 @@ export class Game {
     for (const p of this.players.values()) {
       if (!p.alive) continue;
       if (p !== thrower && thrower && !this.canDamage(thrower, p)) continue;
-      const chest = p.pos.clone().setY(p.pos.y + 1.1);
+      // Exposure is checked at the head, chest and knees at the player's real height (crouching lowers
+      // them): any of them in the open takes damage, fully behind cover is safe. Damage falls off with
+      // distance to the chest (1.1 m up when standing, lower when crouched).
+      const eye = p.eyeY(), chest = p.pos.clone().setY(eye - 0.55);
       const d = chest.distanceTo(c);
-      if (d > g.radius || !this.world.lineOfSight(c, chest)) continue;
+      if (d > g.radius) continue;
+      if (![eye, eye - 0.55, p.pos.y + 0.35].some((y) => this.world.lineOfSight(c, p.pos.clone().setY(y)))) continue;
       this.hostDamage(thrower || null, p, g.damage * (1 - d / g.radius) * (p === thrower ? 0.5 : 1), 'body', weapon);
     }
   }

@@ -25,7 +25,7 @@ export class HostageView {
 
   ensure(n) {
     while (this.models.length < n) {
-      const m = new CharacterModel(HOSTAGE_LOOK, { team: -1 });
+      const m = new CharacterModel(HOSTAGE_LOOK, { team: -1, match: true });
       m.setWeapon(null);
       this.g.scene.add(m.root);
       this.models.push(m);
