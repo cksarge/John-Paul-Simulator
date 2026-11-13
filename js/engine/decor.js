@@ -264,6 +264,24 @@ export function buildProp(world, p, theme) {
   const wallMat = getMaterial(theme.wall);
   const view = { root, setBroken() {}, update() {} };
 
+  if (p.ch === 'g') {
+    // Breakable grate catwalk overhead: a thin grating in a steel frame that cracks, then drops out.
+    const intact = new THREE.Group();
+    intact.add(mesh(new THREE.BoxGeometry(CELL, 0.06, CELL), getMaterial(theme.platform || 'grate'), 0, 3.97, 0));
+    const frameMat = getMaterial(theme.trim || 'trim');
+    for (const s of [-1, 1]) {
+      intact.add(mesh(new THREE.BoxGeometry(CELL, 0.16, 0.08), frameMat, 0, 3.88, s * (CELL / 2 - 0.04)));
+      intact.add(mesh(new THREE.BoxGeometry(0.08, 0.16, CELL), frameMat, s * (CELL / 2 - 0.04), 3.88, 0));
+    }
+    const cracks = mesh(new THREE.BoxGeometry(CELL * 0.7, 0.01, 0.05), propMat('handle'), 0.1, 4.005, -0.2, false);
+    cracks.rotation.y = 0.6; cracks.visible = false;
+    intact.add(cracks);
+    root.add(intact);
+    view.setStage = (n) => { cracks.visible = n >= 1; intact.rotation.z = n >= 2 ? 0.02 : 0; };
+    view.setBroken = (b) => { intact.visible = !b; };
+    return view;
+  }
+
   if (p.ch === 'D' || p.ch === 'G') {
     const top = p.ch === 'D' ? 2.7 : 3;
     const lintel = mesh(new THREE.BoxGeometry(CELL, 6 - top, CELL), wallMat, 0, top + (6 - top) / 2, 0);
@@ -396,7 +414,7 @@ export function decorate(world, group, theme) {
   const add = (m) => { if (m) group.add(m); return m; };
 
   // Trims: skirting along every wall base and a cap on top of walls and half walls.
-  const trim = new Batch(2);
+  const trim = new Batch(2), rails = new Batch(1);
   for (const f of faces) {
     trim.faceBox(f, 0, f.floorY, CELL, 0.22, 0.05);
     trim.faceBox(f, 0, 5.92, CELL + 0.001, 0.16, 0.1);
@@ -409,22 +427,31 @@ export function decorate(world, group, theme) {
       const top = platformH(ch);
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const n = world.chars[y + dy]?.[x + dx];
-        if (n !== '.' && n !== 'L' && !(isPlatform(n) && n < ch) && !(n === '=' && top < 3)) continue;
+        if (n !== '.' && n !== 'L' && !(isPlatform(n) && n < ch)) continue;
         const f = { cx: (x + 0.5) * CELL + dx, cz: (y + 0.5) * CELL + dy, nx: dx, nz: dy, tx: Math.abs(dy), tz: Math.abs(dx) };
         trim.faceBox(f, 0, top - 0.12, CELL, 0.12, 0.02);
       }
     }
-    // Hazard edge along bridge decks wherever they end in mid-air.
-    if (ch === '=') {
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const n = world.chars[y + dy]?.[x + dx];
-        if (!n || n === '=' || n === '7' || n === '8' || WALLS.has(n)) continue;
+    // Hazard edge along bridge decks wherever they end in mid-air (railings get posts and a top bar).
+    const dk = world.deckAt(x, y);
+    if (dk && dk.ch !== 'T' && dk.ch !== 'g') {
+      const railBits = world.rails[y * world.w + x];
+      for (const [dx, dy, bit] of [[1, 0, 1], [-1, 0, 2], [0, 1, 4], [0, -1, 8]]) {
+        const nd = world.deckAt(x + dx, y + dy), n = world.chars[y + dy]?.[x + dx];
+        if (!n || WALLS.has(n) || (nd && Math.abs(nd.top - dk.top) < 0.3) || Math.abs(platformH(n) - dk.top) < 0.3) continue;
         const f = { cx: (x + 0.5) * CELL + dx, cz: (y + 0.5) * CELL + dy, nx: dx, nz: dy, tx: Math.abs(dy), tz: Math.abs(dx) };
-        trim.faceBox(f, 0, 3.88, CELL, 0.12, 0.02);
+        trim.faceBox(f, 0, dk.top - 0.12, CELL, 0.12, 0.02);
+        if (railBits & bit) {
+          const rf = { ...f, nx: -dx, nz: -dy };
+          for (const sx of [-0.92, 0, 0.92]) rails.faceBox(rf, sx, dk.top, 0.06, 1.0, 0.06, 0.02);
+          rails.faceBox(rf, 0, dk.top + 0.96, CELL, 0.07, 0.07, 0.01);
+          rails.faceBox(rf, 0, dk.top + 0.5, CELL, 0.04, 0.04, 0.02);
+        }
       }
     }
   }
   add(trim.mesh(getMaterial(d.trim || 'trim')));
+  add(rails.mesh(new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.5, metalness: 0.6 })));
 
   // Soft contact shadows on the floor along the base of walls, crates and containers.
   const ao = new Batch();

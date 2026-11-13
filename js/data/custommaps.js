@@ -165,7 +165,7 @@ export function validateMap(def) {
     }
   }
   if (seen) problems.push('The two spawns can see each other. Put walls between them (doors and glass count as open).');
-  const targets = [B[0], ...Object.values(w.sites).map((s) => ({ x: Math.round((s.cells[0] + s.cells[2]) / 2), y: Math.round((s.cells[1] + s.cells[3]) / 2) }))];
+  const targets = [B[0], ...Object.values(w.sites).map((s) => w.cellsIn(s.rects, true)[0]).filter(Boolean)];
   const from = w.cellCenter(A[0].x, A[0].y);
   if (targets.some((t) => !w.findPath(from, w.cellCenter(t.x, t.y)))) problems.push('Some areas can’t be reached on foot. Make sure the spawns and bomb sites are connected (ladders need a platform next to them).');
   return problems;

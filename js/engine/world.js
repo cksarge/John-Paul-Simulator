@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getMaterial, tileSize } from './textures.js';
 import { buildProp, decorate } from './decor.js';
-import { isPlatform, platformH } from './grid.js';
+import { isPlatform, platformH, UPPER, turnChar } from './grid.js';
 
 // The world is a grid of CELL-sized columns. Every solid is a column from y=0 to its height,
 // so collision, raycasts and navigation all run directly on the grid.
@@ -10,15 +10,17 @@ export const CELL = 2;
 // bullets; shatters when shot) · 'B' explosive barrel · 'A' ammo crate (press E to refill).
 // 'W' wooden barricade and 'k' wooden crate can be shot apart (bullets also go through them).
 // 'L' is floor with a ladder up the neighbouring platform.
-// '=' is a bridge: open ground underneath and a thin deck at 4 m (level with '8' catwalks) on top.
+// A second, upper layer (def.upper, see UPPER in grid.js) holds bridges, grate catwalks and tunnel
+// roofs: a slab from UL to UT over a cell whose ground stays open underneath. ('=' in the ground
+// layer is the older way to write a 4 m bridge and still works.)
 const SOLID_H = { '#': 6, 'X': 6, 'h': 1.15, 'c': 1.0, 'C': 2.0, 'M': 2.6, 'D': 6, 'G': 6, 'B': 1.2, 'A': 1.0, 'W': 3.0, 'k': 1.0 };
 export const PROP_CHARS = new Set(['D', 'G', 'B', 'A', 'W', 'k']);
-export const WOOD_HP = { W: 240, k: 120 };
+export const WOOD_HP = { W: 240, k: 120, g: 160 };
 // Cells you may never mantle onto (walls, doors, glass).
 const NO_MANTLE = new Set(['#', 'X', 'D', 'G']);
-export const DECK = 4, DECK_LO = 3.7;
-// Standing height of a body, for walking under bridge decks.
+// Standing height of a body, for walking under bridges.
 const BODY_H = 1.8;
+const RAIL_BITS = [[1, 0, 1], [-1, 0, 2], [0, 1, 4], [0, -1, 8]];
 const CONTAINER_TINTS = ['#a8432f', '#2f6aa8', '#3d7a45', '#c27a2c', '#7b7f86'];
 
 function heightOf(ch) {
@@ -31,40 +33,99 @@ export class World {
     this.def = def;
     this.w = def.w; this.h = def.h;
     const g = Array.from({ length: def.h }, () => Array(def.w).fill('#'));
-    const apply = (op) => {
-      const [ch, x0, y0, x1, y1] = op;
+    const up = Array.from({ length: def.h }, () => Array(def.w).fill('.'));
+    const apply = (grid, op, ch = op[0]) => {
+      const [, x0, y0, x1, y1] = op;
       for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++)
         for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++)
-          if (x > 0 && y > 0 && x < def.w - 1 && y < def.h - 1) g[y][x] = ch;
+          if (x > 0 && y > 0 && x < def.w - 1 && y < def.h - 1) grid[y][x] = ch;
     };
+    const mirrored = (op) => [turnChar(op[0], 2), def.w - 1 - op[1], def.h - 1 - op[2], def.w - 1 - op[3], def.h - 1 - op[4]];
     for (const op of def.ops) {
-      apply(op);
-      if (def.mirror) apply([op[0], def.w - 1 - op[1], def.h - 1 - op[2], def.w - 1 - op[3], def.h - 1 - op[4]]);
+      const ops = def.mirror ? [op, mirrored(op)] : [op];
+      for (const o of ops) {
+        if (o[0] === '=') { apply(g, o, '.'); apply(up, o, '='); } else apply(g, o);
+      }
+    }
+    for (const op of def.upper || []) {
+      if (!UPPER[op[0]] && op[0] !== '.') continue;
+      apply(up, op);
+      if (def.mirror) apply(up, mirrored(op));
     }
     this.chars = g;
     this.H = new Float32Array(def.w * def.h);  // what bodies and grenades collide with
     this.RH = new Float32Array(def.w * def.h); // what bullets and sight lines collide with
+    this.UT = new Float32Array(def.w * def.h); // upper slab top (0 = nothing overhead)
+    this.UL = new Float32Array(def.w * def.h); // upper slab underside
+    this.rails = new Uint8Array(def.w * def.h);
     this.props = new Map();
     for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) {
       this.setChar(x, y, g[y][x]);
       if (PROP_CHARS.has(g[y][x])) this.props.set(x + ',' + y, { x, y, ch: g[y][x], open: false, broken: false, hp: WOOD_HP[g[y][x]] || 60, stage: 0, anim: 0 });
     }
+    // An upper slab only makes sense over ground that's lower than its underside.
+    this.up = up;
+    for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) {
+      const u = UPPER[up[y][x]];
+      if (!u || this.H[y * def.w + x] >= u.lo) { up[y][x] = '.'; continue; }
+      this.setUpper(x, y, up[y][x]);
+      if (u.grate) this.props.set('u' + x + ',' + y, { x, y, ch: 'g', up: true, open: false, broken: false, hp: WOOD_HP.g, stage: 0, anim: 0 });
+    }
+    for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) this.updateRails(x, y);
 
+    // Bomb sites: one rectangle [x0, y0, x1, y1] or a list of them (any shape). x0..z1 is the bounding box.
     this.sites = {};
-    for (const [k, r] of Object.entries(def.sites || {}))
-      this.sites[k] = { x0: r[0] * CELL, z0: r[1] * CELL, x1: (r[2] + 1) * CELL, z1: (r[3] + 1) * CELL, cells: r };
+    for (const [k, r] of Object.entries(def.sites || {})) {
+      const rects = (Array.isArray(r[0]) ? r : [r]).filter((q) => Array.isArray(q) && q.length === 4);
+      if (!rects.length) continue;
+      const bx0 = Math.min(...rects.map((q) => q[0])), by0 = Math.min(...rects.map((q) => q[1])), bx1 = Math.max(...rects.map((q) => q[2])), by1 = Math.max(...rects.map((q) => q[3]));
+      const big = rects.reduce((a, q) => ((q[2] - q[0] + 1) * (q[3] - q[1] + 1) > (a[2] - a[0] + 1) * (a[3] - a[1] + 1) ? q : a));
+      this.sites[k] = { x0: bx0 * CELL, z0: by0 * CELL, x1: (bx1 + 1) * CELL, z1: (by1 + 1) * CELL, cells: [bx0, by0, bx1, by1], rects,
+        center: [((big[0] + big[2] + 1) / 2) * CELL, ((big[1] + big[3] + 1) / 2) * CELL] };
+    }
     this.spawnCells = (def.spawns || []).map((r) => this.cellsIn(r, true));
     this.allFloor = this.cellsIn([1, 1, def.w - 2, def.h - 2], true);
     this.size = { x: def.w * CELL, z: def.h * CELL };
   }
 
-  cellsIn([x0, y0, x1, y1], floorOnly) {
-    const out = [];
+  // Cells in a rectangle (or a list of rectangles, like a bomb site's `rects`).
+  cellsIn(r, floorOnly) {
+    if (Array.isArray(r[0])) {
+      const seen = new Set(), out = [];
+      for (const q of r) for (const c of this.cellsIn(q, floorOnly)) { const k = c.x + ',' + c.y; if (!seen.has(k)) { seen.add(k); out.push(c); } }
+      return out;
+    }
+    const [x0, y0, x1, y1] = r, out = [];
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       const h = this.H[y * this.w + x];
-      if (floorOnly ? h === 0 : h <= 1) out.push({ x, y });
+      if (floorOnly ? h === 0 && !this.blocked?.(x, y) : h <= 1) out.push({ x, y });
     }
     return out;
+  }
+
+  // ───────────── upper layer ─────────────
+  setUpper(x, y, ch) {
+    const u = UPPER[ch], i = y * this.w + x;
+    this.up[y][x] = u ? ch : '.';
+    this.UT[i] = u ? u.top : 0;
+    this.UL[i] = u ? u.lo : 0;
+  }
+  deckAt(cx, cy) {
+    if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return null;
+    const i = cy * this.w + cx;
+    return this.UT[i] > 0 ? { top: this.UT[i], lo: this.UL[i], ch: this.up[cy][cx] } : null;
+  }
+  isDeck(cx, cy) { return !!this.deckAt(cx, cy); }
+  // Railings run along the edges of a railed deck that don't continue onto something level.
+  updateRails(x, y) {
+    const i = y * this.w + x, u = UPPER[this.up[y][x]];
+    this.rails[i] = 0;
+    if (!u?.rails) return;
+    for (const [dx, dy, bit] of RAIL_BITS) {
+      const nx = x + dx, ny = y + dy, d = this.deckAt(nx, ny), gh = this.cellH(nx, ny);
+      const level = (d && Math.abs(d.top - u.top) <= 0.55) || (Math.abs(gh - u.top) <= 0.55 && this.navH(nx, ny) !== null);
+      if (!level && gh < u.top + 0.5) this.rails[i] |= bit;
+    }
   }
 
   cellH(cx, cy) {
@@ -176,20 +237,22 @@ export class World {
   cellCenter(cx, cy) { return new THREE.Vector3((cx + 0.5) * CELL, this.cellH(cx, cy), (cy + 0.5) * CELL); }
 
   siteAt(x, z) {
-    for (const [k, s] of Object.entries(this.sites)) if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1) return k;
+    const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL);
+    for (const [k, s] of Object.entries(this.sites)) if (s.rects.some((r) => cx >= r[0] && cx <= r[2] && cy >= r[1] && cy <= r[3])) return k;
     return null;
   }
 
   // Highest solid top among cells overlapping the footprint that rises above `y`; -1 if clear.
-  blockingTop(x, y, z, r) {
+  blockingTop(x, y, z, r, bh = BODY_H) {
     let top = -1;
     const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL);
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
       const h = this.cellH(cx, cz);
       if (h > y + 0.001 && h > top) top = h;
-      // A bridge deck blocks only bodies that overlap it.
-      if (this.isDeck(cx, cz) && y < DECK - 0.001 && y + BODY_H > DECK_LO && DECK > top) top = DECK;
+      // An overhead slab blocks only bodies that overlap it.
+      const i = cz * this.w + cx, ut = this.UT[i] || 0;
+      if (ut && y < ut - 0.001 && y + bh > this.UL[i] && ut > top) top = ut;
     }
     return top;
   }
@@ -202,22 +265,33 @@ export class World {
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
       const h = this.cellH(cx, cz);
       if (h <= y + 0.05 && h > f) f = h;
-      if (DECK <= y + 0.05 && DECK > f && this.isDeck(cx, cz)) f = DECK;
+      const ut = this.UT[cz * this.w + cx] || 0;
+      if (ut && ut <= y + 0.05 && ut > f) f = ut;
     }
     return f;
   }
 
-  isDeck(cx, cy) { return this.chars[cy]?.[cx] === '='; }
+  // Lowest overhead slab above a body's feet at `y` (Infinity when the sky is clear).
+  ceilingAbove(x, y, z, r) {
+    let c = Infinity;
+    const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL);
+    const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
+    for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
+      const i = cz * this.w + cx, lo = this.UL[i];
+      if (this.UT[i] && lo > y + 0.05 && lo < c) c = lo;
+    }
+    return c;
+  }
 
-  // Floor height under (x, z) for something at height y: the bridge deck once it's at deck level.
+  // Floor height under (x, z) for something at height y: the deck once it's at deck level.
   floorAt(x, z, y) {
-    const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL);
-    return y >= DECK_LO && this.isDeck(cx, cy) ? DECK : this.cellH(cx, cy);
+    const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL), d = this.deckAt(cx, cy);
+    return d && y >= d.lo ? d.top : this.cellH(cx, cy);
   }
 
   // Moves a body (feet position `pos`, velocity `vel`) with gravity, step-up and wall sliding.
   move(body, dt) {
-    const STEP = 0.55, r = body.radius;
+    const STEP = 0.55, r = body.radius, bh = body.height ? body.height() : BODY_H;
     const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
     const h = dt / steps;
     for (let i = 0; i < steps; i++) {
@@ -226,9 +300,18 @@ export class World {
         if (v === 0) continue;
         const next = body.pos[axis] + v * h;
         const px = axis === 'x' ? next : body.pos.x, pz = axis === 'z' ? next : body.pos.z;
-        const top = this.blockingTop(px, body.pos.y, pz, r);
+        // Railings: no walking off the side of a railed deck.
+        const ci = Math.floor(body.pos.z / CELL) * this.w + Math.floor(body.pos.x / CELL), rail = this.rails[ci];
+        if (rail && Math.abs(body.pos.y - this.UT[ci]) < 0.2) {
+          const c0 = Math.floor(body.pos[axis] / CELL) * CELL, bit = axis === 'x' ? (v > 0 ? 1 : 2) : (v > 0 ? 4 : 8);
+          if (rail & bit) {
+            const lim = v > 0 ? c0 + CELL - r - 0.001 : c0 + r + 0.001;
+            if (v > 0 ? next > lim : next < lim) { body.pos[axis] = v > 0 ? Math.max(body.pos[axis], lim) : Math.min(body.pos[axis], lim); body.vel[axis] = 0; continue; }
+          }
+        }
+        const top = this.blockingTop(px, body.pos.y, pz, r, bh);
         if (top < 0) { body.pos[axis] = next; continue; }
-        if (body.onGround && top - body.pos.y <= STEP && this.blockingTop(px, top, pz, r) < 0) {
+        if (body.onGround && top - body.pos.y <= STEP && this.blockingTop(px, top, pz, r, bh) < 0) {
           body.pos.y = top; body.pos[axis] = next; continue;
         }
         const edge = v > 0 ? Math.floor((next + r) / CELL) * CELL - r - 0.001 : (Math.floor((next - r) / CELL) + 1) * CELL + r + 0.001;
@@ -236,7 +319,10 @@ export class World {
         body.vel[axis] = 0;
       }
       body.vel.y -= 20 * h;
-      const ny = body.pos.y + body.vel.y * h;
+      let ny = body.pos.y + body.vel.y * h;
+      // Heads bump the underside of bridges.
+      const ceil = this.ceilingAbove(body.pos.x, body.pos.y, body.pos.z, r);
+      if (ny + bh > ceil) { ny = Math.min(ny, Math.max(body.pos.y, ceil - bh)); body.vel.y = Math.min(0, body.vel.y); }
       const floor = this.floorUnder(body.pos.x, body.pos.y, body.pos.z, r);
       if (ny <= floor) {
         body.pos.y = floor; body.vel.y = Math.max(0, body.vel.y); body.onGround = true;
@@ -260,14 +346,15 @@ export class World {
     for (let iter = 0; iter < 512; iter++) {
       const tExit = Math.min(tMaxX, tMaxZ);
       const H = this.rayH(cx, cz);
-      if (this.isDeck(cx, cz)) {
-        const yEnter = o.y + d.y * tEnter;
-        if (tEnter > 0 && yEnter >= DECK_LO && yEnter < DECK) {
+      const di = cz * this.w + cx, UT = cx >= 0 && cz >= 0 && cx < this.w && cz < this.h ? this.UT[di] : 0;
+      if (UT) {
+        const UL = this.UL[di], yEnter = o.y + d.y * tEnter;
+        if (tEnter > 0 && yEnter >= UL && yEnter < UT) {
           if (tEnter > maxDist) return null;
           const normal = nAxis === 'x' ? new THREE.Vector3(-stepX, 0, 0) : new THREE.Vector3(0, 0, -stepZ);
           return this._hit(o, d, tEnter, normal);
         }
-        const tFace = d.y < 0 ? (DECK - o.y) / d.y : d.y > 0 ? (DECK_LO - o.y) / d.y : -1;
+        const tFace = d.y < 0 ? (UT - o.y) / d.y : d.y > 0 ? (UL - o.y) / d.y : -1;
         if (tFace >= tEnter && tFace <= tExit && tFace >= 0) {
           if (tFace > maxDist) return null;
           return this._hit(o, d, tFace, new THREE.Vector3(0, d.y < 0 ? 1 : -1, 0));
@@ -316,17 +403,18 @@ export class World {
   navH(cx, cy) {
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return null;
     const ch = this.chars[cy][cx];
-    if (ch === '.' || ch === 'L' || ch === '=' || isPlatform(ch)) return this.H[cy * this.w + cx];
+    if (ch === '.' || ch === 'L' || isPlatform(ch)) return this.H[cy * this.w + cx];
     if (ch === 'D') return 0; // bots open doors on their way through
     return null;
   }
 
   // Height a body reaches stepping into cell (cx, cy) from height `from`, or null if it can't.
-  // Bridge cells have two levels: the deck (from about deck height) and the ground under it.
+  // Cells under a bridge have two levels: the deck (from about deck height) and the ground under it.
   navInto(from, cx, cy) {
-    if (!this.isDeck(cx, cy)) return this.navH(cx, cy);
-    if (Math.abs(DECK - from) <= 0.55) return DECK;
-    return from + BODY_H <= DECK_LO ? 0 : null;
+    const d = this.deckAt(cx, cy), g = this.navH(cx, cy);
+    if (!d) return g;
+    if (Math.abs(d.top - from) <= 0.55) return d.top;
+    return g !== null && g + BODY_H <= d.lo && from + BODY_H <= d.lo ? g : null;
   }
 
   // A* over cells. Bridge cells get a second node (index + w*h) for their deck.
@@ -340,7 +428,7 @@ export class World {
       if (!n) return null;
       tx = n.x; ty = n.y;
     }
-    const level = (x, y, h) => (this.isDeck(x, y) && h >= DECK_LO ? 1 : 0);
+    const level = (x, y, h) => { const d = this.deckAt(x, y); return d && h >= d.lo ? 1 : 0; };
     const g = new Float32Array(2 * N).fill(Infinity), came = new Int32Array(2 * N).fill(-1), closed = new Uint8Array(2 * N);
     const heap = [];
     const push = (i, f) => { heap.push([f, i]); let k = heap.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; } };
@@ -355,9 +443,10 @@ export class World {
       if (closed[cur]) continue;
       if (cur === goal) { found = true; break; }
       closed[cur] = 1;
-      const cell = cur % N, cx = cell % W, cy = (cell / W) | 0, ch = cur >= N ? DECK : this.navH(cx, cy);
-      const onLadder = this.chars[cy][cx] === 'L';
+      const cell = cur % N, cx = cell % W, cy = (cell / W) | 0, ch = cur >= N ? this.UT[cell] : this.navH(cx, cy);
+      const onLadder = this.chars[cy][cx] === 'L', rail = cur >= N ? this.rails[cell] : 0;
       for (const [ddx, ddy, cost] of dirs) {
+        if (rail && ((ddx > 0 && rail & 1) || (ddx < 0 && rail & 2) || (ddy > 0 && rail & 4) || (ddy < 0 && rail & 8))) continue;
         const nx = cx + ddx, ny = cy + ddy, nh = this.navInto(ch, nx, ny);
         if (nh === null) continue;
         // Up: steps, or a ladder straight onto its platform. Down: any drop (bots accept a little fall damage).
@@ -376,7 +465,7 @@ export class World {
     const path = [];
     for (let c = goal; c !== -1 && c !== start; c = came[c]) {
       const cell = c % N, pt = this.cellCenter(cell % W, (cell / W) | 0);
-      if (c >= N) pt.y = DECK;
+      if (c >= N) pt.y = this.UT[cell];
       path.push(pt);
     }
     path.reverse();
@@ -418,7 +507,7 @@ export class World {
     // Greedy-merge equal cells into boxes.
     const seen = new Uint8Array(this.w * this.h);
     // Interactive cells get their own meshes so they can open, shatter or explode.
-    for (const p of this.props.values()) { seen[p.y * this.w + p.x] = 1; p.view = buildProp(this, p, theme); group.add(p.view.root); }
+    for (const p of this.props.values()) { if (!p.up) seen[p.y * this.w + p.x] = 1; p.view = buildProp(this, p, theme); group.add(p.view.root); }
     let boxIndex = 0;
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
@@ -436,8 +525,7 @@ export class World {
       const box = (ax, ay, bx, by) => {
         const name = matFor(ch, boxIndex++);
         const b = bucket(name, ch === 'c' || ch === 'C' || ch === 'M');
-        if (ch === '=') addBox(b, ax * CELL, DECK_LO, ay * CELL, (bx + 1) * CELL, DECK, (by + 1) * CELL, name, ch);
-        else addBox(b, ax * CELL, 0, ay * CELL, (bx + 1) * CELL, heightOf(ch), (by + 1) * CELL, name, ch);
+        addBox(b, ax * CELL, 0, ay * CELL, (bx + 1) * CELL, heightOf(ch), (by + 1) * CELL, name, ch);
       };
       if (split === 1) { for (let yy = y; yy <= y1; yy++) for (let xx = x; xx <= x1; xx++) box(xx, yy, xx, yy); }
       else if (split === 2) {
@@ -445,6 +533,22 @@ export class World {
         if (horizontal) for (let yy = y; yy <= y1; yy++) box(x, yy, x1, yy);
         else for (let xx = x; xx <= x1; xx++) box(xx, y, xx, y1);
       } else box(x, y, x1, y1);
+    }
+    // Upper layer: bridge decks and tunnel roofs, greedy-merged per kind (grates are props above).
+    const useen = new Uint8Array(this.w * this.h);
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
+      const ch = this.up[y][x];
+      if (ch === '.' || ch === 'g' || useen[y * this.w + x]) continue;
+      let x1 = x;
+      while (x1 + 1 < this.w && this.up[y][x1 + 1] === ch && !useen[y * this.w + x1 + 1]) x1++;
+      let y1 = y;
+      outer2: while (y1 + 1 < this.h) {
+        for (let k = x; k <= x1; k++) if (this.up[y1 + 1][k] !== ch || useen[(y1 + 1) * this.w + k]) break outer2;
+        y1++;
+      }
+      for (let yy = y; yy <= y1; yy++) for (let xx = x; xx <= x1; xx++) useen[yy * this.w + xx] = 1;
+      const u = UPPER[ch], name = u.roof ? theme.wall : theme.platform;
+      addBox(bucket(name, false), x * CELL, u.lo, y * CELL, (x1 + 1) * CELL, u.top, (y1 + 1) * CELL, name, ch);
     }
     for (const [name, b] of buckets) {
       const geo = new THREE.BufferGeometry();
@@ -484,16 +588,21 @@ export class World {
     const ctx = c.getContext('2d');
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
-      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : 'Wk'.includes(ch) ? '#7a5a36' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' || ch === 'L' ? '#7c8591' : ch === '=' ? '#c3ccd6'
+      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : 'Wk'.includes(ch) ? '#7a5a36' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' || ch === 'L' ? '#7c8591'
         : isPlatform(ch) ? `rgb(${140 + platformH(ch) * 18},${150 + platformH(ch) * 16},${165 + platformH(ch) * 14})` : '#959eaa';
       ctx.fillRect(x * scale, y * scale, scale, scale);
+      // Bridges and roofs drawn over the ground, see-through so what's under them still shows.
+      const u = this.up[y][x];
+      if (u !== '.') {
+        ctx.fillStyle = u === 'T' ? 'rgba(60,66,76,.75)' : u === 'g' ? 'rgba(150,160,172,.6)' : 'rgba(205,213,222,.7)';
+        ctx.fillRect(x * scale, y * scale, scale, scale);
+      }
     }
     for (const [k, s] of Object.entries(this.sites)) {
-      const [x0, y0, x1, y1] = s.cells;
       ctx.fillStyle = 'rgba(255,90,90,.25)';
-      ctx.fillRect(x0 * scale, y0 * scale, (x1 - x0 + 1) * scale, (y1 - y0 + 1) * scale);
+      for (const [x0, y0, x1, y1] of s.rects) ctx.fillRect(x0 * scale, y0 * scale, (x1 - x0 + 1) * scale, (y1 - y0 + 1) * scale);
       ctx.fillStyle = '#ff6b6b'; ctx.font = `bold ${scale * 3}px Rajdhani, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(k, ((x0 + x1 + 1) / 2) * scale, ((y0 + y1 + 1) / 2) * scale);
+      ctx.fillText(k, (s.center[0] / CELL) * scale, (s.center[1] / CELL) * scale);
     }
     (this.def.spawns || []).forEach((r, i) => {
       ctx.fillStyle = i === 0 ? 'rgba(232,131,58,.35)' : 'rgba(78,163,255,.35)';
@@ -562,7 +671,7 @@ function siteDecal(letter, s) {
   tex.colorSpace = THREE.SRGBColorSpace;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
   m.rotation.x = -Math.PI / 2;
-  m.position.set((s.x0 + s.x1) / 2, 0.02, (s.z0 + s.z1) / 2);
+  m.position.set(s.center[0], 0.02, s.center[1]);
   m.receiveShadow = true;
   return m;
 }

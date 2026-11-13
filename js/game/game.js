@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { World, CELL, WOOD_HP, DECK_LO } from '../engine/world.js';
+import { World, CELL, WOOD_HP } from '../engine/world.js';
 import { Effects } from '../engine/effects.js';
 import { Viewmodel } from '../engine/viewmodel.js';
 import { buildGun } from '../engine/models.js';
@@ -576,6 +576,8 @@ export class Game {
 
   // ───────────────────────── movement ─────────────────────────
   movePlayer(p, wish, dt, { walk = false, crouch = false, jump = false } = {}) {
+    // Under a low bridge you stay crouched until there's room to stand.
+    if (!crouch && this.world.ceilingAbove(p.pos.x, p.pos.y, p.pos.z, p.radius) - p.pos.y < 1.85) { crouch = true; jump = false; }
     p.crouching = crouch;
     p.walking = walk;
     p.crouch += ((crouch ? 1 : 0) - p.crouch) * Math.min(1, dt * 10);
@@ -925,8 +927,9 @@ export class Game {
         }
       }
       // Bounce off the underside of a bridge deck.
-      if (n.pos.y < DECK_LO && next.y >= DECK_LO && W.isDeck(Math.floor(next.x / CELL), Math.floor(next.z / CELL))) {
-        n.vel.y = -n.vel.y * 0.4; next.y = DECK_LO - 0.01; hit.wall = true;
+      const dk = W.deckAt(Math.floor(next.x / CELL), Math.floor(next.z / CELL));
+      if (dk && n.pos.y < dk.lo && next.y >= dk.lo) {
+        n.vel.y = -n.vel.y * 0.4; next.y = dk.lo - 0.01; hit.wall = true;
       }
       const hNext = W.floorAt(next.x, next.z, n.pos.y);
       if (next.y < hNext) {

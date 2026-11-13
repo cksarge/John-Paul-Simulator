@@ -77,13 +77,12 @@ export class BotBrain {
         if (b.state === 'dropped') return new THREE.Vector3(...b.pos);
         if (b.state === 'planted') {
           if (!this.holdSpot || this.holdSpot.distanceTo(new THREE.Vector3(...b.pos)) > 10) {
-            const [x0, y0, x1, y1] = w.sites[b.site].cells;
-            this.holdSpot = w.randomCellIn([x0, y0, x1, y1]);
+            this.holdSpot = w.randomCellIn(w.sites[b.site].rects);
           }
           return this.holdSpot;
         }
         const site = g.botPlan.site;
-        if (!this.siteSpot || this.site !== site) { this.site = site; this.siteSpot = w.randomCellIn(w.sites[site].cells); }
+        if (!this.siteSpot || this.site !== site) { this.site = site; this.siteSpot = w.randomCellIn(w.sites[site].rects); }
         if (b.carrier === p.id) return this.siteSpot;
         // Escorts trail behind the carrier slightly, then spread across the site.
         if (g.state.phase === 'live' && g.state.time > g.mode.roundTime - 25 && Math.random() < 0.5) return this.lastSeen || this.siteSpot;
@@ -94,7 +93,7 @@ export class BotBrain {
       if (!this.holdSpot) {
         const sites = Object.keys(w.sites);
         const site = sites[g.botPlan.ctIndex++ % sites.length];
-        this.holdSpot = w.randomCellIn(w.sites[site].cells);
+        this.holdSpot = w.randomCellIn(w.sites[site].rects);
       }
       return this.holdSpot;
     }
@@ -130,7 +129,7 @@ export class BotBrain {
     if (carried) return new THREE.Vector3(...carried.pos);
     if (this.lastSeen && this.lostT < 6) return this.lastSeen;
     const site = list[0]?.site;
-    if (site && (!this.holdSpot || this.holdSite !== site)) { this.holdSite = site; this.holdSpot = w.randomCellIn(w.sites[site].cells); }
+    if (site && (!this.holdSpot || this.holdSite !== site)) { this.holdSite = site; this.holdSpot = w.randomCellIn(w.sites[site].rects); }
     return this.holdSpot || null;
   }
 

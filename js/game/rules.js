@@ -186,7 +186,7 @@ export class Rules {
     // Retakes: the attackers start on the site where the charge is already planted.
     const siteIds = Object.keys(g.world.sites);
     const retakeSite = m.kind === 'retake' ? siteIds[Math.floor(Math.random() * siteIds.length)] : null;
-    const attackZone = retakeSite ? g.world.cellsIn(g.world.sites[retakeSite].cells, true).filter((c) => g.world.navH(c.x, c.y) !== null) : null;
+    const attackZone = retakeSite ? g.world.cellsIn(g.world.sites[retakeSite].rects, true).filter((c) => g.world.navH(c.x, c.y) !== null) : null;
     for (let attempt = 0; attempt < 12; attempt++) {
       spawns = {};
       for (const team of [0, 1]) {
@@ -417,7 +417,7 @@ export class Rules {
     this.retakeZones ||= {};
     if (this.retakeZones[site]) return this.retakeZones[site];
     const w = this.g.world;
-    const S = w.cellsIn(w.sites[site].cells, true).filter((c) => w.navH(c.x, c.y) !== null);
+    const S = w.cellsIn(w.sites[site].rects, true).filter((c) => w.navH(c.x, c.y) !== null);
     const sx = S.reduce((a, c) => a + c.x, 0) / S.length, sy = S.reduce((a, c) => a + c.y, 0) / S.length;
     const at = (c) => { const x = (c.x + 0.5) * CELL, z = (c.y + 0.5) * CELL; return [x, w.heightAt(x, z), z]; };
     const cand = w.allFloor.filter((c) => w.navH(c.x, c.y) !== null && !S.includes(c))
@@ -439,7 +439,7 @@ export class Rules {
   placeHostages() {
     const w = this.g.world, ids = Object.keys(w.sites);
     const site = ids[Math.floor(Math.random() * ids.length)];
-    const cells = w.cellsIn(w.sites[site].cells, true).filter((c) => w.navH(c.x, c.y) !== null).sort(() => Math.random() - 0.5);
+    const cells = w.cellsIn(w.sites[site].rects, true).filter((c) => w.navH(c.x, c.y) !== null).sort(() => Math.random() - 0.5);
     const out = [];
     for (const c of cells) {
       const x = (c.x + 0.5) * CELL, z = (c.y + 0.5) * CELL;
