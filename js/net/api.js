@@ -202,13 +202,13 @@ export class Api {
   // ───────────── custom maps ─────────────
   // Listings leave out the grid (`data`); it's fetched only when a map is downloaded or played.
   async featuredMaps() {
-    const { data, error } = await this.sb.from('custom_maps').select('id,name,description,size,data,featured_slot,likes,profiles(username)').not('featured_slot', 'is', null).order('featured_slot');
+    const { data, error } = await this.sb.from('custom_maps').select('id,name,description,size,data,featured_slot,likes,profiles!owner(username)').not('featured_slot', 'is', null).order('featured_slot');
     if (error) { const e = friendly(error); e.missing = Api.missing(error); throw e; }
     return data;
   }
 
   async communityMaps({ q = '', sort = 'likes', owner = null } = {}) {
-    let query = this.sb.from('custom_maps').select('id,name,description,size,likes,featured_slot,created_at,updated_at,owner,profiles(username)');
+    let query = this.sb.from('custom_maps').select('id,name,description,size,likes,featured_slot,created_at,updated_at,owner,profiles!owner(username)');
     if (q) query = query.ilike('name', `%${q.replace(/[%_]/g, '')}%`);
     if (owner) query = query.eq('owner', owner);
     query = sort === 'new' ? query.order('created_at', { ascending: false }) : query.order('likes', { ascending: false }).order('created_at', { ascending: false });
@@ -218,7 +218,7 @@ export class Api {
   }
 
   async customMap(id) {
-    const { data, error } = await this.sb.from('custom_maps').select('id,name,description,size,data,featured_slot,likes,owner,profiles(username)').eq('id', id).maybeSingle();
+    const { data, error } = await this.sb.from('custom_maps').select('id,name,description,size,data,featured_slot,likes,owner,profiles!owner(username)').eq('id', id).maybeSingle();
     if (error) { const e = friendly(error); e.missing = Api.missing(error); throw e; }
     return data;
   }
