@@ -130,8 +130,9 @@ export class Hud {
       ${note ? `<p class="small" style="color:var(--accent);margin:0">${esc(note)}</p>` : ''}
       ${this.g.online ? '<p class="muted small">Online match keeps running.</p>' : ''}
       <button class="btn primary" data-a="resume">Resume</button>
+      ${this.g.tutorial?.step ? '<button class="btn" data-a="skip">Skip step</button>' : ''}
       <button class="btn" data-a="settings">Settings</button>
-      <button class="btn danger" data-a="leave">${this.g.mode.ranked ? 'Forfeit & leave' : 'Leave match'}</button>
+      <button class="btn danger" data-a="leave">${this.g.mode.ranked ? 'Forfeit & leave' : this.g.tutorial ? 'Leave tutorial' : 'Leave match'}</button>
     </div></div>`;
     const o = this.el.ovl;
     o.querySelector('[data-a=resume]').onclick = () => this.closeOverlay(true);
@@ -140,6 +141,8 @@ export class Hud {
       this.g.app.ui.openSettingsModal(this.el.ovl, () => { this.buildCrosshair(); this.el.fps.classList.toggle('hidden', !this.g.settings.showFps); this.showPause(); });
     };
     o.querySelector('[data-a=leave]').onclick = () => this.g.leave();
+    const skip = o.querySelector('[data-a=skip]');
+    if (skip) skip.onclick = () => { this.g.tutorial.skip(); this.closeOverlay(true); };
   }
 
   // End of the tutorial: where to go next.

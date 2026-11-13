@@ -380,6 +380,25 @@ export class UI {
       play: () => this.renderPlay(el), season: () => renderSeason(this, el), admin: () => (this.adminPanel ||= new AdminPanel(this)).render(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el),
       stats: () => this.renderStats(el), replays: () => this.renderReplays(el), workshop: () => (this.workshop ||= new Workshop(this)).render(el), leaderboard: () => this.renderLeaderboard(el), settings: () => this.renderSettings(el),
     })[tab]();
+    if (tab === 'play') this.maybeOfferTutorial();
+  }
+
+  // First launch: offer the tutorial once to players who haven't played a match yet. Waits for a
+  // signed-in player's profile so returning players on a new device aren't asked.
+  maybeOfferTutorial() {
+    const app = this.app;
+    try { if (localStorage.getItem('jps_tutorial_seen')) return; } catch { return; }
+    if (this.tutorialOffered || app.game || (app.user && !app.profile) || app.activeMatch?.()) return;
+    if ((app.profile?.matches || 0) > 0 || app.localStats().matches.length) return;
+    this.tutorialOffered = true;
+    const seen = () => { try { localStorage.setItem('jps_tutorial_seen', '1'); } catch { /* ignore */ } };
+    const m = this.modal(`<h2 class="m-h2">New here?</h2>
+      <p class="m-sub">Play the tutorial (about 6 min). It walks you through moving, shooting, grenades, buying and the charge, then a 1v1 against a bot.</p>
+      <div class="row"><button class="btn primary" data-go>Play</button><button class="btn ghost" data-x>Skip</button></div>
+      <p class="m-sub small">You can play it any time from Play → Versus bots.</p>`);
+    m.dataset.locked = '1';
+    m.querySelector('[data-go]').onclick = () => { seen(); m.remove(); app.startOffline({ mode: 'tutorial', map: 'course', botLevel: 'easy', noBots: true }); };
+    m.querySelector('[data-x]').onclick = () => { seen(); m.remove(); };
   }
 
   navHTML(tab) {
