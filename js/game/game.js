@@ -9,6 +9,7 @@ import { MODES, RESPAWN_KINDS, SOLO_KINDS, BOMB_KINDS, SIDED_KINDS, goalText, ec
 import { HostageView } from './hostage.js';
 import { sanitizeChar } from '../data/characters.js';
 import { Training } from './training.js';
+import { Tutorial } from './tutorial.js';
 import { Pings } from './pings.js';
 import { WEAPONS, GRENADES, itemInfo, GUN_GAME_ORDER, nadeDef, isKnife } from '../data/weapons.js';
 import { Player } from './player.js';
@@ -137,7 +138,7 @@ export class Game {
     setVolume(this.settings.volume);
 
     if (this.online) { this.bindNet(); this.loadModerationFlags(); }
-    if (this.mode.kind === 'training') { this.training = new Training(this); this.rec.unwrap(); }
+    if (this.mode.kind === 'training') { if (this.mode.id === 'tutorial') this.tutorial = new Tutorial(this); else this.training = new Training(this); this.rec.unwrap(); }
     if (this.isHost) {
       this.rules = new Rules(this);
       this.rules.begin();
@@ -233,7 +234,7 @@ export class Game {
     if (!this.ended && !inp.captured && !inp.typing && (!this.hud.overlayOpen() || this.hud.overlay === 'score') && now - inp.lockRequestedAt > 1600) this.hud.showPause();
     try {
       // The training range has no replays or kill cams, so it doesn't record (it can run for hours).
-      if (!(this.paused && !this.online)) { this.update(dt, now); if (!this.training) this.rec.tick(dt); }
+      if (!(this.paused && !this.online)) { this.update(dt, now); if (!this.training && !this.tutorial) this.rec.tick(dt); }
       if (this.killcam) this.updateKillcam(dt); else this.updateCamera(dt);
       this.engine.render();
     } catch (e) {
@@ -1460,7 +1461,7 @@ export class Game {
 
   onEvent(type, d) {
     const s = this.state, lp = this.local;
-    if (this.rec && !this.training && WORLD_EVENTS.has(type)) this.rec.event(type, d);
+    if (this.rec && !this.training && !this.tutorial && WORLD_EVENTS.has(type)) this.rec.event(type, d);
     switch (type) {
       case 'phase':
         s.phase = d.phase; s.time = d.time;

@@ -342,6 +342,49 @@ export const MAPS = {
       fog: 0x7b8794, fogDensity: 0.004, sun: 0xfff1dc, sunIntensity: 3.0, hemi: [0xbcd3ff, 0x4a4036, 0.75], exposure: 0.62,
     },
   },
+  // Tutorial course: one route through rooms, one room per skill (js/game/tutorial.js runs the steps).
+  // Top row runs east (movement, climbing, doors), the middle row west (shooting, grenades, buying, the
+  // site), the bottom row is the team room and the 1v1 arena. Not in any rotation.
+  course: {
+    id: 'course', name: 'Course', size: 'small', w: 48, h: 32, training: true,
+    desc: 'The tutorial course.',
+    ops: [
+      ['.', 1, 1, 46, 8],
+      ['c', 15, 1, 15, 8], // a row of crates to jump
+      ['#', 18, 1, 19, 3], ['#', 18, 6, 19, 8], // crawlway under a low bridge (see upper)
+      ['4', 22, 1, 24, 8], // 2 m ledge to mantle
+      ['7', 28, 1, 34, 2], ['L', 28, 3, 28, 3], ['E', 35, 1, 35, 1], // catwalk: ladder up, lift down
+      ['#', 38, 1, 38, 8], ['D', 38, 4, 38, 5], // sliding door
+      ['#', 43, 1, 43, 8], ['P', 43, 4, 43, 5], ['J', 41, 2, 41, 2], // gate and its switch
+      ['.', 44, 9, 46, 11],
+      ['.', 1, 12, 46, 19],
+      ['h', 40, 12, 40, 14], ['h', 40, 17, 40, 19], // firing line
+      ['#', 20, 12, 27, 14], ['.', 21, 12, 26, 13], ['Q', 22, 14, 25, 14], ['A', 23, 12, 23, 12], // cracked wall to blow open
+      ['#', 9, 12, 9, 19], ['.', 9, 15, 9, 16],
+      ['.', 2, 20, 4, 22],
+      ['.', 1, 23, 46, 30],
+      ['#', 9, 23, 9, 30], ['.', 9, 26, 9, 27],
+      // arena cover
+      ['C', 18, 24, 19, 25], ['C', 18, 28, 19, 29], ['h', 24, 26, 24, 27], ['C', 29, 23, 30, 24], ['C', 29, 29, 30, 30], ['h', 34, 25, 34, 28], ['C', 38, 26, 39, 27],
+    ],
+    upper: [['-', 18, 4, 19, 5]],
+    sites: { A: [2, 13, 7, 18] },
+    spawns: [[2, 3, 4, 6], [43, 25, 45, 28]],
+    theme: {
+      wall: 'concrete', wall2: 'panel', half: 'concrete', floor: 'epoxy', platform: 'grate', crate: 'crate_metal', crate2: 'crate_mil', trim: 'hazard', door: 'panel',
+      decor: { trim: 'hazard', skyline: 'industrial', particles: 'dust', decals: ['dirt', 'paint'], wall: ['lamp', 'vent', 'lamp', 'pipe'], lights: 10, lampColor: 0xffe2b8, groundColor: 0x55534e, signs: 4, signColor: '#d9a531' },
+      sky: { elevation: 48, azimuth: 120, turbidity: 5, rayleigh: 1.1 },
+      fog: 0x7b8794, fogDensity: 0.004, sun: 0xfff1dc, sunIntensity: 3.0, hemi: [0xbcd3ff, 0x4a4036, 0.75], exposure: 0.62,
+    },
+  },
+};
+
+// Tutorial course zones (cell rects [x0, y0, x1, y1]): where each step's marker goes and where you
+// respawn if you die during it.
+export const COURSE_ZONES = {
+  start: [2, 3, 4, 6], walk: [11, 2, 13, 7], jump: [15, 3, 15, 6], crouch: [18, 4, 19, 5], mantle: [22, 3, 24, 6],
+  ladderTop: [30, 1, 32, 2], liftBottom: [35, 1, 36, 2], door: [38, 4, 38, 5], gate: [41, 2, 41, 2],
+  range: [42, 15, 45, 16], nades: [22, 16, 25, 18], buy: [12, 15, 15, 18], site: [3, 14, 6, 17], team: [3, 25, 6, 28], arena: [11, 25, 13, 28],
 };
 
 // ───────────────────────── conditions (night and weather) ─────────────────────────

@@ -604,6 +604,7 @@ export class UI {
           <button class="mrow ${this.onlineMode === 'custom' ? 'sel' : ''}" data-mode="custom"><span class="mrow-name">Custom lobby</span><span class="mrow-goal">Your rules, invite code, bots optional</span><span class="mrow-size">Any</span></button></div>` : ''}
         ${online ? `<div class="m-join"><input type="text" id="join-code" maxlength="5" placeholder="Lobby code" aria-label="Lobby code"><button class="btn small" id="join-btn">Join</button><button class="btn small ghost" id="browse-btn">Browse open lobbies</button></div><div id="lobby-list"></div>` : ''}
       ` : `
+        <button class="m-train" id="tutorial"><b>Tutorial</b><span>Learn every control in about 6 minutes, then win a 1v1</span></button>
         <button class="m-train" id="train"><b>Training Range</b><span>Aim drills, moving targets, spray practice and grenade line-ups</span></button>
         <div class="mrows">${OFFLINE_MODES.map((id) => row(id, id === o.mode, 'data-omode')).join('')}</div>
         <div class="m-label">Map</div>
@@ -645,6 +646,7 @@ export class UI {
       btn.onclick = () => (custom ? this.createLobby() : this.startQueue(this.onlineMode));
     } else {
       $('#train').onclick = () => app.startOffline({ mode: 'training', map: 'range', botLevel: 'easy' });
+      $('#tutorial').onclick = () => app.startOffline({ mode: 'tutorial', map: 'course', botLevel: 'easy', noBots: true });
       el.querySelectorAll('[data-omode]').forEach((b) => { b.onclick = () => { o.mode = b.dataset.omode; if (!MAPS[o.map].sites && needsSites(MODES[o.mode])) { o.map = 'dustline'; this.scene?.show(o.map); this.footMap(); } this.renderPlay(el); }; });
       el.querySelectorAll('[data-map]').forEach((b) => { b.onclick = () => {
         if (needsSites(MODES[o.mode]) && !MAPS[b.dataset.map].sites) { this.toast(`${MODES[o.mode].name} needs one of the large maps with sites.`, 'bad'); return; }

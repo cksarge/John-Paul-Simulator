@@ -67,6 +67,12 @@ export const MODES = {
     desc: 'Aim drills, moving targets, spray practice and grenade line-ups. Infinite ammo, every weapon free.',
     maps: ['range'],
   },
+  // The tutorial is a training variant (same sandbox: no rounds, free buying, no stats); js/game/tutorial.js runs it.
+  tutorial: {
+    id: 'tutorial', name: 'Tutorial', short: 'TUT', maxPlayers: 2, kind: 'training', offlineOnly: true,
+    desc: 'A guided course through movement, shooting, grenades, buying, the charge and team tools, then a 1v1.',
+    maps: ['course'],
+  },
 };
 
 // Money rules for a mode, or null when loadouts are free.
