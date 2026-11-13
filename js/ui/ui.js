@@ -12,6 +12,7 @@ import { BOT_LEVELS } from '../game/bot.js';
 import { PASSWORD_RULES, OTP_LENGTH, assertPassword } from '../data/auth.js';
 import { mountTurnstile } from './turnstile.js';
 import { cardImage, itemSwatch } from './cards.js';
+import { applyPadSettings, padHelp } from '../engine/gamepad.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
@@ -998,6 +999,14 @@ export class UI {
         <span>Kill cam</span>${toggle('killcam')}
         <span>Master volume</span>${range('volume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')}
       </div>
+      <h2 class="m-h2">Controller</h2>
+      <div class="settings-grid">
+        <span>Look sensitivity</span>${range('padSens', 0.2, 3, 0.05, (v) => (+v).toFixed(2))}
+        <span>Invert look Y</span>${toggle('padInvertY')}
+        <span>Stick dead zone</span>${range('padDeadzone', 0.05, 0.4, 0.01, (v) => Math.round(v * 100) + '%')}
+        <span>Vibration</span>${toggle('padVibration')}
+      </div>
+      <p class="m-sub small">${padHelp()}</p>
       <h2 class="m-h2">Crosshair</h2>
       <div class="settings-grid">
         <span>Colour</span><div class="swatches">${['#3dff8f', '#ffffff', '#ffe14d', '#4dd7ff', '#ff4dd2', '#ff4d4d'].map((c) => `<div class="swatch ${s.crosshairColor === c ? 'sel' : ''}" data-ch="${c}" style="background:${c}"></div>`).join('')}<input type="color" data-color="crosshairColor" value="${s.crosshairColor}"></div><span></span>
@@ -1016,6 +1025,7 @@ export class UI {
       if (graphics && !('preset' in patch)) s.preset = 'custom';
       saveSettings(s);
       setVolume(s.volume);
+      applyPadSettings(s);
       if (graphics) app.engine.applySettings(s);
       else { app.engine.camera.fov = s.fov; app.engine.vmCamera.fov = s.viewmodelFov; app.engine.camera.updateProjectionMatrix(); app.engine.vmCamera.updateProjectionMatrix(); }
     };
@@ -1039,7 +1049,7 @@ export class UI {
     root.querySelectorAll('[data-range]').forEach((r) => {
       const key = r.dataset.range;
       const fmtEl = root.querySelector(`[data-val="${key}"]`);
-      const fmt = { renderScale: (v) => Math.round(v * 100) + '%', fov: (v) => v + '°', viewmodelFov: (v) => v + '°', volume: (v) => Math.round(v * 100) + '%', crosshairSize: (v) => v + 'px', crosshairGap: (v) => v + 'px', crosshairThick: (v) => v + 'px' }[key] || ((v) => (+v).toFixed(2));
+      const fmt = { renderScale: (v) => Math.round(v * 100) + '%', fov: (v) => v + '°', viewmodelFov: (v) => v + '°', volume: (v) => Math.round(v * 100) + '%', crosshairSize: (v) => v + 'px', crosshairGap: (v) => v + 'px', crosshairThick: (v) => v + 'px', padDeadzone: (v) => Math.round(v * 100) + '%' }[key] || ((v) => (+v).toFixed(2));
       r.oninput = () => { fmtEl.textContent = fmt(+r.value); if (key !== 'renderScale') apply({ [key]: +r.value }, false); };
       r.onchange = () => apply({ [key]: +r.value }, GRAPHICS.has(key));
     });

@@ -7,6 +7,7 @@ import { MODES } from './data/modes.js';
 import { MenuScene } from './ui/menuscene.js';
 import { PartyManager } from './net/party.js';
 import { initAudio } from './engine/audio.js';
+import { pad, PadNav, isTouchOnly, applyPadSettings, padHelp } from './engine/gamepad.js';
 import { normalizeInventory, rollDrop, addToInventory, KINDS } from './data/skins.js';
 
 const boot = document.getElementById('boot');
@@ -42,6 +43,9 @@ class App {
     this.inventory = this.loadLocalInventory();
     this.ui = new UI(this);
     addEventListener('pointerdown', () => initAudio(), { once: true });
+    applyPadSettings(this.settings);
+    this.padNav = new PadNav(this);
+    if (isTouchOnly()) this.watchController();
     step(80, 'Checking session');
     let session = null;
     try { session = this.api ? await this.api.session() : null; } catch { session = null; }
@@ -56,6 +60,48 @@ class App {
     else this.ui.showAuth();
     step(100, 'Ready');
     setTimeout(() => boot.classList.add('done'), 150);
+  }
+
+  // Phones and tablets can't play with touch, so a controller has to be connected first.
+  // The gate comes back (and pauses the match) if the controller drops out.
+  watchController() {
+    const check = () => {
+      const has = pad.connected();
+      if (!has && !document.querySelector('.pad-gate')) this.showControllerGate();
+      if (has) this.updateControllerGate();
+    };
+    addEventListener('gamepadconnected', check);
+    addEventListener('gamepaddisconnected', () => setTimeout(check, 50));
+    this.showControllerGate();
+    setInterval(check, 500);
+  }
+
+  showControllerGate() {
+    if (document.querySelector('.pad-gate')) return;
+    const g = this.game;
+    if (g && !g.ended && !g.hud.overlayOpen()) g.hud.showPause();
+    const el = document.createElement('div');
+    el.className = 'pad-gate';
+    el.innerHTML = `<div class="pad-gate-card">
+      <svg class="pad-gate-icon" viewBox="0 0 120 72" aria-hidden="true"><path d="M30 10h60c14 0 22 10 26 30s-2 30-12 30c-8 0-12-6-18-14H34c-6 8-10 14-18 14C6 70 0 60 4 40S16 10 30 10z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M30 28v20M20 38h20" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="84" cy="30" r="4.5" fill="currentColor"/><circle cx="96" cy="40" r="4.5" fill="currentColor"/><circle cx="72" cy="40" r="4.5" fill="currentColor"/><circle cx="84" cy="50" r="4.5" fill="currentColor"/></svg>
+      <h1>Connect a controller</h1>
+      <p>John-Paul Simulator can't be played with touch controls. Pair a Bluetooth controller (Xbox, PlayStation, Switch Pro or similar) or plug one in, then <b>press any button on it</b>.</p>
+      <p class="pad-gate-status" aria-live="polite">Waiting for a controller…</p>
+      <button class="btn primary big hidden" data-gate-go>Tap to continue</button>
+      <p class="pad-gate-help">${padHelp()}</p>
+    </div>`;
+    document.body.appendChild(el);
+    el.querySelector('[data-gate-go]').onclick = () => { initAudio(); el.remove(); pad.setActive(true); };
+    this.updateControllerGate();
+  }
+
+  updateControllerGate() {
+    const el = document.querySelector('.pad-gate');
+    if (!el) return;
+    const has = pad.connected();
+    el.querySelector('.pad-gate-status').textContent = has ? `Controller connected: ${(pad.id || 'Gamepad').replace(/\s*\(.*$/, '')}` : 'Waiting for a controller…';
+    el.querySelector('[data-gate-go]').classList.toggle('hidden', !has);
+    el.classList.toggle('ready', has);
   }
 
   loadChar() {

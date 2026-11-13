@@ -99,6 +99,25 @@ Weapon, accuracy, rival and death-location stats are always kept in the browser.
 | Chat (online) | Y or Enter |
 | Pause / settings | Esc |
 
+### Controller
+
+Any controller the browser sees as a standard gamepad works (Xbox, PlayStation, Switch Pro and most others). Pick it up and press a button; hints switch to controller buttons, and any key or mouse movement switches back. Phones and tablets have no keyboard or mouse, so they show a "Connect a controller" screen until one is paired.
+
+| Action | Button |
+|---|---|
+| Move (light push walks) / look | Left stick / right stick |
+| Fire / aim or scope | RT / LT |
+| Jump / crouch / reload | A / B / X |
+| Last weapon / next weapon / knife / grenade / charge | Y / D-pad ↓ / R3 / LB / L3 |
+| Use, plant, defuse | RB (hold to plant or defuse) |
+| Buy menu / rebuy | D-pad ← / D-pad → |
+| Emote wheel | Hold D-pad ↑, point with the right stick |
+| Scoreboard / pause | View / Menu |
+| Menus | D-pad or left stick to move, A select, B back, LB/RB switch sections, right stick scrolls |
+| Replays | X play/pause, LT/RT skip 5 s, Y camera, LB/RB switch player |
+
+Look sensitivity, invert Y, stick dead zone and vibration are under Settings → Controller. Chat still needs a keyboard.
+
 ## How multiplayer works
 
 There is no game server. The player who forms the match (the longest wait in the queue, or the lobby creator) becomes the **host**. The host runs the round logic, the economy, the bots and damage, and relays everything over Supabase Realtime broadcast channels. Each player simulates their own movement and hit detection, which favours the shooter.

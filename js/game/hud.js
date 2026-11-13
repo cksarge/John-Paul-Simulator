@@ -4,6 +4,7 @@ import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText, econFor } from '../dat
 import { RARITIES, KINDS } from '../data/skins.js';
 import { itemSwatch, emoteName, cardImage } from '../ui/cards.js';
 import { spreadFor } from './combat.js';
+import { pad, padHelp } from '../engine/gamepad.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtTime = (t) => { t = Math.max(0, Math.ceil(t)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
@@ -106,9 +107,9 @@ export class Hud {
     this.el.ovl.innerHTML = `<div class="overlay"><div class="panel pause" style="text-align:center">
       <h3>${esc(m.name)} · ${esc(map.name)}</h3>
       <h1 style="margin:0">Ready up</h1>
-      <p class="muted small">WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy (1-3 presets) · F rebuy · K keep loadout · E doors, ammo, plant/defuse · Tab scores · 1-5 weapons</p>
+      <p class="muted small">${pad.active ? padHelp().split(' In menus')[0] : 'WASD move · Space jump · Ctrl crouch · Shift walk · R reload · B buy (1-3 presets) · F rebuy · K keep loadout · E doors, ammo, plant/defuse · Tab scores · 1-5 weapons'}</p>
       <p class="goal-tag" style="margin:0">${esc(goalText(m))}</p>
-      <button class="btn primary big" data-a="go">Click to play</button>
+      <button class="btn primary big" data-a="go">${pad.active ? pad.label('play') + ' to play' : 'Click to play'}</button>
     </div></div>`;
     this.el.ovl.querySelector('[data-a=go]').onclick = () => this.closeOverlay(true);
   }
@@ -250,7 +251,7 @@ export class Hud {
       <div class="kc-card" style="background-image:url(${cardImage(k?.char?.card || 'standard')})">
         <div class="kc-text"><span>KILLED BY</span><b>${esc(k?.name || '')}</b><em>${esc(wname)}${info.hs ? ' · headshot' : ''}${info.hp ? ` · ${info.hp} HP left` : ''}</em></div>
       </div>
-      <div class="kc-skip">Space · skip</div>`;
+      <div class="kc-skip">${pad.active ? pad.label('next') : 'Space'} · skip</div>`;
     el.classList.remove('hidden');
   }
 
@@ -372,7 +373,7 @@ export class Hud {
     if (g.spectator) {
       this.root.classList.add('spectator-hud');
       const t = g.spectateTarget;
-      const html = `<span class="spec-tag">SPECTATING</span>${t ? `<b>${esc(t.name)}</b>` : '<b>No one alive</b>'}<span class="muted small">Click / Space next · Q previous · V camera (${{ follow: 'third person', pov: 'first person', free: 'free' }[g.specCam.mode]}) · Tab scores · Esc leave</span>`;
+      const html = `<span class="spec-tag">SPECTATING</span>${t ? `<b>${esc(t.name)}</b>` : '<b>No one alive</b>'}<span class="muted small">${pad.active ? 'A next · Y previous · X camera' : 'Click / Space next · Q previous · V camera'} (${{ follow: 'third person', pov: 'first person', free: 'free' }[g.specCam.mode]})${pad.active ? ' · View scores · Menu pause' : ' · Tab scores · Esc leave'}</span>`;
       if (html !== this.specHtml) { this.specHtml = html; el.spec.innerHTML = html; }
       el.spec.classList.remove('hidden');
     }
@@ -467,16 +468,16 @@ export class Hud {
     // Spectate
     const st = g.spectateTarget;
     if (!g.spectator) el.spec.classList.toggle('hidden', p.alive || !st || s.phase === 'over');
-    if (!g.spectator && !p.alive && st) el.spec.innerHTML = `Spectating <b>${esc(st.name)}</b> · ${st.hp} HP <span class="muted small">(click to switch)</span>`;
+    if (!g.spectator && !p.alive && st) el.spec.innerHTML = `Spectating <b>${esc(st.name)}</b> · ${st.hp} HP <span class="muted small">(${pad.active ? 'A' : 'click'} to switch)</span>`;
 
     // Contextual hints: recomputed every tick and shown whenever no timed message is up.
     let hint = '';
     if (p.alive && s.phase === 'live') {
-      if (bomb.state === 'carried' && bomb.carrier === p.id && g.world.siteAt(p.pos.x, p.pos.z)) hint = 'Hold E to plant the charge';
-      else if (planted && p.team === 1 && Math.hypot(p.pos.x - bomb.pos[0], p.pos.z - bomb.pos[2]) < 2.2) hint = 'Hold E to defuse';
+      if (bomb.state === 'carried' && bomb.carrier === p.id && g.world.siteAt(p.pos.x, p.pos.z)) hint = `Hold ${pad.label('use')} to plant the charge`;
+      else if (planted && p.team === 1 && Math.hypot(p.pos.x - bomb.pos[0], p.pos.z - bomb.pos[2]) < 2.2) hint = `Hold ${pad.label('use')} to defuse`;
       else hint = g.interactHint?.() || '';
     }
-    if (s.phase === 'buy' && !this.overlay && p.alive) hint = econFor(g.mode) ? 'Buy phase — press B to open the buy menu' : 'Press B to choose your loadout';
+    if (s.phase === 'buy' && !this.overlay && p.alive) hint = econFor(g.mode) ? `Buy phase — press ${pad.label('buy')} to open the buy menu` : `Press ${pad.label('buy')} to choose your loadout`;
     this.hint = hint;
     this.showInfoLine();
   }

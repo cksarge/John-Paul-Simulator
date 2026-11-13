@@ -7,6 +7,7 @@ import { sfx, setListener, initAudio, setVolume } from '../engine/audio.js';
 import { MAPS } from '../data/maps.js';
 import { MODES, SOLO_KINDS, TEAM_CLASS } from '../data/modes.js';
 import { itemInfo, nadeDef } from '../data/weapons.js';
+import { pad, BTN } from '../engine/gamepad.js';
 import { sampleFrames, frameIndex, unpack, ITEM_IDS } from './recorder.js';
 import { SpectatorCam, CAM_LABELS } from './spectatorcam.js';
 
@@ -93,6 +94,26 @@ export class ReplayViewer {
     canvas.addEventListener('click', this.onClick);
   }
 
+  // Controller: X play/pause, Y camera, LB/RB switch player, LT/RT skip 5 s; sticks fly the free camera.
+  // A, B and the D-pad work the on-screen controls through the menu navigation.
+  pollPad(dt) {
+    const s = pad.read();
+    if (!s || !pad.active) { this.padPrev = []; return null; }
+    const prev = this.padPrev || [], hit = (b) => s.buttons[b] && !prev[b];
+    if (hit(BTN.X)) this.togglePlay();
+    if (hit(BTN.Y)) this.cycleCam();
+    if (hit(BTN.LB)) this.cycleTarget(-1);
+    if (hit(BTN.RB)) this.cycleTarget(1);
+    if (s.lt > 0.5 && !(this.padLt > 0.5)) this.seek(this.t - 5);
+    if (s.rt > 0.5 && !(this.padRt > 0.5)) this.seek(this.t + 5);
+    this.padPrev = s.buttons; this.padLt = s.lt; this.padRt = s.rt;
+    if (this.cam.mode !== 'free') return null;
+    const keys = new Set();
+    if (s.ls.y < -0.3) keys.add('KeyW'); if (s.ls.y > 0.3) keys.add('KeyS');
+    if (s.ls.x > 0.3) keys.add('KeyD'); if (s.ls.x < -0.3) keys.add('KeyA');
+    return { keys, dx: s.rs.x * 1400 * dt, dy: s.rs.y * 1400 * dt };
+  }
+
   togglePlay() { this.playing = !this.playing; if (this.t >= this.data.duration) { this.seek(0); this.playing = true; } this.refreshControls(); }
   cycleCam() { const m = this.cam.cycle(); if (m !== 'free' && document.pointerLockElement) document.exitPointerLock(); this.refreshControls(); }
   cycleTarget(dir) { const n = this.data.players.length; this.targetIdx = (this.targetIdx + dir + n) % n; this.refreshControls(); }
@@ -114,7 +135,8 @@ export class ReplayViewer {
     this.world.update(step);
     if (step) this.effects.update(step);
     const target = this.targetState();
-    this.cam.update(dt, target, { keys: this.keys, dx: this.mouse.dx, dy: this.mouse.dy, locked: !!document.pointerLockElement });
+    const padIn = this.pollPad(dt);
+    this.cam.update(dt, target, { keys: padIn ? new Set([...this.keys, ...padIn.keys]) : this.keys, dx: this.mouse.dx + (padIn?.dx || 0), dy: this.mouse.dy + (padIn?.dy || 0), locked: !!document.pointerLockElement || !!padIn });
     this.mouse.dx = this.mouse.dy = 0;
     const pov = this.cam.mode === 'pov' && target;
     if (pov) {
@@ -248,7 +270,7 @@ export class ReplayViewer {
         <div class="seg rp-speed">${SPEEDS.map((s) => `<button data-s="${s}">${s}×</button>`).join('')}</div>
         <button class="btn small" data-a="cam"></button>
       </div>
-      <div class="rp-help">Space play/pause · ←/→ 5 s · V camera · [ ] or Tab switch player · click the view in free camera, then WASD + mouse</div>
+      <div class="rp-help">${pad.active ? 'X play/pause · LT/RT skip 5 s · Y camera · LB/RB switch player · sticks fly the free camera · B exit' : `Space play/pause · ←/→ 5 s · V camera · [ ] or Tab switch player · click the view in free camera, then WASD + mouse`}</div>
     </div>`;
     const q = (s) => hud.querySelector(s);
     q('[data-a=exit]').onclick = () => this.exit();

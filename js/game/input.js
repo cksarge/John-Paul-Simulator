@@ -1,4 +1,12 @@
-// Keyboard/mouse state with pointer lock. Edge-triggered presses are read with `pressed()`.
+import { pad, BTN } from '../engine/gamepad.js';
+
+// Controller buttons that act like keys, so the game reads them exactly like the keyboard.
+const PAD_KEYS = {
+  [BTN.A]: 'Space', [BTN.B]: 'ControlLeft', [BTN.X]: 'KeyR', [BTN.Y]: 'KeyQ', [BTN.LB]: 'Digit4', [BTN.RB]: 'KeyE',
+  [BTN.BACK]: 'Tab', [BTN.UP]: 'KeyG', [BTN.LEFT]: 'KeyB', [BTN.RIGHT]: 'KeyF', [BTN.L3]: 'Digit5', [BTN.R3]: 'Digit3',
+};
+
+// Keyboard/mouse state with pointer lock, plus a controller. Edge-triggered presses are read with `pressed()`.
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
@@ -47,12 +55,72 @@ export class Input {
     canvas.addEventListener('click', this._h.click);
     this.locked = false;
     this.lockRequestedAt = 0;
+    this.padPrev = [];
+    this.padHeld = new Set();
+    this.padEdges = new Set();
+    this.padState = null;
+    this.padFire = false;
+    this.padSuppressUntil = 0;
+    this.onPadStart = null;
   }
+
+  // True when the game has the controls: the mouse is captured, or a controller is in use.
+  get captured() { return this.locked || (pad.active && !!this.padState); }
+
+  // Reads the controller once per frame and folds its buttons into the key and mouse state.
+  pollPad() {
+    const s = pad.read();
+    this.padState = s;
+    if (!s) {
+      for (const c of this.padHeld) this.keys.delete(c);
+      this.padHeld.clear();
+      this.padFire = false;
+      this.padPrev = [];
+      return;
+    }
+    const quiet = performance.now() < this.padSuppressUntil;
+    const prev = this.padPrev;
+    s.buttons.forEach((on, i) => {
+      if (on && !prev[i] && !quiet) this.padEdges.add(i);
+      const code = PAD_KEYS[i];
+      if (!code) return;
+      if (on && !prev[i] && !quiet) { if (!this.keys.has(code)) this.edges.add(code); this.keys.add(code); this.padHeld.add(code); }
+      else if (!on && this.padHeld.has(code)) { this.keys.delete(code); this.padHeld.delete(code); }
+    });
+    if (!quiet) {
+      if (s.buttons[BTN.DOWN] && !prev[BTN.DOWN]) this.mouse.wheel += 1;
+      if (s.lt > 0.5 && !(this.padLt > 0.5)) this.mouseEdges.add('right');
+      if (s.rt > 0.3 && !this.padFire) this.mouseEdges.add('left');
+      if (s.buttons[BTN.START] && !prev[BTN.START]) this.onPadStart?.();
+    }
+    this.padFire = s.rt > 0.3 && (!quiet || this.padFire);
+    this.padLt = s.lt;
+    this.padPrev = s.buttons;
+  }
+
+  padPressed(b) { return this.padEdges.has(b); }
+
+  // Analog move from the left stick: {f, r, m}, or null when the stick is centred.
+  padMove() {
+    const ls = this.padState?.ls;
+    return pad.active && ls && ls.m > 0 ? { f: -ls.y, r: ls.x, m: ls.m } : null;
+  }
+
+  // Right stick with a response curve for fine aim near the centre.
+  padLook() {
+    const rs = this.padState?.rs;
+    if (!pad.active || !rs || !rs.m) return { x: 0, y: 0 };
+    const k = Math.pow(rs.m, 1.8) / rs.m;
+    return { x: rs.x * k, y: rs.y * k };
+  }
+
+  fireDown() { return this.mouse.left || (pad.active && this.padFire); }
 
   // Resolves once the pointer is captured; rejects if the browser refuses
   // (it blocks re-locking for about a second after Esc or a tab switch).
   lock() {
-    if (this.locked) return Promise.resolve();
+    // A controller (or a touch screen with no pointer lock at all) needs no mouse capture.
+    if (this.locked || pad.active || !this.canvas.requestPointerLock) return Promise.resolve();
     this.lockRequestedAt = performance.now();
     return new Promise((resolve, reject) => {
       const done = () => { cleanup(); resolve(); };
@@ -82,6 +150,7 @@ export class Input {
   endFrame() {
     this.edges.clear();
     this.mouseEdges.clear();
+    this.padEdges.clear();
     this.mouse.dx = this.mouse.dy = 0;
     this.mouse.wheel = 0;
   }

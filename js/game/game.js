@@ -9,6 +9,7 @@ import { MODES, RESPAWN_KINDS, SOLO_KINDS, goalText, econFor } from '../data/mod
 import { WEAPONS, GRENADES, itemInfo, GUN_GAME_ORDER, nadeDef, isKnife } from '../data/weapons.js';
 import { Player } from './player.js';
 import { Input } from './input.js';
+import { pad, BTN } from '../engine/gamepad.js';
 import { Rules } from './rules.js';
 import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
@@ -105,6 +106,13 @@ export class Game {
     this.input = new Input(eng.renderer.domElement);
     this.input.onUnlock = () => { if (!this.ended && !this.hud.overlayOpen()) this.hud.showPause(); };
     this.input.onCanvasClick = () => { if (!this.ended && (!this.hud.overlayOpen() || this.hud.overlay === 'score')) this.hud.closeOverlay(true); };
+    // Start opens the pause menu, or closes whatever menu is open.
+    this.input.onPadStart = () => {
+      if (this.ended) return;
+      const o = this.hud.overlay;
+      if (!o || o === 'score') { this.input.unlock(); this.hud.showPause(); }
+      else if (o !== 'settings') this.hud.closeOverlay(true);
+    };
     this.hud = new Hud(this);
     this.hud.mount();
     initAudio();
@@ -197,7 +205,8 @@ export class Game {
     // Safety net: if the mouse was released while another panel (e.g. the Tab scoreboard) was open,
     // nothing would offer a way back in, so show the pause menu.
     const inp = this.input;
-    if (!this.ended && !inp.locked && !inp.typing && (!this.hud.overlayOpen() || this.hud.overlay === 'score') && now - inp.lockRequestedAt > 1600) this.hud.showPause();
+    inp.pollPad();
+    if (!this.ended && !inp.captured && !inp.typing && (!this.hud.overlayOpen() || this.hud.overlay === 'score') && now - inp.lockRequestedAt > 1600) this.hud.showPause();
     try {
       if (!(this.paused && !this.online)) { this.update(dt, now); this.rec.tick(dt); }
       if (this.killcam) this.updateKillcam(dt); else this.updateCamera(dt);
@@ -263,16 +272,20 @@ export class Game {
   // ───────────────────────── local player ─────────────────────────
   updateLocal(dt, p) {
     const inp = this.input, s = this.settings;
-    const ui = this.hud.overlayOpen() || !inp.locked;
+    const ui = this.hud.overlayOpen() || !inp.captured;
     // Look
     const w = p.weapon;
     const zoom = p.ws.scope > 0 && w?.scope ? w.scope[p.ws.scope - 1] / s.fov : 1;
     const sens = 0.0022 * s.sens * (p.ws.scope > 0 ? s.scopedSens * zoom : 1);
     // Hold G for the emote wheel: the mouse picks a slot instead of turning.
     const wheel = !ui && p.alive && inp.down('KeyG');
+    const stick = inp.padLook();
     if (wheel) {
       if (!this.wheel) this.wheel = { x: 0, y: 0 };
       this.wheel.x += inp.mouse.dx; this.wheel.y += inp.mouse.dy;
+      // On a controller the right stick points straight at a slot.
+      const rs = inp.padState?.rs;
+      if (rs && rs.m > 0.5) { this.wheel.x = rs.x * 100; this.wheel.y = rs.y * 100; }
       this.hud.emoteWheel(p.char?.emotes || [], this.wheelSlot());
     } else if (this.wheel) {
       const slot = this.wheelSlot();
@@ -282,10 +295,13 @@ export class Game {
       if (id) this.emote(p, id);
     }
     const mdx = ui || wheel ? 0 : inp.mouse.dx, mdy = ui || wheel ? 0 : inp.mouse.dy * (s.invertY ? -1 : 1);
-    this.lookDX = mdx; this.lookDY = mdy;
+    // Controller look turns at a rate (radians per second at full tilt) instead of by distance.
+    const padRate = ui || wheel ? 0 : 3.6 * s.padSens * dt * (p.ws.scope > 0 ? s.scopedSens * zoom : 1);
+    const pdx = stick.x * padRate, pdy = stick.y * padRate * (s.padInvertY ? -1 : 1);
+    this.lookDX = mdx + pdx / 0.0022; this.lookDY = mdy + pdy / 0.0022;
     if (p.alive) {
-      p.yaw -= mdx * sens;
-      p.pitch = THREE.MathUtils.clamp(p.pitch - mdy * sens, -1.5, 1.5);
+      p.yaw -= mdx * sens + pdx;
+      p.pitch = THREE.MathUtils.clamp(p.pitch - mdy * sens - pdy, -1.5, 1.5);
     }
     this.punch += (0 - this.punch) * Math.min(1, dt * 5);
 
@@ -318,16 +334,19 @@ export class Game {
 
     // Move
     const wish = new THREE.Vector3();
+    // A light push on the stick walks quietly, like holding Shift.
+    const stickMove = ui ? null : inp.padMove();
     if (!frozen && !acting) {
-      const f = (k('KeyW') ? 1 : 0) - (k('KeyS') ? 1 : 0);
-      const r = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
+      let f = (k('KeyW') ? 1 : 0) - (k('KeyS') ? 1 : 0);
+      let r = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
+      if (stickMove) { f = stickMove.f; r = stickMove.r; }
       const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
       wish.set(-sy * f + cy * r, 0, -cy * f - sy * r);
       if (wish.lengthSq() > 0) wish.normalize();
     }
     const wasGround = p.onGround, prevVy = p.vel.y;
     this.movePlayer(p, wish, dt, {
-      walk: k('ShiftLeft') || k('ShiftRight'),
+      walk: k('ShiftLeft') || k('ShiftRight') || (!!stickMove && stickMove.m < 0.6),
       crouch: k('ControlLeft') || k('KeyC') || acting,
       jump: !frozen && !acting && !ui && inp.pressed('Space'),
     });
@@ -343,7 +362,7 @@ export class Game {
       if (inp.clicked('right')) this.altFire(p);
     }
     if (this.viewmodel.id !== p.weaponId) this.viewmodel.setWeapon(p.weaponId, p.char);
-    const firing = !ui && !frozen && !acting && inp.mouse.left;
+    const firing = !ui && !frozen && !acting && inp.fireDown();
     if (tickWeapon(p, dt, firing)) { /* reload finished */ }
     if (firing || p.burstLeft > 0) this.tryFire(p, true);
     if (!firing) this.releaseTrigger(p);
@@ -703,6 +722,8 @@ export class Game {
       p.pitch = Math.min(1.5, p.pitch + kick * 0.55);
       p.yaw += yawKick;
       this.viewmodel.fire(w.type === 'sniper' || w.type === 'shotgun' || w.projectile ? 1.8 : 1, !w.silent);
+      const heavy = w.type === 'sniper' || w.type === 'shotgun' || w.projectile;
+      pad.rumble(heavy ? 0.5 : 0.25, heavy ? 0.7 : 0.15, heavy ? 120 : 50);
     } else {
       p.pitch += kick * 0.35;
     }
@@ -1042,9 +1063,9 @@ export class Game {
     if (!p?.alive) return '';
     const pr = this.usableProp(p);
     if (!pr) return '';
-    if (pr.ch === 'D') return `Press E to ${pr.open ? 'close' : 'open'} the door`;
+    if (pr.ch === 'D') return `Press ${pad.label('use')} to ${pr.open ? 'close' : 'open'} the door`;
     const wait = Math.ceil((p.resupplyAt || 0) - performance.now() / 1000);
-    return wait > 0 ? `Ammo crate restocking · ${wait}s` : 'Press E to resupply ammo';
+    return wait > 0 ? `Ammo crate restocking · ${wait}s` : `Press ${pad.label('use')} to resupply ammo`;
   }
 
   interact(p) {
@@ -1354,7 +1375,7 @@ export class Game {
         const p = this.players.get(d.id);
         if (!p) break;
         const by = d.by ? this.players.get(d.by) : null;
-        if (p.isLocal && d.hp < p.hp) this.hud.damaged(by);
+        if (p.isLocal && d.hp < p.hp) { this.hud.damaged(by); pad.rumble(0.4, Math.min(1, (p.hp - d.hp) / 60), 160); }
         p.hp = d.hp; p.armor = d.armor;
         this.brains.get(p.id)?.onDamaged(by);
         break;
@@ -1533,7 +1554,7 @@ export class Game {
     const lp = this.local;
     if (RESPAWN_KINDS.has(this.mode.kind)) this.hud.center(this.mode.name.toUpperCase(), goalText(this.mode), 3);
     else {
-      const side = this.mode.kind === 'bomb' && lp ? (lp.team === 0 ? 'Attack — plant the charge at A or B' : 'Defend — stop the plant') : 'Press B to choose your loadout';
+      const side = this.mode.kind === 'bomb' && lp ? (lp.team === 0 ? 'Attack — plant the charge at A or B' : 'Defend — stop the plant') : `Press ${pad.label('buy')} to choose your loadout`;
       this.hud.center(`ROUND ${d.round}`, side, 2.5);
       const keep = this.settings.keepLoadout && this.savedBuys.length;
       if (lp && lp.alive && keep) setTimeout(() => this.rebuy(), 350);
@@ -1820,7 +1841,12 @@ export class Game {
       const t = pool.length ? pool[((this.spectateIdx % pool.length) + pool.length) % pool.length] : null;
       this.spectateTarget = t;
       const inp = this.input;
-      this.specCam.update(dt, t ? { pos: t.pos, yaw: t.yaw, pitch: t.pitch, crouch: t.crouch } : null, { keys: inp.keys, dx: inp.mouse.dx, dy: inp.mouse.dy, locked: inp.locked });
+      const look = inp.padLook(), mv = inp.padMove(), keys = new Set(inp.keys);
+      // Free camera on a controller: left stick flies, right stick looks, LT/RT go down/up.
+      if (mv) { if (mv.f > 0.3) keys.add('KeyW'); if (mv.f < -0.3) keys.add('KeyS'); if (mv.r > 0.3) keys.add('KeyD'); if (mv.r < -0.3) keys.add('KeyA'); }
+      if (inp.padState?.rt > 0.3) keys.add('Space');
+      if (inp.padState?.lt > 0.3) keys.add('ControlLeft');
+      this.specCam.update(dt, t ? { pos: t.pos, yaw: t.yaw, pitch: t.pitch, crouch: t.crouch } : null, { keys, dx: inp.mouse.dx + look.x * 1400 * dt, dy: inp.mouse.dy + look.y * 1400 * dt, locked: inp.captured });
       for (const p of this.players.values()) if (p.model && p === t) p.model.root.visible = this.specCam.mode !== 'pov';
     } else {
       const alive = [...this.players.values()].filter((p) => p.alive && (SOLO_KINDS.has(this.mode.kind) || !lp || p.team === lp.team));
@@ -1854,12 +1880,12 @@ export class Game {
 
   // Spectator controls: click/Space next player, Q previous, V camera mode, Tab scores.
   spectatorInput() {
-    const inp = this.input, ui = this.hud.overlayOpen() || !inp.locked;
+    const inp = this.input, ui = this.hud.overlayOpen() || !inp.captured;
     this.hud.setScoreboard(inp.keys.has('Tab'));
     if (ui) return;
     if (this.specCam.mode !== 'free' && (inp.clicked('left') || inp.pressed('Space'))) this.spectateIdx++;
     if (inp.pressed('KeyQ')) this.spectateIdx--;
-    if (inp.pressed('KeyV')) this.specCam.cycle();
+    if (inp.pressed('KeyV') || inp.padPressed(BTN.X)) this.specCam.cycle();
   }
 
   trackKill(k, v, d) {
