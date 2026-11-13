@@ -5,11 +5,11 @@
 import { KINDS } from '../data/skins.js';
 import { MODES, rankBadge } from '../data/modes.js';
 import { MAPS } from '../data/maps.js';
-import { REPORT_REASONS, COMMENDS } from './social.js';
+import { REPORT_REASONS, COMMENDS, esc, banUntil, isActive } from './social.js';
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
-const until = (iso) => (!iso ? '—' : iso === 'infinity' ? 'permanent' : new Date(iso) > new Date() ? 'until ' + when(iso) : 'expired');
+// Report evidence is written by the reporting player, so numbers are forced to numbers.
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const REASON = Object.fromEntries(REPORT_REASONS.map(([k, l]) => [k, l.split(' (')[0]]));
 const DURATIONS = [[60, '1 hour'], [1440, '1 day'], [10080, '7 days'], [43200, '30 days'], [0, 'Permanent']];
 const SECTIONS = [['overview', 'Overview'], ['reports', 'Reports'], ['players', 'Players'], ['moderated', 'Bans & mutes'], ['live', 'Online now'], ['announce', 'Announcements'], ['settings', 'Game switches'], ['audit', 'Audit log']];
@@ -83,7 +83,7 @@ export class AdminPanel {
         <div class="ar-head"><b class="ar-reason">${esc(REASON[r.reason] || r.reason)}</b><span>against <a href="#" data-player="${r.target}">${esc(r.target_name)}</a>${r.target_report_count > 1 ? ` <em class="hot">${r.target_report_count} reports total</em>` : ''}</span><span class="spacer"></span><span class="m-sub">${when(r.created_at)}</span></div>
         <div class="m-sub">From ${esc(r.reporter_name)} · ${esc(MODES[r.mode]?.name || r.mode || '')}${r.evidence?.map ? ` on ${esc(MAPS[r.evidence.map]?.name || r.evidence.map)}` : ''} · match ${esc(r.match_id)}</div>
         ${r.note ? `<p class="ar-note">“${esc(r.note)}”</p>` : ''}
-        ${r.evidence?.stats ? `<div class="m-sub">Their stats that match: ${r.evidence.stats.k} kills, ${r.evidence.stats.d} deaths, ${r.evidence.stats.hs} headshots, ${r.evidence.stats.dmg} damage</div>` : ''}
+        ${r.evidence?.stats ? `<div class="m-sub">Their stats that match: ${num(r.evidence.stats.k)} kills, ${num(r.evidence.stats.d)} deaths, ${num(r.evidence.stats.hs)} headshots, ${num(r.evidence.stats.dmg)} damage</div>` : ''}
         ${r.evidence?.chat?.length ? `<div class="ar-chat">${r.evidence.chat.map((c) => `<div><span class="m-sub">${Math.floor(c.t / 60)}:${String(c.t % 60).padStart(2, '0')}</span> ${esc(c.text)}</div>`).join('')}</div>` : ''}
         ${r.status !== 'open' ? `<div class="m-sub">${esc(r.status)}${r.resolution ? ': ' + esc(r.resolution) : ''} · ${when(r.resolved_at)}</div>` : ''}
         <div class="row ar-actions">
@@ -136,11 +136,10 @@ export class AdminPanel {
     const d = await this.call('player', { p_id: id });
     const p = d.profile, m = d.moderation || {};
     if (!p) { box.innerHTML = '<p class="m-empty">Player not found.</p>'; return; }
-    const banned = m.banned_until && (m.banned_until === 'infinity' || new Date(m.banned_until) > new Date());
-    const muted = m.muted_until && (m.muted_until === 'infinity' || new Date(m.muted_until) > new Date());
+    const banned = isActive(m.banned_until), muted = isActive(m.muted_until);
     const commends = COMMENDS.map(([k, l, i]) => `${i} ${l} ${d.commends?.[k] || 0}`).join(' · ');
     box.innerHTML = `<div class="adm-player">
-      <div class="row"><h3 class="m-h2">${esc(p.username)}</h3>${rankBadge(p.elo)}${d.is_admin ? '<span class="admin-badge">Admin</span>' : ''}${banned ? `<span class="tag bad">Banned ${esc(until(m.banned_until))}</span>` : ''}${muted ? `<span class="tag warn">Muted ${esc(until(m.muted_until))}</span>` : ''}</div>
+      <div class="row"><h3 class="m-h2">${esc(p.username)}</h3>${rankBadge(p.elo)}${d.is_admin ? '<span class="admin-badge">Admin</span>' : ''}${banned ? `<span class="tag bad">Banned ${esc(banUntil(m.banned_until))}</span>` : ''}${muted ? `<span class="tag warn">Muted ${esc(banUntil(m.muted_until))}</span>` : ''}</div>
       <div class="m-sub">Joined ${when(p.created_at)} · last seen ${when(p.last_seen)} · id ${esc(p.id)}</div>
       ${banned && m.ban_reason ? `<div class="m-sub">Ban reason: ${esc(m.ban_reason)}</div>` : ''}${muted && m.mute_reason ? `<div class="m-sub">Mute reason: ${esc(m.mute_reason)}</div>` : ''}
       <div class="st-nums small">
@@ -230,10 +229,10 @@ export class AdminPanel {
     const list = await this.call('moderated', { p_limit: 200 });
     this.body.innerHTML = list.length ? `<table class="tbl"><tr><th>Player</th><th>Ban</th><th>Mute</th><th>Updated</th><th></th></tr>
       ${list.map((m) => `<tr><td><a href="#" data-player="${m.user_id}">${esc(m.username)}</a></td>
-        <td>${m.banned_until && until(m.banned_until) !== 'expired' ? `${esc(until(m.banned_until))}${m.ban_reason ? `<div class="m-sub">${esc(m.ban_reason)}</div>` : ''}` : '—'}</td>
-        <td>${m.muted_until && until(m.muted_until) !== 'expired' ? `${esc(until(m.muted_until))}${m.mute_reason ? `<div class="m-sub">${esc(m.mute_reason)}</div>` : ''}` : '—'}</td>
+        <td>${isActive(m.banned_until) ? `${esc(banUntil(m.banned_until))}${m.ban_reason ? `<div class="m-sub">${esc(m.ban_reason)}</div>` : ''}` : '—'}</td>
+        <td>${isActive(m.muted_until) ? `${esc(banUntil(m.muted_until))}${m.mute_reason ? `<div class="m-sub">${esc(m.mute_reason)}</div>` : ''}` : '—'}</td>
         <td class="m-sub">${when(m.updated_at)}</td>
-        <td class="rate">${until(m.banned_until) !== 'expired' && m.banned_until ? `<button class="btn tiny" data-act="unban" data-u="${m.user_id}">Unban</button>` : ''}${until(m.muted_until) !== 'expired' && m.muted_until ? `<button class="btn tiny" data-act="unmute" data-u="${m.user_id}">Unmute</button>` : ''}</td></tr>`).join('')}</table>`
+        <td class="rate">${isActive(m.banned_until) ? `<button class="btn tiny" data-act="unban" data-u="${m.user_id}">Unban</button>` : ''}${isActive(m.muted_until) ? `<button class="btn tiny" data-act="unmute" data-u="${m.user_id}">Unmute</button>` : ''}</td></tr>`).join('')}</table>`
       : '<p class="m-empty">Nobody is banned or muted.</p>';
     this.bindPlayerLinks(this.body);
     this.bindActions(this.body);
@@ -243,8 +242,8 @@ export class AdminPanel {
   async live() {
     const list = this.app.onlinePlayers();
     this.body.innerHTML = `<p class="m-sub">${list.length} player${list.length === 1 ? '' : 's'} online. Spectate a match to see what's happening.</p>
-      ${list.length ? `<table class="tbl"><tr><th>Player</th><th>Status</th><th></th></tr>${list.map((m) => `<tr><td><a href="#" data-player="${m.id}">${esc(m.name)}</a></td><td class="m-sub">${esc(m.status || 'menu')}${m.match ? ` · ${esc(MODES[m.match.mode]?.name || m.match.mode)} on ${esc(MAPS[m.match.map]?.name || m.match.map)}` : ''}</td>
-        <td class="rate">${m.match?.id && m.id !== this.app.user?.id ? `<button class="btn tiny" data-spec="${m.id}">Spectate</button>` : ''}<button class="btn tiny" data-act="kick" data-u="${m.id}">Kick</button></td></tr>`).join('')}</table>` : ''}`;
+      ${list.length ? `<table class="tbl"><tr><th>Player</th><th>Status</th><th></th></tr>${list.map((m) => `<tr><td><a href="#" data-player="${esc(m.id)}">${esc(m.name)}</a></td><td class="m-sub">${esc(m.status || 'menu')}${m.match ? ` · ${esc(MODES[m.match.mode]?.name || m.match.mode)} on ${esc(MAPS[m.match.map]?.name || m.match.map)}` : ''}</td>
+        <td class="rate">${m.match?.id && m.id !== this.app.user?.id ? `<button class="btn tiny" data-spec="${esc(m.id)}">Spectate</button>` : ''}<button class="btn tiny" data-act="kick" data-u="${esc(m.id)}">Kick</button></td></tr>`).join('')}</table>` : ''}`;
     this.bindPlayerLinks(this.body);
     this.bindActions(this.body);
     this.body.querySelectorAll('[data-spec]').forEach((b) => { b.onclick = () => this.app.spectate(list.find((m) => m.id === b.dataset.spec)?.match); });
@@ -294,7 +293,7 @@ export class AdminPanel {
   async audit() {
     const list = await this.call('audit_log', { p_limit: 200 });
     this.body.innerHTML = list.length ? `<table class="tbl"><tr><th>When</th><th>Action</th><th>Target</th><th>Details</th></tr>
-      ${list.map((a) => `<tr><td class="m-sub">${when(a.created_at)}</td><td>${esc(a.action.replace(/_/g, ' '))}</td><td>${a.target_name ? `<a href="#" data-player="${a.target}">${esc(a.target_name)}</a>` : esc(a.target || '')}</td><td class="m-sub">${esc(a.details ? JSON.stringify(a.details) : '')}</td></tr>`).join('')}</table>`
+      ${list.map((a) => `<tr><td class="m-sub">${when(a.created_at)}</td><td>${esc(a.action.replace(/_/g, ' '))}</td><td>${a.target_name ? `<a href="#" data-player="${esc(a.target)}">${esc(a.target_name)}</a>` : esc(a.target || '')}</td><td class="m-sub">${esc(a.details ? JSON.stringify(a.details) : '')}</td></tr>`).join('')}</table>`
       : '<p class="m-empty">No admin actions yet.</p>';
     this.bindPlayerLinks(this.body);
   }

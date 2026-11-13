@@ -132,6 +132,9 @@ alter table public.profiles add column if not exists season_peak   int not null 
 alter table public.profiles add column if not exists challenges    jsonb not null default '{}'::jsonb;
 grant update (challenges) on public.profiles to authenticated;
 
+-- Ranked results an admin has voided are kept, flagged, so the match can't be reported again.
+alter table public.ranked_matches add column if not exists voided boolean not null default false;
+
 create table if not exists public.season_history (
   user_id     uuid not null references public.profiles(id) on delete cascade,
   season_id   text not null references public.seasons(id),
@@ -176,8 +179,11 @@ $$;
 create table if not exists public.admins (user_id uuid primary key references public.profiles(id) on delete cascade);
 alter table public.admins enable row level security;
 revoke all on public.admins from anon, authenticated;
--- The only admin is Carter. Nothing in the app can add rows here.
-insert into public.admins (user_id) values ('161b8bab-6d36-4845-8179-3e72255f466b') on conflict do nothing;
+-- The only admin is Carter. Nothing in the app can add rows here. On a database where that account
+-- doesn't exist (a new project or a fork) this adds nobody instead of failing.
+insert into public.admins (user_id)
+select id from public.profiles where id = '161b8bab-6d36-4845-8179-3e72255f466b'
+on conflict do nothing;
 
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
@@ -414,6 +420,8 @@ begin
 
   select * into r from ranked_matches where match_id = p_match_id;
   if found then
+    -- Voided results stay recorded (so they can't be reported again) and count for nothing.
+    if r.voided then return json_build_object('winner', r.winner, 'winner_delta', 0, 'loser_delta', 0); end if;
     return json_build_object('winner', r.winner, 'winner_delta', r.winner_delta, 'loser_delta', r.loser_delta);
   end if;
 
@@ -429,7 +437,9 @@ begin
            ranked_wins = ranked_wins + 1, season_wins = season_wins + 1 where id = p_winner;
     update profiles set elo = greatest(0, elo - d),
            ranked_losses = ranked_losses + 1, season_losses = season_losses + 1 where id = p_loser;
-    insert into ranked_matches values (p_match_id, p_winner, p_loser, d, -d, now());
+    -- Store what the loser actually lost (rating never goes below 0) so a void can reverse it exactly.
+    insert into ranked_matches (match_id, winner, loser, winner_delta, loser_delta, created_at)
+    values (p_match_id, p_winner, p_loser, d, -least(d, le), now());
   exception when unique_violation then
     select * into r from ranked_matches where match_id = p_match_id;
     return json_build_object('winner', r.winner, 'winner_delta', r.winner_delta, 'loser_delta', r.loser_delta);
@@ -671,17 +681,23 @@ begin
 end;
 $$;
 
--- Undoes a ranked result: reverses both players' ELO change and win/loss counts.
+-- Undoes a ranked result: reverses both players' rating change and win/loss counts. Season counts
+-- only change if the match was played in the current season. The result stays recorded as voided so
+-- it can't be reported again.
 create or replace function public.admin_void_ranked(p_match_id text)
 returns void language plpgsql security definer set search_path = public as $$
-declare r ranked_matches%rowtype;
+declare r ranked_matches%rowtype; this_season boolean;
 begin
   perform admin_guard();
-  select * into r from ranked_matches where match_id = p_match_id;
+  select * into r from ranked_matches where match_id = p_match_id for update;
   if not found then raise exception 'no ranked result for that match'; end if;
-  update profiles set elo = greatest(0, elo - r.winner_delta), ranked_wins = greatest(0, ranked_wins - 1), season_wins = greatest(0, season_wins - 1) where id = r.winner;
-  update profiles set elo = elo - r.loser_delta, ranked_losses = greatest(0, ranked_losses - 1), season_losses = greatest(0, season_losses - 1) where id = r.loser;
-  delete from ranked_matches where match_id = p_match_id;
+  if r.voided then raise exception 'that result is already voided'; end if;
+  this_season := r.created_at >= coalesce((select starts_at from seasons where id = current_season()), 'infinity');
+  update profiles set elo = greatest(0, elo - r.winner_delta), ranked_wins = greatest(0, ranked_wins - 1),
+    season_wins = case when this_season then greatest(0, season_wins - 1) else season_wins end where id = r.winner;
+  update profiles set elo = elo - r.loser_delta, ranked_losses = greatest(0, ranked_losses - 1),
+    season_losses = case when this_season then greatest(0, season_losses - 1) else season_losses end where id = r.loser;
+  update ranked_matches set voided = true where match_id = p_match_id;
   update match_history set elo_change = 0, score = coalesce(score, '') || ' (voided)' where match_id = p_match_id and ranked;
   perform admin_log('void_ranked', p_match_id, row_to_json(r)::jsonb);
 end;

@@ -1,5 +1,5 @@
 // Commends, reports, the ban screen, admin warnings and the announcement banner.
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const COMMENDS = [
   ['friendly', 'Friendly', '🤝'],
@@ -17,7 +17,14 @@ export const REPORT_REASONS = [
   ['other', 'Something else'],
 ];
 
-const until = (iso) => (!iso || iso === 'infinity' ? 'permanently' : 'until ' + new Date(iso).toLocaleString());
+// How long a ban or mute lasts, worded the same on the ban screen and in the admin panel.
+// Returns '' when there's no end date given and 'expired' once it's over.
+export function banUntil(iso) {
+  if (!iso) return '';
+  if (iso === 'infinity') return 'permanently';
+  return new Date(iso) > new Date() ? 'until ' + new Date(iso).toLocaleString() : 'expired';
+}
+export const isActive = (iso) => !!iso && banUntil(iso) !== 'expired';
 
 export function commendDialog(ui, player, matchId, onDone) {
   if (!player) return;
@@ -56,7 +63,7 @@ export function showBanned(ui, ban) {
   ui.root.innerHTML = `<div class="ban-screen"><div class="ban-card">
     <div class="ban-icon" aria-hidden="true">⛔</div>
     <h1 class="m-h1">Account suspended</h1>
-    <p>This account is banned ${esc(until(ban.until))}.</p>
+    <p>This account is banned ${esc(banUntil(ban.until) || 'permanently')}.</p>
     ${ban.reason ? `<p class="ban-reason">Reason: ${esc(ban.reason)}</p>` : ''}
     <p class="m-sub">You can't play online, earn XP or take part in ranked while suspended.</p>
     <div class="row" style="justify-content:center;gap:8px"><button class="btn primary" id="ban-out">Sign out</button></div>

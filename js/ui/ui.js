@@ -593,9 +593,10 @@ export class UI {
         modal.querySelector('#q-sub').textContent = `${s.count} of ${s.need} players found${m.ranked ? '' : s.count >= 2 ? '. Bots fill the empty slots at 0:20.' : '. Waiting for at least one more player.'}`;
         modal.querySelector('#q-force').classList.toggle('hidden', !s.canForce);
       },
-      onMatch: (payload) => { modal.remove(); this.app.startOnline(payload); },
+      onMatch: (payload) => { this.queue = null; modal.remove(); this.app.startOnline(payload); },
     });
-    modal.querySelector('#q-cancel').onclick = () => { mm.cancel(); modal.remove(); party?.announceCancel(); this.app.setStatus('menu'); };
+    this.queue = mm;
+    modal.querySelector('#q-cancel').onclick = () => { mm.cancel(); this.queue = null; modal.remove(); party?.announceCancel(); this.app.setStatus('menu'); };
     modal.querySelector('#q-force').onclick = () => mm.forceStart();
     try { await mm.start(); this.app.setStatus('queue'); party?.announceQueue(mode); }
     catch (e) { modal.remove(); this.toast(e.message, 'bad'); }

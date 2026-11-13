@@ -227,12 +227,17 @@ class App {
       try { localStorage.setItem(kickKey, String(kickAt)); } catch { /* ignore */ }
       // Only kicks issued after this session started count; older ones were already handled.
       if (this.game && kickAt > (this.sessionStart || 0) - 5000) {
+        // Forget the match so the menu doesn't offer to reconnect to it.
+        this.clearActiveMatch();
         this.game.leave();
         this.ui.toast(`An admin removed you from the match${st.kick_reason && st.kick_reason !== 'Banned' ? ': ' + st.kick_reason : ''}`, 'bad', null, 9000);
       }
     }
+    const wasBanned = !!this.banned;
     this.banned = banned;
-    if (banned) { this.game?.leave(); this.replay?.exit(); this.ui.showBanned(banned); return; }
+    if (banned) { if (!wasBanned) this.goOffline(); this.ui.showBanned(banned); return; }
+    // Ban expired or lifted while the ban screen was up: back to the menu.
+    if (wasBanned) { this.joinPresence(); this.ui.showMenu('play'); }
     const acks = { w: [], g: [] };
     if (st.grants?.length) {
       for (const g of st.grants) {
@@ -244,7 +249,9 @@ class App {
         }
         acks.g.push(g.id);
       }
-      await this.saveInventory().catch(() => null);
+      // Only mark gifts delivered once they're saved; otherwise the next check retries them.
+      const saved = await this.saveInventory().then(() => true, () => false);
+      if (!saved) acks.g = [];
     }
     if (st.warnings?.length) {
       for (const w of st.warnings) acks.w.push(w.id);
@@ -252,6 +259,17 @@ class App {
     }
     if (acks.w.length || acks.g.length) this.api.ackStatus(acks.w, acks.g).catch(() => null);
     this.ui.adminChanged?.();
+  }
+
+  // Ends every online session at once (used when a ban lands): match, replay, queue, lobby, party, presence.
+  goOffline() {
+    this.clearActiveMatch();
+    this.game?.leave();
+    this.replay?.exit();
+    this.ui.queue?.cancel(); this.ui.queue = null;
+    this.ui.lobby?.leave(); this.ui.lobby = null;
+    this.party?.leave(true); this.party = null;
+    this.presence?.leave(); this.presence = null;
   }
 
   get maintenance() {
@@ -332,7 +350,7 @@ class App {
   }
 
   async joinPresence() {
-    if (!this.api || !this.user) return;
+    if (!this.api || !this.user || this.presence) return;
     const me = this.me();
     this.presence = new Room(this.api.sb, 'jps-online', me, { name: me.name, elo: me.elo, status: 'menu' });
     try { await this.presence.connect(); } catch (e) { console.warn('Presence unavailable', e); this.presence = null; }
@@ -364,6 +382,7 @@ class App {
   }
 
   async startOnline(payload, { rejoin = false, spectator = false } = {}) {
+    if (this.banned) return;
     const me = this.me();
     const title = spectator ? 'Joining as spectator' : rejoin ? 'Reconnecting' : 'Match found';
     this.ui.root.innerHTML = `<div class="screen"><div class="menu-bg"></div><div class="content" style="display:grid;place-items:center"><div style="text-align:center"><div class="queue-pulse"></div><h2>${title}</h2><p class="muted">Connecting to ${payload.players.filter((p) => !p.isBot).length} player(s)…</p></div></div></div>`;

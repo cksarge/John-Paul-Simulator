@@ -3,18 +3,33 @@ import { MODES, SOLO_KINDS } from '../data/modes.js';
 
 const FILL_AFTER = 20; // seconds before a non-ranked queue starts with bots filling gaps
 
-// Keeps banned accounts out of queues and lobbies. Flags come from the database (moderation_flags),
-// looked up once per new player id.
+// Keeps banned accounts out of queues and lobbies. Flags come from the database (moderation_flags).
+// Lookups are cached for a minute so the list filters smoothly, and every match is re-checked with
+// fresh flags right before it starts (forming it, or accepting one someone else formed).
+const RECHECK_MS = 60000;
 class BanFilter {
-  constructor(app) { this.app = app; this.checked = new Set(); this.banned = new Set(); }
+  constructor(app) { this.app = app; this.checkedAt = new Map(); this.banned = new Set(); }
   check(ids) {
-    const fresh = ids.filter((id) => id && !this.checked.has(id));
+    const now = Date.now();
+    const fresh = ids.filter((id) => id && !(now - (this.checkedAt.get(id) || 0) < RECHECK_MS));
     if (!fresh.length || !this.app.api) return;
-    fresh.forEach((id) => this.checked.add(id));
-    this.app.api.moderationFlags(fresh).then((rows) => { for (const r of rows) if (r.banned) this.banned.add(r.id); }).catch(() => null);
+    fresh.forEach((id) => this.checkedAt.set(id, now));
+    this.app.api.moderationFlags(fresh).then((rows) => {
+      for (const id of fresh) this.banned.delete(id);
+      for (const r of rows) if (r.banned) this.banned.add(r.id);
+    }).catch(() => null);
   }
   has(id) { return this.banned.has(id); }
+  // Fresh lookup (no cache) for the humans about to play. Returns the set of banned ids among them.
+  async verify(ids) {
+    if (!this.app.api) return new Set();
+    const rows = await this.app.api.moderationFlags(ids).catch(() => []);
+    const out = new Set(rows.filter((r) => r.banned).map((r) => r.id));
+    for (const id of out) this.banned.add(id);
+    return out;
+  }
 }
+const humanIds = (payload) => payload.players.filter((p) => !p.isBot).map((p) => p.id);
 const groupIds = (e) => (e.group?.length ? e.group : [e]).map((x) => x.id);
 
 function needFor(mode) {
@@ -85,7 +100,14 @@ export class Matchmaker {
     if (list.reduce((n, e) => n + (e.group?.length || 1), 0) >= 2) this.form(list);
   }
 
-  form(list) {
+  async form(list) {
+    if (this.forming) return;
+    this.forming = true;
+    // Re-check everyone with fresh flags before the match exists; banned entries drop out.
+    const banned = await this.bans.verify(list.flatMap(groupIds));
+    this.forming = false;
+    if (this.done || !this.room) return;
+    if (banned.size) { this.evaluate(); return; }
     const me = this.app.me();
     const humans = [];
     for (const { g, team } of this.pick(list).out) for (const x of g) humans.push({ id: x.id, name: x.name, elo: x.elo, char: x.char, ...(team >= 0 ? { team } : {}) });
@@ -94,9 +116,12 @@ export class Matchmaker {
     this.accept(payload);
   }
 
-  accept(payload) {
+  async accept(payload) {
     if (this.done) return;
     if (!payload.players.some((p) => p.id === this.app.me().id)) return;
+    // A match formed by someone else: refuse it if it includes a banned account.
+    if ((await this.bans.verify(humanIds(payload))).size) return;
+    if (this.done) return;
     this.done = true;
     this.cancel();
     // Party members aren't in the queue room; the leader passes the match on.
@@ -128,7 +153,11 @@ export class Lobby {
     this.room.onSync(() => { this.onChange?.(); if (this.isHost) this.pushCfg(); });
     this.room.onLeave((id) => { if (!this.isHost && id === this.cfg.hostId) { this.onClosed?.('The host closed the lobby.'); } });
     this.room.on('cfg', (cfg) => { if (!this.isHost) { this.cfg = cfg; this.onChange?.(); } });
-    this.room.on('start', (payload) => { if (payload.players.some((p) => p.id === me.id)) { this.started = true; this.onStart(payload); } });
+    this.room.on('start', async (payload) => {
+      if (!payload.players.some((p) => p.id === me.id)) return;
+      if ((await this.bans.verify(humanIds(payload))).size) { this.onClosed?.('That match included a banned player, so it was cancelled.'); return; }
+      this.started = true; this.onStart(payload);
+    });
     this.room.on('kick', (id) => { if (id === me.id) this.onClosed?.('You were removed from the lobby.'); });
     await this.room.connect();
     if (this.isHost) {
@@ -168,8 +197,10 @@ export class Lobby {
 
   setTeam(team) { this.room.track({ team }); }
 
-  start() {
+  async start() {
     const me = this.app.me();
+    const banned = await this.bans.verify(this.members().map((x) => x.id));
+    if (banned.size) { this.onChange?.(); return; }
     const humans = this.members().map((x) => ({ id: x.id, name: x.name, elo: x.elo, char: x.char, team: x.team }));
     const payload = buildMatch({ mode: this.cfg.mode, map: this.cfg.map, humans, hostId: me.id, fillBots: this.cfg.fillBots, botLevel: this.cfg.botLevel });
     this.started = true;
