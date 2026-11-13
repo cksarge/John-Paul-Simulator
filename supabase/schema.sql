@@ -33,7 +33,7 @@ create policy "profiles are public" on public.profiles for select using (true);
 
 drop policy if exists "users update own profile" on public.profiles;
 create policy "users update own profile" on public.profiles
-  for update using (auth.uid() = id) with check (auth.uid() = id);
+  for update using ((select auth.uid()) = id) with check ((select auth.uid()) = id);
 
 -- Players may only edit cosmetic columns directly; stats change through the functions below.
 revoke update on public.profiles from anon, authenticated;
@@ -209,7 +209,7 @@ alter table public.moderation enable row level security;
 revoke all on public.moderation from anon, authenticated;
 grant select on public.moderation to authenticated;
 drop policy if exists "own moderation" on public.moderation;
-create policy "own moderation" on public.moderation for select using (auth.uid() = user_id);
+create policy "own moderation" on public.moderation for select using ((select auth.uid()) = user_id);
 
 create table if not exists public.warnings (
   id         bigint generated always as identity primary key,
@@ -222,7 +222,7 @@ alter table public.warnings enable row level security;
 revoke all on public.warnings from anon, authenticated;
 grant select on public.warnings to authenticated;
 drop policy if exists "own warnings" on public.warnings;
-create policy "own warnings" on public.warnings for select using (auth.uid() = user_id);
+create policy "own warnings" on public.warnings for select using ((select auth.uid()) = user_id);
 
 -- Items an admin gives or takes away; the player's client applies them to its inventory.
 create table if not exists public.item_grants (
@@ -238,7 +238,7 @@ alter table public.item_grants enable row level security;
 revoke all on public.item_grants from anon, authenticated;
 grant select on public.item_grants to authenticated;
 drop policy if exists "own grants" on public.item_grants;
-create policy "own grants" on public.item_grants for select using (auth.uid() = user_id);
+create policy "own grants" on public.item_grants for select using ((select auth.uid()) = user_id);
 
 create table if not exists public.announcements (
   id         bigint generated always as identity primary key,
@@ -1007,6 +1007,8 @@ revoke all on function public.admin_guard() from public, anon, authenticated;
 revoke all on function public.admin_log(text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.admin_target(uuid) from public, anon, authenticated;
 revoke all on function public.is_banned(uuid) from public, anon, authenticated;
+-- The sign-up trigger only ever runs as a trigger, never through the API.
+revoke all on function public.handle_new_user() from public, anon, authenticated;
 
 revoke all on function public.current_season() from public;
 grant execute on function public.current_season() to anon, authenticated;
