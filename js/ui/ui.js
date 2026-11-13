@@ -17,7 +17,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const kd = (k, d) => (d ? (k / d).toFixed(2) : k ? k.toFixed(2) : '0.00');
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; };
-const MODE_ORDER = ['ranked', 'duel', 'duo', 'bomb', 'tdm', 'gungame', 'ffa'];
+const QUAD_MODES = ['ranked', 'duo', 'bomb', 'tdm'];
+const MORE_MODES = ['duel', 'gungame', 'ffa'];
 const OFFLINE_MODES = ['duel', 'duo', 'bomb', 'tdm', 'gungame', 'ffa'];
 const RESEND_COOLDOWN = 60; // seconds between auth emails (matches Supabase's default per-user limit)
 const COOLDOWN_KEY = 'jps_email_sent_at';
@@ -57,7 +58,8 @@ export class UI {
     this.root = document.getElementById('ui');
     this.tab = 'play';
     this.source = 'online';
-    this.onlineMode = 'duel';
+    this.onlineMode = 'ranked';
+    this.allModes = false;
     this.offline = { mode: 'bomb', map: 'dustline', botLevel: 'normal' };
     this.armoryKind = 'finish';
     this.armoryWeapon = 'ar7';
@@ -458,14 +460,22 @@ export class UI {
       return `<button class="mrow ${sel ? 'sel' : ''} ${m.ranked ? 'ranked' : ''}" ${attr}="${id}">
         <span class="mrow-name">${esc(m.name)}</span><span class="mrow-goal">${esc(goalText(m))}</span><span class="mrow-size">${SIZE_LABEL(m)}</span></button>`;
     };
+    const quad = (id) => {
+      const m = MODES[id];
+      return `<button class="mquad ${id === this.onlineMode ? 'sel' : ''} ${m.ranked ? 'ranked' : ''}" data-mode="${id}">
+        <span class="mquad-size">${SIZE_LABEL(m)}</span><span class="mquad-name">${esc(m.name)}</span><span class="mquad-goal">${esc(goalText(m))}</span></button>`;
+    };
+    const moreSel = !QUAD_MODES.includes(this.onlineMode), showMore = this.allModes || moreSel;
     el.innerHTML = `
       ${active ? `<div class="m-rejoin"><div><b>Your match is still running</b><span>${esc(am?.name || active.payload.mode)} on ${esc(MAPS[active.payload.map]?.name || active.payload.map)}. A bot is playing for you.</span></div>
         <button class="btn small primary" id="rejoin">Reconnect</button><button class="btn small ghost" id="rejoin-x">Dismiss</button></div>` : ''}
       <div class="m-switch" role="tablist"><button data-src="online" class="${src === 'online' ? 'on' : ''}">Online</button><button data-src="offline" class="${src === 'offline' ? 'on' : ''}">Versus bots</button></div>
       ${src === 'online' ? `
         ${online ? '' : `<div class="m-note">Online play needs an account so your rank and stats can be saved. <button class="btn small primary" id="signin">Sign in</button></div>`}
-        <div class="mrows ${online ? '' : 'off'}">${MODE_ORDER.map((id) => row(id, id === this.onlineMode, 'data-mode')).join('')}
-          <button class="mrow ${this.onlineMode === 'custom' ? 'sel' : ''}" data-mode="custom"><span class="mrow-name">Custom lobby</span><span class="mrow-goal">Your rules, invite code, bots optional</span><span class="mrow-size">Any</span></button></div>
+        <div class="mquads ${online ? '' : 'off'}">${QUAD_MODES.map((id) => quad(id)).join('')}</div>
+        <button class="m-allmodes ${online ? '' : 'off'} ${moreSel ? 'has-sel' : ''}" id="all-modes" aria-expanded="${showMore}">All modes<span>${showMore ? '−' : '+'}</span></button>
+        ${showMore ? `<div class="mrows ${online ? '' : 'off'}">${MORE_MODES.map((id) => row(id, id === this.onlineMode, 'data-mode')).join('')}
+          <button class="mrow ${this.onlineMode === 'custom' ? 'sel' : ''}" data-mode="custom"><span class="mrow-name">Custom lobby</span><span class="mrow-goal">Your rules, invite code, bots optional</span><span class="mrow-size">Any</span></button></div>` : ''}
         ${online ? `<div class="m-join"><input type="text" id="join-code" maxlength="5" placeholder="Lobby code" aria-label="Lobby code"><button class="btn small" id="join-btn">Join</button><button class="btn small ghost" id="browse-btn">Browse open lobbies</button></div><div id="lobby-list"></div>` : ''}
       ` : `
         <div class="mrows">${OFFLINE_MODES.map((id) => row(id, id === o.mode, 'data-omode')).join('')}</div>
@@ -488,6 +498,11 @@ export class UI {
     if (src === 'online') {
       $('#signin')?.addEventListener('click', () => this.showAuth());
       el.querySelectorAll('[data-mode]').forEach((b) => { b.onclick = () => { this.onlineMode = b.dataset.mode; this.renderPlay(el); }; });
+      $('#all-modes').onclick = () => {
+        // Collapsing while a mode from the list is picked falls back to the first quadrant.
+        if (showMore && moreSel) this.onlineMode = QUAD_MODES[0];
+        this.allModes = !showMore; this.renderPlay(el);
+      };
       if (online) {
         $('#join-btn').onclick = () => { const c = $('#join-code').value.trim().toUpperCase(); if (c.length === 5) this.joinLobby(c); else this.toast('Lobby codes are 5 characters', 'bad'); };
         $('#join-code').onkeydown = (e) => { if (e.key === 'Enter') $('#join-btn').click(); };
