@@ -95,6 +95,75 @@ export class Effects {
     this.light.position.copy(from); this.light.color.set(0x6fc8ff); this.light.intensity = 10; this.lightT = 0.08;
   }
 
+  // Cosmetic effect where a victim falls (the killer's equipped kill effect).
+  killFx(type, at, colorHex) {
+    const pos = at.clone(), color = new THREE.Color(colorHex || '#ffffff').getHex();
+    const burst = (n, speed, size, life, opts = {}) => {
+      for (let i = 0; i < n; i++) {
+        const v = new THREE.Vector3(Math.random() - 0.5, opts.up ?? Math.random(), Math.random() - 0.5).normalize().multiplyScalar(speed * (0.5 + Math.random() * 0.7));
+        this.sprite(opts.tex || this.sparkTex, pos.clone(), size * (0.6 + Math.random() * 0.8), life * (0.7 + Math.random() * 0.6), { vel: v, grav: opts.grav ?? 6, additive: opts.additive ?? true, color: opts.color ?? color, grow: opts.grow || 0 });
+      }
+    };
+    switch (type) {
+      case 'sparks': burst(40, 7, 0.08, 0.7, { grav: 14 }); break;
+      case 'smoke': {
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2;
+          this.sprite(this.smokeTex, pos.clone(), 0.7, 1.4, { vel: new THREE.Vector3(Math.cos(a) * 2.4, 0.3, Math.sin(a) * 2.4), grow: 1.2, color: 0xb0b6bc });
+        }
+        break;
+      }
+      case 'confetti': {
+        const cols = [0xff4d6d, 0xffd23f, 0x3ddc97, 0x4ea3ff, 0xc06cff];
+        for (let i = 0; i < 60; i++) this.sprite(this.sparkTex, pos.clone(), 0.07, 1.6, { vel: new THREE.Vector3((Math.random() - 0.5) * 5, 3 + Math.random() * 4, (Math.random() - 0.5) * 5), grav: 7, color: cols[i % cols.length] });
+        break;
+      }
+      case 'shock': {
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.32, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+        ring.rotation.x = -Math.PI / 2; ring.position.copy(pos).setY(pos.y - 0.6);
+        this.scene.add(ring);
+        this.items.push({ obj: ring, life: 0.6, max: 0.6, grow: 5, fade: true });
+        burst(18, 4, 0.1, 0.4, { up: 0.2 });
+        break;
+      }
+      case 'embers': burst(50, 3, 0.07, 1.6, { grav: -2.5, tex: this.fireTex, color: 0xff7a2a }); this.sprite(this.fireTex, pos.clone(), 1.6, 0.35, { additive: true, grow: 2 }); break;
+      case 'glitch': {
+        for (let i = 0; i < 14; i++) {
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(0.2 + Math.random() * 0.5, 0.05 + Math.random() * 0.12), new THREE.MeshBasicMaterial({ color: i % 2 ? color : 0xff2a8a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, toneMapped: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+          m.position.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 0.8, (Math.random() - 0.3) * 1.6, (Math.random() - 0.5) * 0.8));
+          m.rotation.y = Math.random() * Math.PI;
+          this.scene.add(m);
+          this.items.push({ obj: m, life: 0.25 + Math.random() * 0.4, max: 0.6, vel: new THREE.Vector3((Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2), fade: true });
+        }
+        break;
+      }
+      case 'lightning': {
+        const pts = [];
+        let p = pos.clone().setY(pos.y + 9);
+        while (p.y > pos.y - 0.8) { pts.push(p.clone()); p = p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, -0.9 - Math.random() * 0.6, (Math.random() - 0.5) * 1.2)); }
+        pts.push(pos.clone().setY(pos.y - 0.8));
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xe6f0ff, transparent: true, opacity: 1, toneMapped: false }));
+        this.scene.add(line);
+        this.items.push({ obj: line, life: 0.35, max: 0.35, fade: true });
+        this.light.position.copy(pos).y += 2; this.light.color.set(0xc6d8ff); this.light.intensity = 80; this.light.distance = 30; this.lightT = 0.12;
+        burst(20, 5, 0.08, 0.4, { color: 0xc6d8ff });
+        break;
+      }
+      case 'coins': {
+        for (let i = 0; i < 30; i++) {
+          const c = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.012, 12), new THREE.MeshStandardMaterial({ color: 0xffc83a, metalness: 1, roughness: 0.25, transparent: true }));
+          c.position.copy(pos);
+          c.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+          this.scene.add(c);
+          this.items.push({ obj: c, life: 1.4, max: 1.4, vel: new THREE.Vector3((Math.random() - 0.5) * 4, 3 + Math.random() * 3, (Math.random() - 0.5) * 4), grav: 12, fade: true, spin: 10 });
+        }
+        break;
+      }
+      default: break;
+    }
+  }
+
   shatter(pos) {
     for (let i = 0; i < 26; i++) {
       const v = new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 2.5, (Math.random() - 0.5) * 5);
@@ -228,6 +297,7 @@ export class Effects {
         continue;
       }
       if (it.vel) { it.vel.y -= it.grav * dt; it.obj.position.addScaledVector(it.vel, dt); }
+      if (it.spin) { it.obj.rotation.x += it.spin * dt; it.obj.rotation.z += it.spin * 0.7 * dt; }
       if (it.grow) it.obj.scale.multiplyScalar(1 + it.grow * dt);
       if (it.fade) it.obj.material.opacity = Math.min(1, (it.life / it.max) * 1.5);
     }

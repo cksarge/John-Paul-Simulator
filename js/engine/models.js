@@ -61,6 +61,53 @@ function patternTexture(skin) {
     g.strokeStyle = p[1]; g.lineWidth = skin.pattern === 'grid' ? 2 : 3;
     if (skin.pattern === 'grid') { for (let i = 0; i <= S; i += 32) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, S); g.moveTo(0, i); g.lineTo(S, i); g.stroke(); } }
     else for (let i = 0; i < 14; i++) { let x = rnd() * S, y = rnd() * S; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 6; k++) { x += (rnd() - 0.5) * 60; y += (rnd() - 0.5) * 60; g.lineTo(x, y); } g.stroke(); }
+  } else if (skin.pattern === 'fade') {
+    const grad = g.createLinearGradient(0, 0, S * 0.4, S);
+    p.forEach((col, i) => grad.addColorStop(i / (p.length - 1), col));
+    g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  } else if (skin.pattern === 'splatter') {
+    for (let i = 0; i < 40; i++) {
+      g.fillStyle = p[1 + Math.floor(rnd() * (p.length - 1))];
+      const x = rnd() * S, y = rnd() * S, r = 4 + rnd() * 18;
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+      for (let k = 0; k < 5; k++) { g.beginPath(); g.arc(x + (rnd() - 0.5) * r * 3, y + (rnd() - 0.5) * r * 3, 1 + rnd() * 3, 0, Math.PI * 2); g.fill(); }
+    }
+  } else if (skin.pattern === 'hex') {
+    g.strokeStyle = p[1]; g.lineWidth = 2;
+    const r = 14, hh = r * Math.sqrt(3);
+    for (let row = -1; row < S / hh + 1; row++) for (let col = -1; col < S / (r * 1.5) + 1; col++) {
+      const cx = col * r * 1.5, cy = row * hh + (col % 2 ? hh / 2 : 0);
+      g.beginPath();
+      for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+      g.closePath(); g.stroke();
+    }
+  } else if (skin.pattern === 'marble') {
+    g.strokeStyle = p[1]; g.globalAlpha = 0.55;
+    for (let i = 0; i < 9; i++) {
+      let x = rnd() * S, y = 0;
+      g.lineWidth = 0.5 + rnd() * 2;
+      g.beginPath(); g.moveTo(x, y);
+      while (y < S) { x += (rnd() - 0.5) * 30; y += 10 + rnd() * 14; g.lineTo(x, y); }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  } else if (skin.pattern === 'damascus') {
+    g.strokeStyle = p[1]; g.lineWidth = 1.5; g.globalAlpha = 0.7;
+    for (let i = -10; i < 40; i++) {
+      g.beginPath();
+      for (let x = 0; x <= S; x += 4) g.lineTo(x, i * 8 + Math.sin(x * 0.04 + i * 0.5) * 10 + Math.sin(x * 0.11) * 4);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  } else if (skin.pattern === 'circuit') {
+    g.strokeStyle = p[1]; g.fillStyle = p[1]; g.lineWidth = 2;
+    for (let i = 0; i < 30; i++) {
+      let x = Math.floor(rnd() * 16) * 16, y = Math.floor(rnd() * 16) * 16;
+      g.beginPath(); g.moveTo(x, y);
+      for (let k = 0; k < 4; k++) { if (rnd() < 0.5) x += (rnd() < 0.5 ? -1 : 1) * 32; else y += (rnd() < 0.5 ? -1 : 1) * 32; g.lineTo(x, y); }
+      g.stroke();
+      g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill();
+    }
   } else if (skin.pattern === 'prism') {
     const grad = g.createLinearGradient(0, 0, S, S * 0.6); p.forEach((col, i) => grad.addColorStop(i / (p.length - 1), col));
     g.fillStyle = grad; g.fillRect(0, 0, S, S);
@@ -742,8 +789,70 @@ export class CharacterModel {
     this.gunHolder.position.set(pistol ? 0.02 : 0.1, pistol ? 0.36 : 0.28, pistol ? -0.42 : -0.3);
   }
 
+  playEmote(id, dur = 2) {
+    if (this.dead) return;
+    this.emote = { id, t: 0, dur };
+    this.gunHolder.visible = false;
+  }
+
+  stopEmote() {
+    if (!this.emote) return;
+    this.emote = null;
+    this.gunHolder.visible = true;
+    this.body.rotation.set(0, 0, 0);
+    this.head.rotation.set(0, 0, 0);
+    this.torso.rotation.set(0, 0, 0);
+    this.arms.forEach((a) => a.userData.elbow.rotation.set(0, 0, 0));
+  }
+
+  // Poses for each emote as a function of time. arms[0] is the left arm, arms[1] the right.
+  _emotePose(e, dt) {
+    const t = e.t, [L, Rt] = this.arms, le = L.userData.elbow, re = Rt.userData.elbow;
+    const s = Math.sin, wave = (f) => s(t * f);
+    const set = (arm, x, y, z) => arm.rotation.set(x, y, z);
+    for (const l of this.legs) { l.rotation.set(0, 0, 0); l.userData.knee.rotation.x = 0; }
+    this.body.position.y = 0; this.body.rotation.set(0, 0, 0);
+    this.torso.rotation.set(0, 0, 0); this.head.rotation.set(0, 0, 0);
+    le.rotation.set(0, 0, 0); re.rotation.set(0, 0, 0);
+    set(L, 0, 0, -0.08); set(Rt, 0, 0, 0.08);
+    const ease = Math.min(1, t * 5, (e.dur - t) * 5);
+    switch (e.id) {
+      case 'wave': set(Rt, 0.3 * ease, 0, (2.3 + wave(9) * 0.35) * ease); re.rotation.z = 0.5 * ease; this.head.rotation.z = 0.1 * ease; break;
+      case 'salute': set(Rt, 2.0 * ease, 0, 0.75 * ease); re.rotation.x = 2.3 * ease; this.torso.rotation.x = -0.05; break;
+      case 'point': set(Rt, (Math.PI / 2 + 0.15) * ease, 0, 0.05); this.torso.rotation.y = -0.25 * ease; this.head.rotation.y = -0.2 * ease; break;
+      case 'shrug': set(L, 0.5 * ease, 0, -0.6 * ease); set(Rt, 0.5 * ease, 0, 0.6 * ease); le.rotation.x = 1.4 * ease; re.rotation.x = 1.4 * ease; this.body.position.y = Math.abs(wave(4)) * 0.02; this.head.rotation.z = 0.25 * ease; break;
+      case 'thumbs': set(Rt, 1.1 * ease, 0, 0.3); re.rotation.x = 1.4 * ease; this.head.rotation.x = -0.1; break;
+      case 'clap': { const c = Math.abs(wave(7)); set(L, 1.25 * ease, 0, (-0.15 - c * 0.35) * ease); set(Rt, 1.25 * ease, 0, (0.15 + c * 0.35) * ease); le.rotation.x = 0.6 * ease; re.rotation.x = 0.6 * ease; break; }
+      case 'facepalm': set(Rt, 2.4 * ease, 0, -0.35 * ease); re.rotation.x = 2.3 * ease; this.head.rotation.x = 0.35 * ease; this.torso.rotation.x = 0.12 * ease; break;
+      case 'dance': {
+        this.body.position.y = Math.abs(wave(6)) * 0.08;
+        this.torso.rotation.y = wave(3) * 0.4;
+        set(L, (1.2 + wave(6) * 1.2) * ease, 0, -0.4); set(Rt, (1.2 - wave(6) * 1.2) * ease, 0, 0.4);
+        le.rotation.x = 1.2; re.rotation.x = 1.2;
+        this.legs[0].rotation.x = Math.max(0, wave(6)) * 0.6; this.legs[1].rotation.x = Math.max(0, -wave(6)) * 0.6;
+        this.head.rotation.z = wave(6) * 0.15;
+        break;
+      }
+      case 'pushups': {
+        const k = Math.min(1, t * 3, (e.dur - t) * 3), down = (1 - Math.cos(t * 5)) / 2;
+        this.body.rotation.x = -1.42 * k;
+        this.body.position.y = (0.28 - down * 0.14) * k;
+        set(L, Math.PI * 0.5 * k, 0, -0.25 * k); set(Rt, Math.PI * 0.5 * k, 0, 0.25 * k);
+        le.rotation.x = down * 1.1 * k; re.rotation.x = down * 1.1 * k;
+        break;
+      }
+      case 'flex': set(L, 0.2, 0, -1.6 * ease); set(Rt, 0.2, 0, 1.6 * ease); le.rotation.z = -(1.7 + wave(5) * 0.15) * ease; re.rotation.z = (1.7 + wave(5) * 0.15) * ease; this.torso.rotation.x = -0.1 * ease; break;
+      default: break;
+    }
+  }
+
   // state: {speed (m/s), crouch 0..1, pitch, onGround, firing}
   update(dt, st) {
+    if (this.emote) {
+      this.emote.t += dt;
+      if (this.emote.t >= this.emote.dur || this.dead || st.speed > 1.2 || st.firing) this.stopEmote();
+      else { this._emotePose(this.emote, dt); return; }
+    }
     if (this.dead) {
       this.deathT = Math.min(1, this.deathT + dt * 2.2);
       const e = 1 - Math.pow(1 - this.deathT, 3);

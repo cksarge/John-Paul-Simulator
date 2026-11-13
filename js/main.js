@@ -4,7 +4,7 @@ import { Game } from './game/game.js';
 import { OPERATORS, sanitizeChar } from './data/characters.js';
 import { Room, buildMatch } from './net/realtime.js';
 import { initAudio } from './engine/audio.js';
-import { normalizeInventory, rollDrop, addToInventory } from './data/skins.js';
+import { normalizeInventory, rollDrop, addToInventory, KINDS } from './data/skins.js';
 
 const boot = document.getElementById('boot');
 const bootBar = boot.querySelector('.boot-bar div');
@@ -104,10 +104,10 @@ class App {
     // Merge anything collected as a guest on this device into the account.
     const local = this.loadLocalInventory();
     this.inventory = normalizeInventory(profile.inventory);
-    const before = this.inventory.finishes.length + this.inventory.outfits.length;
-    for (const f of local.finishes) addToInventory(this.inventory, { kind: 'finish', id: f });
-    for (const o of local.outfits) addToInventory(this.inventory, { kind: 'outfit', id: o });
-    if (this.inventory.finishes.length + this.inventory.outfits.length > before) this.saveInventory().catch(() => null);
+    const count = () => Object.values(KINDS).reduce((n, k) => n + this.inventory[k.key].length, 0);
+    const before = count();
+    for (const [kind, k] of Object.entries(KINDS)) for (const id of local[k.key]) addToInventory(this.inventory, { kind, id });
+    if (count() > before) this.saveInventory().catch(() => null);
     try { localStorage.removeItem('jps_inventory'); } catch { /* ignore */ }
     if (profile.character) this.char = { ...sanitizeChar(profile.character), preset: profile.character.preset || 'custom' };
     else this.api.saveCharacter(this.user.id, this.char).catch(() => null);

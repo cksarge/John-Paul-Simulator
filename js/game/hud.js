@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { WEAPONS, GRENADES, BUY_MENU, itemInfo, GUN_GAME_ORDER } from '../data/weapons.js';
 import { TEAM_CLASS, SOLO_KINDS, RESPAWN_KINDS, goalText, econFor } from '../data/modes.js';
-import { RARITIES, finishSwatch, outfitSwatch } from '../data/skins.js';
+import { RARITIES, KINDS } from '../data/skins.js';
+import { itemSwatch, emoteName } from '../ui/cards.js';
 import { spreadFor } from './combat.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -50,6 +51,7 @@ export class Hud {
         <div class="ammo"><div class="hud-num"></div></div>
       </div>
       <div class="chat"></div>
+      <div class="emote-wheel hidden"></div>
       <div class="ovl"></div>`;
     const q = (s) => r.querySelector(s);
     this.el = {
@@ -57,7 +59,7 @@ export class Hud {
       ch: q('.crosshair'), hm: q('.hitmarker'), dmg: q('.dmg-ind'), flash: q('.flash'), blind: q('.blind'), scope: q('.scope'),
       center: q('.center-msg'), goal: q('.goal-pill'), info: q('.info-msg'), prog: q('.progress'), spec: q('.spectate'), bomb: q('.bomb-icon'),
       money: q('.money'), hp: q('.hp'), ar: q('.ar'), slots: q('.slots'), wname: q('.weapon-name'), ammo: q('.ammo .hud-num'),
-      chat: q('.chat'), ovl: q('.ovl'),
+      chat: q('.chat'), ovl: q('.ovl'), wheel: q('.emote-wheel'),
     };
     this.radarImg = this.g.world.radarCanvas(8);
     this.buildCrosshair();
@@ -236,6 +238,17 @@ export class Hud {
     setTimeout(() => ln.remove(), 9500);
   }
 
+  // Emote wheel while G is held. `list` null hides it.
+  emoteWheel(list, sel = 0) {
+    const el = this.el.wheel;
+    if (!list) { el.classList.add('hidden'); this.wheelKey = ''; return; }
+    const key = list.join() + sel;
+    el.classList.remove('hidden');
+    if (key === this.wheelKey) return;
+    this.wheelKey = key;
+    el.innerHTML = list.map((id, i) => `<div class="ew-slot s${i} ${i === sel ? 'sel' : ''}"><i>${itemSwatch('emote', id).glyph}</i><span>${esc(emoteName(id))}</span></div>`).join('') + '<div class="ew-hint">Move the mouse to choose · release G</div>';
+  }
+
   // ───────────── feedback ─────────────
   center(text, sub = '', time = 3, team = -1) {
     this.el.center.innerHTML = `<div class="big ${team >= 0 ? TEAM_CLASS[team] : ''}">${esc(text)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}`;
@@ -317,8 +330,8 @@ export class Hud {
     if (!e || !item) return;
     const r = RARITIES[item.rarity];
     e.innerHTML = `<div class="drop-card" style="--rc:${r.color}"><span class="small muted">${item.duplicate ? 'Duplicate drop' : 'New item unlocked'}</span>
-      <div class="drop-swatch" style="background:${item.kind === 'finish' ? finishSwatch(item.id) : outfitSwatch(item.id)}"></div>
-      <b>${esc(item.name)}</b><span style="color:${r.color}">${r.name} ${item.kind === 'finish' ? 'weapon finish' : 'outfit'}</span></div>`;
+      <div class="drop-swatch" style="background:${itemSwatch(item.kind, item.id).bg}">${itemSwatch(item.kind, item.id).glyph}</div>
+      <b>${esc(item.name)}</b><span style="color:${r.color}">${r.name} ${(KINDS[item.kind]?.label || '').toLowerCase()}</span></div>`;
   }
 
   setEloChange(delta, error) {
@@ -348,7 +361,7 @@ export class Hud {
     const spreadPx = w ? spreadFor(p) * (innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(g.engine.camera.fov / 2)) : 0;
     this.layoutCrosshair(g.settings.crosshairGap + Math.min(40, spreadPx * 0.6));
     const scoped = p.alive && p.ws.scope > 0;
-    el.ch.style.display = scoped || !p.alive || (w && w.type === 'sniper') ? 'none' : '';
+    el.ch.style.display = scoped || !p.alive || g.emoteT > 0 || (w && w.type === 'sniper') ? 'none' : '';
     el.scope.classList.toggle('hidden', !scoped);
 
     // Plant/defuse progress

@@ -12,6 +12,7 @@ import { Input } from './input.js';
 import { Rules } from './rules.js';
 import { BotBrain } from './bot.js';
 import { Hud } from './hud.js';
+import { EMOTES, KILL_FX } from '../data/skins.js';
 import {
   switchSlot, cycleSlot, startReload, tickWeapon, ready, spreadFor, applySpread, traceBullet, tracePierce, bulletDamage, bestSlot, hasSlot,
   reloadTime, maxNades, nadeLimit,
@@ -222,13 +223,15 @@ export class Game {
         }
       }
       p.firingT -= dt;
-      const showModel = !p.isLocal || this.spectating() || this.state.phase === 'over';
+      const selfView = p.isLocal && this.emoteT > 0;
+      const showModel = !p.isLocal || this.spectating() || this.state.phase === 'over' || selfView;
       if (p.model) {
         if (p.alive && p.model.dead) p.model.revive();
-        p.syncModel(dt, showModel && (p.alive || p.model.dead) && !(p.isLocal && !this.spectating()));
+        p.syncModel(dt, showModel && (p.alive || p.model.dead) && !(p.isLocal && !this.spectating() && !selfView));
         if (p.tag) p.tag.visible = p.alive && lp && !p.isLocal && !SOLO_KINDS.has(this.mode.kind) && p.team === lp.team;
       }
     }
+    if (this.emoteT > 0) { this.emoteT -= dt; if (!this.local?.model?.emote) this.emoteT = 0; }
     this.updateNades(dt);
     this.updateBomb(dt);
     this.world.update(dt);
@@ -256,7 +259,20 @@ export class Game {
     const w = p.weapon;
     const zoom = p.ws.scope > 0 && w?.scope ? w.scope[p.ws.scope - 1] / s.fov : 1;
     const sens = 0.0022 * s.sens * (p.ws.scope > 0 ? s.scopedSens * zoom : 1);
-    const mdx = ui ? 0 : inp.mouse.dx, mdy = ui ? 0 : inp.mouse.dy * (s.invertY ? -1 : 1);
+    // Hold G for the emote wheel: the mouse picks a slot instead of turning.
+    const wheel = !ui && p.alive && inp.down('KeyG');
+    if (wheel) {
+      if (!this.wheel) this.wheel = { x: 0, y: 0 };
+      this.wheel.x += inp.mouse.dx; this.wheel.y += inp.mouse.dy;
+      this.hud.emoteWheel(p.char?.emotes || [], this.wheelSlot());
+    } else if (this.wheel) {
+      const slot = this.wheelSlot();
+      this.wheel = null;
+      this.hud.emoteWheel(null);
+      const id = (p.char?.emotes || [])[slot];
+      if (id) this.emote(p, id);
+    }
+    const mdx = ui || wheel ? 0 : inp.mouse.dx, mdy = ui || wheel ? 0 : inp.mouse.dy * (s.invertY ? -1 : 1);
     this.lookDX = mdx; this.lookDY = mdy;
     if (p.alive) {
       p.yaw -= mdx * sens;
@@ -327,8 +343,22 @@ export class Game {
     this.viewmodel.update(dt, {
       speed: Math.hypot(p.vel.x, p.vel.z), onGround: p.onGround, lookDX: this.lookDX, lookDY: this.lookDY,
       reload: p.ws.reloadT >= 0 && w ? p.ws.reloadT / reloadTime(p, w) : -1, scoped: p.ws.scope > 0,
-      drawTime: w?.draw || 0.4,
+      drawTime: w?.draw || 0.4, hidden: this.emoteT > 0,
     });
+  }
+
+  // Wheel slots: 0 up, 1 right, 2 down, 3 left. A quick tap of G plays the first emote.
+  wheelSlot() {
+    const w = this.wheel;
+    if (!w || Math.hypot(w.x, w.y) < 25) return 0;
+    const a = Math.atan2(w.y, w.x);
+    return [1, 2, 3, 0][((Math.round(a / (Math.PI / 2)) % 4) + 4) % 4];
+  }
+
+  emote(p, id) {
+    if (!EMOTES[id] || !p.alive || (this.emoteCd || 0) > performance.now()) return;
+    this.emoteCd = performance.now() + 1200;
+    this.broadcast('emote', { id: p.id, e: id });
   }
 
   handleUiKeys(p, ui) {
@@ -1180,6 +1210,14 @@ export class Game {
           if (lp && !d.over) (lp.team === d.winner ? sfx.win : sfx.lose)();
         }
         this.action = null;
+        // Bots on the winning side sometimes celebrate.
+        if (this.isHost && d.winner >= 0 && !d.over) {
+          for (const b of this.players.values()) {
+            if (!b.isBot || !b.alive || b.team !== d.winner || Math.random() > 0.35) continue;
+            const list = b.char?.emotes || ['wave'];
+            setTimeout(() => { if (b.alive && this.state.phase === 'post') this.broadcast('emote', { id: b.id, e: list[Math.floor(Math.random() * list.length)] }); }, 600 + Math.random() * 1500);
+          }
+        }
         break;
       }
       case 'sync':
@@ -1215,6 +1253,8 @@ export class Game {
         v.model?.die(dir);
         if (k && k !== v) { k.kills++; if (d.hs) k.hs++; if (this.isHost) k.money = d.money ?? k.money; }
         this.hud.killfeed(k, v, d.w, d.hs);
+        const fx = k && k !== v ? k.char?.killfx : null;
+        if (fx && fx !== 'none' && KILL_FX[fx]) this.effects.killFx(fx, v.pos.clone().setY(v.pos.y + 1), KILL_FX[fx].color);
         if (k?.isLocal && k !== v) { this.hud.hitmarker(d.hs, true); }
         if (v.isLocal) {
           this.viewmodel.setWeapon(null);
@@ -1257,6 +1297,13 @@ export class Game {
       }
       case 'give': this.applyGive(d); break;
       case 'nade': this.spawnNade(d); break;
+      case 'emote': {
+        const p = this.players.get(d.id), def = EMOTES[d.e];
+        if (!p?.alive || !def || !p.model) break;
+        p.model.playEmote(d.e, def.dur);
+        if (p.isLocal) this.emoteT = def.dur;
+        break;
+      }
       case 'boom': { const i = this.nades.findIndex((n) => n.nid === d.nid); if (i >= 0) this.detonate(i); break; }
       case 'door': this.world.setDoor(d.cell, d.open); sfx.door(this.world.cellCenter(...d.cell)); break;
       case 'prop': this.applyPropBreak(d); break;
@@ -1396,7 +1443,7 @@ export class Game {
   // ───────────────────────── networking ─────────────────────────
   bindNet() {
     const n = this.net;
-    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg', 'boom', 'door', 'prop'];
+    const evs = ['phase', 'round', 'roundEnd', 'sync', 'hp', 'kill', 'respawn', 'bomb', 'give', 'nade', 'chat', 'msg', 'end', 'score', 'gg', 'boom', 'door', 'prop', 'emote'];
     for (const e of evs) n.on(e, (d) => this.onEvent(e, d));
     n.on('S', (d) => this.onStates(d));
     n.on('req', (d) => { if (this.isHost) this.handleRequest(d.type, d.data, d.from); });
@@ -1616,7 +1663,28 @@ export class Game {
   updateCamera(dt) {
     const cam = this.engine.camera, lp = this.local, s = this.settings;
     let fov = s.fov;
-    if (lp && lp.alive) {
+    if (lp && lp.alive && this.emoteT > 0) {
+      // Emoting: swing the camera round to look at your own operator.
+      this.emoteCamT = (this.emoteCamT || 0) + dt;
+      const target = lp.pos.clone().setY(lp.pos.y + 1.15);
+      // Pick the most open angle in front of the operator once, then drift gently around it.
+      if (this.emoteCamT < 0.05 || this.emoteBase === undefined) {
+        let best = 0, bestD = -1;
+        for (const off of [0.5, -0.5, 1.1, -1.1, 0, 1.8, -1.8, Math.PI]) {
+          const d = new THREE.Vector3(-Math.sin(lp.yaw + off), 0.18, -Math.cos(lp.yaw + off)).normalize();
+          const hit = this.world.raycast(target, d, 3.2), dist = hit ? hit.dist : 3.2;
+          if (dist > bestD + 0.4) { bestD = dist; best = off; }
+        }
+        this.emoteBase = lp.yaw + best;
+      }
+      const a = this.emoteBase + Math.sin(this.emoteCamT * 0.6) * 0.25;
+      const dir = new THREE.Vector3(-Math.sin(a), 0.18, -Math.cos(a)).normalize();
+      const hit = this.world.raycast(target, dir, 3.2);
+      cam.position.copy(target).addScaledVector(dir, hit ? Math.max(0.6, hit.dist - 0.3) : 3.2);
+      cam.lookAt(target);
+      this.spectateTarget = null;
+    } else if (lp && lp.alive) {
+      this.emoteCamT = 0; this.emoteBase = undefined;
       cam.position.copy(lp.eye());
       cam.rotation.order = 'YXZ';
       cam.rotation.set(lp.pitch + this.punch, lp.yaw, 0);

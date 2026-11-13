@@ -28,6 +28,19 @@ export const WEAPON_SKINS = {
   neon: { name: 'Neon Grid', rarity: 'legendary', pattern: 'grid', palette: ['#06100b', '#00ff9c'], emissive: '#00ff9c', metal: '#0a0f0c' },
   gold: { name: 'Gilded', rarity: 'legendary', pattern: 'metal', palette: ['#d4a73a'], metal: '#b8892a', metalness: 1, roughness: 0.25 },
   prism: { name: 'Prism', rarity: 'legendary', pattern: 'prism', palette: ['#ff4d6d', '#ffd23f', '#3ddc97', '#4ea3ff', '#c06cff'] },
+  ruby: { name: 'Ruby Lacquer', rarity: 'uncommon', pattern: 'solid', palette: ['#6e1420'], metal: '#1a0c0e', roughness: 0.2 },
+  paintball: { name: 'Paintball', rarity: 'uncommon', pattern: 'splatter', palette: ['#e8e4da', '#ff4d6d', '#3ddc97', '#4ea3ff', '#ffd23f'] },
+  hex: { name: 'Hex Plate', rarity: 'rare', pattern: 'hex', palette: ['#2a3038', '#4a5562'], metal: '#1d2228' },
+  sunset: { name: 'Sunset Fade', rarity: 'rare', pattern: 'fade', palette: ['#ff7a3d', '#ff3d7f', '#6a3dff'] },
+  frost: { name: 'Frost Fade', rarity: 'rare', pattern: 'fade', palette: ['#e8f6ff', '#7cc7ff', '#2a5aa8'] },
+  marble: { name: 'White Marble', rarity: 'rare', pattern: 'marble', palette: ['#e9e6e0', '#6b6862'], roughness: 0.25 },
+  damascus: { name: 'Damascus', rarity: 'epic', pattern: 'damascus', palette: ['#3a3d42', '#9aa1a8'], metal: '#2a2c30', metalness: 0.9, roughness: 0.3 },
+  circuit: { name: 'Circuit', rarity: 'epic', pattern: 'circuit', palette: ['#071218', '#27e0ff'], emissive: '#27e0ff', metal: '#0b1418' },
+  toxic: { name: 'Toxic', rarity: 'epic', pattern: 'cracks', palette: ['#0f140a', '#9dff2e'], emissive: '#7aff10' },
+  obsidian: { name: 'Obsidian', rarity: 'legendary', pattern: 'metal', palette: ['#121214'], metal: '#050506', metalness: 1, roughness: 0.12 },
+  // Milestone unlocks: earned by playing, never dropped.
+  veteran: { name: 'Veteran Steel', rarity: 'epic', pattern: 'damascus', palette: ['#2b2f24', '#c9b46a'], metal: '#1d1f18', metalness: 0.85, roughness: 0.3, milestone: { stat: 'matches', n: 100, label: 'Play 100 online matches' } },
+  apex: { name: 'Apex', rarity: 'legendary', pattern: 'fade', palette: ['#ffd23f', '#ff5a5a', '#c06cff'], emissive: '#ff7a3d', milestone: { stat: 'peak_elo', n: 1400, label: 'Reach Diamond (1400 ELO)' } },
 };
 
 // Outfits recolour clothing on any operator. Keys override the character's own colours.
@@ -43,28 +56,104 @@ export const OUTFITS = {
   royal: { name: 'Royal Detail', rarity: 'epic', colors: { top: '#1f2f5a', pants: '#141c33', vestColor: '#c79a2e', gloves: '#141414', boots: '#141414' } },
   phantom: { name: 'Phantom', rarity: 'legendary', colors: { top: '#06100b', pants: '#06100b', vestColor: '#0e1a14', gloves: '#00ff9c', boots: '#06100b' }, glow: '#00ff9c' },
   gilded: { name: 'Gilded Elite', rarity: 'legendary', colors: { top: '#1a1a1a', pants: '#1a1a1a', vestColor: '#d4a73a', gloves: '#d4a73a', boots: '#2a221b' } },
+  olivedrab: { name: 'Olive Drab', rarity: 'common', colors: { top: '#4c5238', pants: '#3a3f2c', vestColor: '#59614d', gloves: '#2f3524', boots: '#2a221b' } },
+  greyman: { name: 'Grey Man', rarity: 'uncommon', colors: { top: '#6b6f75', pants: '#4a4f55', vestColor: '#3a3f45', gloves: '#2b2f33', boots: '#1a1a1a' } },
+  hazmat: { name: 'Hazmat', rarity: 'rare', colors: { top: '#d9b32a', pants: '#d9b32a', vestColor: '#2b2f33', gloves: '#1d1d1f', boots: '#1d1d1f' } },
+  mercenary: { name: 'Mercenary', rarity: 'rare', colors: { top: '#5a4632', pants: '#3b3328', vestColor: '#8a3a2a', gloves: '#3b3328', boots: '#2a221b' } },
+  iceguard: { name: 'Ice Guard', rarity: 'epic', colors: { top: '#e8f6ff', pants: '#a8c8e0', vestColor: '#2a5aa8', gloves: '#2a5aa8', boots: '#1b2533' }, glow: '#7cc7ff' },
+  ember: { name: 'Ember', rarity: 'legendary', colors: { top: '#1a0f0a', pants: '#1a0f0a', vestColor: '#2a140a', gloves: '#ff6a1f', boots: '#1a0f0a' }, glow: '#ff6a1f' },
+  commander: { name: 'Commander', rarity: 'legendary', colors: { top: '#1d1d1f', pants: '#1d1d1f', vestColor: '#5b1a1a', gloves: '#d4a73a', boots: '#141414' }, milestone: { stat: 'wins', n: 50, label: 'Win 50 online matches' } },
 };
 
+// Calling cards: a banner shown on your profile, in party line-ups and on the kill cam.
+// motif selects the artwork drawn by js/ui/cards.js.
+export const CALLING_CARDS = {
+  standard: { name: 'Standard Issue', rarity: 'common', colors: ['#1b2028', '#f2a33a'], motif: 'chevrons', starter: true },
+  dusk: { name: 'Dusk Patrol', rarity: 'common', colors: ['#2a1f3d', '#ff8a4d'], motif: 'mountains', starter: true },
+  grid: { name: 'Night Grid', rarity: 'uncommon', colors: ['#06100b', '#00ff9c'], motif: 'grid' },
+  waves: { name: 'Riptide', rarity: 'uncommon', colors: ['#0c2a4a', '#3fa7d6'], motif: 'waves' },
+  radar: { name: 'Radar Lock', rarity: 'rare', colors: ['#0b1a12', '#3dff8f'], motif: 'radar' },
+  sunburst: { name: 'Sunburst', rarity: 'rare', colors: ['#3a1208', '#ffb03a'], motif: 'sunburst' },
+  crosshair: { name: 'In The Sights', rarity: 'rare', colors: ['#14161a', '#ff4d4d'], motif: 'crosshair' },
+  hazard: { name: 'Hazard Zone', rarity: 'epic', colors: ['#141414', '#e0b030'], motif: 'stripes' },
+  skyline: { name: 'Skyline', rarity: 'epic', colors: ['#10162a', '#c06cff'], motif: 'skyline' },
+  aurora: { name: 'Aurora', rarity: 'legendary', colors: ['#050a18', '#3ddc97', '#c06cff'], motif: 'aurora' },
+  veteran: { name: 'Veteran', rarity: 'epic', colors: ['#1d1f18', '#c9b46a'], motif: 'chevrons', milestone: { stat: 'matches', n: 50, label: 'Play 50 online matches' } },
+  headhunter: { name: 'Headhunter', rarity: 'legendary', colors: ['#1a0606', '#ff3030'], motif: 'crosshair', milestone: { stat: 'headshots', n: 250, label: 'Land 250 headshot kills' } },
+};
+
+// Effects that play where your victim falls. Everyone in the match sees them.
+export const KILL_FX = {
+  none: { name: 'None', rarity: 'common', starter: true },
+  sparks: { name: 'Spark Shower', rarity: 'uncommon', color: '#ffd27a' },
+  smoke: { name: 'Smoke Ring', rarity: 'uncommon', color: '#9aa4ad' },
+  confetti: { name: 'Confetti', rarity: 'rare', color: '#ff4d6d' },
+  shock: { name: 'Shockwave', rarity: 'rare', color: '#4ea3ff' },
+  embers: { name: 'Ember Burst', rarity: 'epic', color: '#ff6a1f' },
+  glitch: { name: 'Glitch', rarity: 'epic', color: '#27e0ff' },
+  lightning: { name: 'Lightning', rarity: 'legendary', color: '#c6d8ff' },
+  coins: { name: 'Jackpot', rarity: 'legendary', color: '#ffd23f', milestone: { stat: 'kills', n: 1000, label: 'Get 1,000 kills online' } },
+};
+
+// Emotes play on your operator; hold G in a match for the emote wheel.
+export const EMOTES = {
+  wave: { name: 'Wave', rarity: 'common', starter: true, dur: 2.2 },
+  salute: { name: 'Salute', rarity: 'common', starter: true, dur: 2.2 },
+  point: { name: 'Point', rarity: 'common', starter: true, dur: 1.8 },
+  shrug: { name: 'Shrug', rarity: 'common', starter: true, dur: 1.8 },
+  thumbs: { name: 'Thumbs Up', rarity: 'uncommon', dur: 1.8 },
+  clap: { name: 'Slow Clap', rarity: 'uncommon', dur: 2.6 },
+  facepalm: { name: 'Facepalm', rarity: 'rare', dur: 2.2 },
+  dance: { name: 'Victory Dance', rarity: 'epic', dur: 3.6 },
+  pushups: { name: 'Push-ups', rarity: 'legendary', dur: 3.6 },
+  flex: { name: 'Flex', rarity: 'epic', dur: 2.6, milestone: { stat: 'ranked_wins', n: 25, label: 'Win 25 ranked matches' } },
+};
+
+// Inventory buckets by item kind.
+export const KINDS = {
+  finish: { key: 'finishes', defs: WEAPON_SKINS, label: 'Weapon finish' },
+  outfit: { key: 'outfits', defs: OUTFITS, label: 'Outfit' },
+  card: { key: 'cards', defs: CALLING_CARDS, label: 'Calling card' },
+  effect: { key: 'effects', defs: KILL_FX, label: 'Kill effect' },
+  emote: { key: 'emotes', defs: EMOTES, label: 'Emote' },
+};
+
+// Milestones are checked against profile stats (online) or local stats for guests.
+export function milestoneMet(def, stats) {
+  const m = def?.milestone;
+  return !!(m && stats && (stats[m.stat] || 0) >= m.n);
+}
+
+export function owns(inv, kind, id, stats) {
+  const k = KINDS[kind], def = k?.defs[id];
+  if (!def) return false;
+  if (def.starter) return true;
+  if (def.milestone) return milestoneMet(def, stats);
+  return (inv?.[k.key] || []).includes(id);
+}
+
 export function starterInventory() {
-  return {
-    finishes: Object.keys(WEAPON_SKINS).filter((k) => WEAPON_SKINS[k].starter),
-    outfits: Object.keys(OUTFITS).filter((k) => OUTFITS[k].starter),
-  };
+  const out = {};
+  for (const k of Object.values(KINDS)) out[k.key] = Object.keys(k.defs).filter((id) => k.defs[id].starter);
+  return out;
 }
 
 export function normalizeInventory(inv) {
-  const base = starterInventory();
-  const finishes = new Set([...base.finishes, ...((inv && inv.finishes) || []).filter((k) => WEAPON_SKINS[k])]);
-  const outfits = new Set([...base.outfits, ...((inv && inv.outfits) || []).filter((k) => OUTFITS[k])]);
-  return { finishes: [...finishes], outfits: [...outfits] };
+  const base = starterInventory(), out = {};
+  for (const k of Object.values(KINDS)) {
+    out[k.key] = [...new Set([...base[k.key], ...((inv && inv[k.key]) || []).filter((id) => k.defs[id] && !k.defs[id].milestone)])];
+  }
+  return out;
 }
 
 // Rolls one random item. Already-owned items are skipped where possible so drops feel fresh.
+// Milestone items never drop.
 export function rollDrop(inv, rng = Math.random) {
   const pool = [];
-  for (const [id, s] of Object.entries(WEAPON_SKINS)) if (!s.starter) pool.push({ kind: 'finish', id, rarity: s.rarity, name: s.name });
-  for (const [id, o] of Object.entries(OUTFITS)) if (!o.starter) pool.push({ kind: 'outfit', id, rarity: o.rarity, name: o.name });
-  const owned = (it) => (it.kind === 'finish' ? inv.finishes : inv.outfits).includes(it.id);
+  for (const [kind, k] of Object.entries(KINDS)) {
+    for (const [id, d] of Object.entries(k.defs)) if (!d.starter && !d.milestone) pool.push({ kind, id, rarity: d.rarity, name: d.name });
+  }
+  const owned = (it) => (inv[KINDS[it.kind].key] || []).includes(it.id);
   const fresh = pool.filter((it) => !owned(it));
   const candidates = fresh.length ? fresh : pool;
   const total = candidates.reduce((a, it) => a + RARITIES[it.rarity].weight, 0);
@@ -74,7 +163,9 @@ export function rollDrop(inv, rng = Math.random) {
 }
 
 export function addToInventory(inv, item) {
-  const key = item.kind === 'finish' ? 'finishes' : 'outfits';
+  const key = KINDS[item.kind]?.key;
+  if (!key) return inv;
+  if (!inv[key]) inv[key] = [];
   if (!inv[key].includes(item.id)) inv[key].push(item.id);
   return inv;
 }
@@ -95,6 +186,12 @@ export function finishSwatch(id) {
     case 'cracks': return `radial-gradient(circle at 40% 50%, ${p[1]}, transparent 35%), ${p[0]}`;
     case 'grid': return `linear-gradient(${p[1]} 1px, transparent 1px) 0 0/10px 10px, linear-gradient(90deg, ${p[1]} 1px, transparent 1px) 0 0/10px 10px, ${p[0]}`;
     case 'prism': return `linear-gradient(120deg, ${p.join(', ')})`;
+    case 'fade': return `linear-gradient(160deg, ${p.join(', ')})`;
+    case 'hex': return `radial-gradient(circle, ${p[1]} 30%, transparent 32%) 0 0/12px 12px, ${p[0]}`;
+    case 'marble': return `linear-gradient(115deg, ${p[0]} 40%, ${p[1]} 42%, ${p[0]} 44%, ${p[0]} 70%, ${p[1]} 71%, ${p[0]} 73%)`;
+    case 'damascus': return `repeating-radial-gradient(ellipse at 30% 40%, ${p[0]} 0 4px, ${p[1]} 5px 6px)`;
+    case 'circuit': return `linear-gradient(90deg, transparent 45%, ${p[1]} 46% 48%, transparent 49%) 0 0/16px 16px, linear-gradient(transparent 70%, ${p[1]} 71% 73%, transparent 74%) 0 0/16px 16px, ${p[0]}`;
+    case 'splatter': return `radial-gradient(circle at 30% 40%, ${p[1]} 14%, transparent 15%), radial-gradient(circle at 70% 60%, ${p[2]} 12%, transparent 13%), radial-gradient(circle at 55% 25%, ${p[3]} 9%, transparent 10%), radial-gradient(circle at 25% 75%, ${p[4]} 10%, transparent 11%), ${p[0]}`;
     default: return p[0] || '#333';
   }
 }
