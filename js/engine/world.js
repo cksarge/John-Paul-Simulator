@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getMaterial, tileSize } from './textures.js';
 import { buildProp, decorate } from './decor.js';
-import { isPlatform, platformH, UPPER, turnChar } from './grid.js';
+import { isPlatform, platformH, UPPER, turnChar, DIR_OF } from './grid.js';
 
 // The world is a grid of CELL-sized columns. Every solid is a column from y=0 to its height,
 // so collision, raycasts and navigation all run directly on the grid.
@@ -28,6 +28,8 @@ const LIFT_PERIOD = 2 * (LIFT.wait + LIFT.move);
 // Standing height of a body, for walking under bridges.
 const BODY_H = 1.8;
 const RAIL_BITS = [[1, 0, 1], [-1, 0, 2], [0, 1, 4], [0, -1, 8]];
+// Ramp / stair directions in DIR_OF order: north, east, south, west (the way they rise).
+const DIR_VEC = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const CONTAINER_TINTS = ['#a8432f', '#2f6aa8', '#3d7a45', '#c27a2c', '#7b7f86'];
 
 function heightOf(ch) {
@@ -70,8 +72,9 @@ export class World {
       this.setChar(x, y, g[y][x]);
       if (PROP_CHARS.has(g[y][x])) this.props.set(x + ',' + y, { x, y, ch: g[y][x], open: false, broken: false, hp: WOOD_HP[g[y][x]] || 60, stage: 0, anim: 0 });
     }
-    // An upper slab only makes sense over ground that's lower than its underside.
     this.up = up;
+    this.computeRamps();
+    // An upper slab only makes sense over ground that's lower than its underside.
     for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) {
       const u = UPPER[up[y][x]];
       if (!u || this.H[y * def.w + x] >= u.lo) { up[y][x] = '.'; continue; }
@@ -167,6 +170,54 @@ export class World {
     const h = heightOf(ch);
     this.H[y * this.w + x] = h;
     this.RH[y * this.w + x] = ch === 'G' ? 0 : h;
+  }
+
+  // ───────────── ramps and stairs ─────────────
+  // A run of ramp/stair cells facing the same way rises evenly from the ground behind its first cell to
+  // whatever it leads onto (a platform or a bridge deck). With nothing to lead onto, it climbs 0.5 m a cell.
+  computeRamps() {
+    const n = this.w * this.h;
+    this.RDir = new Int8Array(n).fill(-1); this.RLo = new Float32Array(n); this.RHi = new Float32Array(n);
+    const dirAt = (x, y) => { const d = DIR_OF[this.chars[y]?.[x]]; return d ? d.i : -1; };
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
+      const di = dirAt(x, y);
+      if (di < 0) continue;
+      const [dx, dy] = DIR_VEC[di];
+      if (dirAt(x - dx, y - dy) === di) continue; // not the bottom of its run
+      const run = [];
+      for (let cx = x, cy = y; dirAt(cx, cy) === di; cx += dx, cy += dy) run.push([cx, cy]);
+      const [bx, by] = [x - dx, y - dy], [ex, ey] = [run.at(-1)[0] + dx, run.at(-1)[1] + dy];
+      const base = this.chars[by]?.[bx] !== undefined && this.navH(bx, by) !== null ? this.H[by * this.w + bx] : 0;
+      let top = Math.max(this.navH(ex, ey) ?? 0, UPPER[this.up[ey]?.[ex]]?.top ?? 0);
+      if (top <= base + 0.1) top = Math.min(4, base + run.length * 0.5);
+      run.forEach(([cx, cy], k) => {
+        const i = cy * this.w + cx;
+        this.RDir[i] = di;
+        this.RLo[i] = base + ((top - base) * k) / run.length;
+        this.RHi[i] = base + ((top - base) * (k + 1)) / run.length;
+        this.H[i] = this.RH[i] = this.RHi[i];
+      });
+    }
+  }
+  isRamp(cx, cy) { return cx >= 0 && cy >= 0 && cx < this.w && cy < this.h && this.RDir[cy * this.w + cx] >= 0; }
+  // Height of a ramp's surface at (x, z), clamped into its cell.
+  rampAt(cx, cy, x, z) {
+    const i = cy * this.w + cx, [dx, dy] = DIR_VEC[this.RDir[i]];
+    const u = dx ? (x / CELL - cx) : (z / CELL - cy), t = Math.min(1, Math.max(0, (dx || dy) > 0 ? u : 1 - u));
+    return this.RLo[i] + (this.RHi[i] - this.RLo[i]) * t;
+  }
+  // Highest point of a ramp cell under a footprint of radius r around (x, z).
+  rampUnder(cx, cy, x, z, r) {
+    const [dx, dy] = DIR_VEC[this.RDir[cy * this.w + cx]];
+    return this.rampAt(cx, cy, x + dx * r, z + dy * r);
+  }
+  // Height of a cell along one of its edges (towards dx, dy), for paths: ramps are low at the foot, high at the top.
+  edgeH(cx, cy, h, dx, dy) {
+    if (!this.isRamp(cx, cy) || h > this.RHi[cy * this.w + cx] + 0.01) return h;
+    const i = cy * this.w + cx, [rx, ry] = DIR_VEC[this.RDir[i]];
+    if (dx === rx && dy === ry) return this.RHi[i];
+    if (dx === -rx && dy === -ry) return this.RLo[i];
+    return null; // no stepping onto a ramp over its side
   }
 
   // Cells that aren't real floor even though nothing stands on them (spawn barriers).
@@ -285,8 +336,11 @@ export class World {
     for (const p of this.props.values()) p.view?.update?.(dt, p);
     this.decor?.update(dt);
   }
-  heightAt(x, z) { return this.cellH(Math.floor(x / CELL), Math.floor(z / CELL)); }
-  cellCenter(cx, cy) { return new THREE.Vector3((cx + 0.5) * CELL, this.cellH(cx, cy), (cy + 0.5) * CELL); }
+  heightAt(x, z) {
+    const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL);
+    return this.isRamp(cx, cy) ? this.rampAt(cx, cy, x, z) : this.cellH(cx, cy);
+  }
+  cellCenter(cx, cy) { const x = (cx + 0.5) * CELL, z = (cy + 0.5) * CELL; return new THREE.Vector3(x, this.heightAt(x, z), z); }
 
   siteAt(x, z) {
     const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL);
@@ -300,7 +354,7 @@ export class World {
     const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL);
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
-      const h = this.cellH(cx, cz);
+      const h = this.isRamp(cx, cz) ? this.rampUnder(cx, cz, x, z, r) : this.cellH(cx, cz);
       if (h > y + (this.isLift(cx, cz) ? 0.4 : 0.001) && h > top) top = h;
       // An overhead slab blocks only bodies that overlap it.
       const i = cz * this.w + cx, ut = this.UT[i] || 0;
@@ -315,7 +369,7 @@ export class World {
     const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL);
     const z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
     for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
-      const h = this.cellH(cx, cz);
+      const h = this.isRamp(cx, cz) ? this.rampUnder(cx, cz, x, z, r) : this.cellH(cx, cz);
       if (h <= y + (this.isLift(cx, cz) ? 0.4 : 0.05) && h > f) f = h;
       const ut = this.UT[cz * this.w + cx] || 0;
       if (ut && ut <= y + 0.05 && ut > f) f = ut;
@@ -338,7 +392,8 @@ export class World {
   // Floor height under (x, z) for something at height y: the deck once it's at deck level.
   floorAt(x, z, y) {
     const cx = Math.floor(x / CELL), cy = Math.floor(z / CELL), d = this.deckAt(cx, cy);
-    return d && y >= d.lo ? d.top : this.cellH(cx, cy);
+    if (d && y >= d.lo) return d.top;
+    return this.isRamp(cx, cy) ? this.rampAt(cx, cy, x, z) : this.cellH(cx, cy);
   }
 
   // Moves a body (feet position `pos`, velocity `vel`) with gravity, step-up and wall sliding.
@@ -376,6 +431,8 @@ export class World {
       const ceil = this.ceilingAbove(body.pos.x, body.pos.y, body.pos.z, r);
       if (ny + bh > ceil) { ny = Math.min(ny, Math.max(body.pos.y, ceil - bh)); body.vel.y = Math.min(0, body.vel.y); }
       const floor = this.floorUnder(body.pos.x, body.pos.y, body.pos.z, r);
+      // Walking down a ramp or stairs: stay on the ground instead of skipping down in little hops.
+      if (body.onGround && body.vel.y <= 0 && body.pos.y > floor && body.pos.y - floor < 0.3) ny = floor;
       if (ny <= floor) {
         body.pos.y = floor; body.vel.y = Math.max(0, body.vel.y); body.onGround = true;
       } else {
@@ -412,7 +469,28 @@ export class World {
           return this._hit(o, d, tFace, new THREE.Vector3(0, d.y < 0 ? 1 : -1, 0));
         }
       }
-      if (H > 0) {
+      if (H > 0 && this.isRamp(cx, cz)) {
+        // Sloped surface: the side it was entered through, then the slope plane itself.
+        const i = cz * this.w + cx, [rx, rz] = DIR_VEC[this.RDir[i]], lo = this.RLo[i], hi = this.RHi[i];
+        const axis = rx ? 'x' : 'z', sgn = rx || rz, c0 = (axis === 'x' ? cx : cz) * CELL, u0 = sgn > 0 ? c0 : c0 + CELL;
+        const m = ((hi - lo) / CELL) * sgn, du = d[axis], ou = o[axis];
+        const surf = (t) => lo + m * (ou + du * t - u0);
+        const yEnter = o.y + d.y * tEnter;
+        if (tEnter > 0 && yEnter < surf(tEnter)) {
+          if (tEnter > maxDist) return null;
+          const normal = nAxis === 'x' ? new THREE.Vector3(-stepX, 0, 0) : new THREE.Vector3(0, 0, -stepZ);
+          return this._hit(o, d, tEnter, normal);
+        }
+        const den = d.y - m * du;
+        if (Math.abs(den) > 1e-6) {
+          const tP = (lo + m * (ou - u0) - o.y) / den;
+          if (tP >= tEnter && tP <= tExit && tP >= 0) {
+            if (tP > maxDist) return null;
+            const n = axis === 'x' ? new THREE.Vector3(-m, 1, 0) : new THREE.Vector3(0, 1, -m);
+            return this._hit(o, d, tP, n.normalize());
+          }
+        }
+      } else if (H > 0) {
         const yEnter = o.y + d.y * tEnter;
         if (yEnter < H && tEnter > 0) {
           if (tEnter > maxDist) return null;
@@ -458,6 +536,7 @@ export class World {
     if (ch === '.' || ch === 'L' || isPlatform(ch)) return this.H[cy * this.w + cx];
     if (ch === 'D') return 0; // bots open doors on their way through
     if (ch === 'Y' || ch === 'E') return 0; // barriers drop at the start; lifts are boarded at the bottom
+    if (DIR_OF[ch]) return (this.RLo[cy * this.w + cx] + this.RHi[cy * this.w + cx]) / 2;
     return null;
   }
 
@@ -501,10 +580,17 @@ export class World {
       const lift = cur < N && this.isLift(cx, cy) ? this.prop(cx, cy) : null;
       for (const [ddx, ddy, cost] of dirs) {
         if (rail && ((ddx > 0 && rail & 1) || (ddx < 0 && rail & 2) || (ddy > 0 && rail & 4) || (ddy < 0 && rail & 8))) continue;
-        const nx = cx + ddx, ny = cy + ddy, nh = this.navInto(ch, nx, ny);
+        // Ramps: compare the heights where the two cells meet, and never cut a ramp diagonally.
+        const eFrom = cur < N ? this.edgeH(cx, cy, ch, ddx, ddy) : ch;
+        if (eFrom === null) continue;
+        const nx = cx + ddx, ny = cy + ddy, nh = this.navInto(eFrom, nx, ny);
         if (nh === null) continue;
+        const ramp = (cur < N && this.isRamp(cx, cy)) || (nh < (this.UL[ny * W + nx] || Infinity) && this.isRamp(nx, ny));
+        if (ramp && ddx && ddy) continue;
+        const eTo = this.edgeH(nx, ny, nh, -ddx, -ddy);
+        if (eTo === null) continue;
         // Up: steps, or a ladder straight onto its platform. Down: any drop (bots accept a little fall damage).
-        const up = nh - ch, ladderUp = (onLadder || (lift && nh <= lift.top + 0.01)) && !(ddx && ddy) && up > 0.55;
+        const up = ramp ? eTo - eFrom : nh - ch, ladderUp = (onLadder || (lift && nh <= lift.top + 0.01)) && !(ddx && ddy) && up > 0.55;
         if (up > 0.55 && !ladderUp) continue;
         if (ddx && ddy && Math.abs(up) > 0.55) continue;
         if (ddx && ddy) {
@@ -565,7 +651,7 @@ export class World {
     let boxIndex = 0;
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
-      if (ch === '.' || ch === 'L' || ch === 'Y' || seen[y * this.w + x]) continue;
+      if (ch === '.' || ch === 'L' || ch === 'Y' || DIR_OF[ch] || seen[y * this.w + x]) continue;
       let x1 = x;
       while (x1 + 1 < this.w && this.chars[y][x1 + 1] === ch && !seen[y * this.w + x1 + 1]) x1++;
       let y1 = y;
@@ -587,6 +673,23 @@ export class World {
         if (horizontal) for (let yy = y; yy <= y1; yy++) box(x, yy, x1, yy);
         else for (let xx = x; xx <= x1; xx++) box(xx, y, xx, y1);
       } else box(x, y, x1, y1);
+    }
+    // Ramps (a sloped block) and stairs (steps), in the half-wall material.
+    const rampMat = theme.half || theme.wall;
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
+      const i = y * this.w + x, di = this.RDir[i];
+      if (di < 0) continue;
+      const lo = this.RLo[i], hi = this.RHi[i], [rx, rz] = DIR_VEC[di], x0 = x * CELL, z0 = y * CELL, b = bucket(rampMat, false);
+      if (DIR_OF[this.chars[y][x]].kind === 'stairs') {
+        const steps = Math.max(2, Math.round((hi - lo) / 0.25));
+        for (let k = 0; k < steps; k++) {
+          const a = k / steps, c = (k + 1) / steps, top = lo + (hi - lo) * c;
+          // Each step spans from its riser to the high end of the cell.
+          const [sx0, sx1] = rx > 0 ? [x0 + a * CELL, x0 + CELL] : rx < 0 ? [x0, x0 + CELL - a * CELL] : [x0, x0 + CELL];
+          const [sz0, sz1] = rz > 0 ? [z0 + a * CELL, z0 + CELL] : rz < 0 ? [z0, z0 + CELL - a * CELL] : [z0, z0 + CELL];
+          addBox(b, sx0, 0, sz0, sx1, top, sz1, rampMat, '');
+        }
+      } else addRamp(b, x0, z0, lo, hi, rx, rz, rampMat);
     }
     // Spawn barriers: glowing panels, shown while they're up.
     this.barrierView = new THREE.Group();
@@ -719,6 +822,30 @@ function addBox(b, x0, y0, z0, x1, y1, z1, name, ch) {
     }
     b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
+}
+
+// A sloped block filling one cell: low edge at `lo`, rising to `hi` in direction (rx, rz).
+function addRamp(b, x0, z0, lo, hi, rx, rz, name) {
+  const x1 = x0 + CELL, z1 = z0 + CELL, t = tileSize(name.split(':')[0]);
+  // Corner heights: which corners sit on the high edge.
+  const hAt = (x, z) => (rx > 0 ? (x === x1 ? hi : lo) : rx < 0 ? (x === x0 ? hi : lo) : rz > 0 ? (z === z1 ? hi : lo) : (z === z0 ? hi : lo));
+  const quad = (v, n) => {
+    const base = b.pos.length / 3;
+    for (const q of v) {
+      b.pos.push(q[0], q[1], q[2]); b.nrm.push(n[0], n[1], n[2]);
+      const ao = n[1] > 0.5 ? 1 : aoAt(q[1]); b.col.push(ao, ao, ao);
+      if (Math.abs(n[1]) > 0.5) b.uv.push(q[0] / t, q[2] / t); else b.uv.push((n[0] !== 0 ? q[2] : q[0]) / t, q[1] / t);
+    }
+    b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  const s = (hi - lo) / CELL, len = Math.hypot(1, s);
+  const n = [-(rx * s) / len, 1 / len, -(rz * s) / len];
+  quad([[x0, hAt(x0, z1), z1], [x1, hAt(x1, z1), z1], [x1, hAt(x1, z0), z0], [x0, hAt(x0, z0), z0]], n);
+  // Sides (each a quad from the floor up to the slope, so it reads as a solid block).
+  quad([[x1, 0, z1], [x1, 0, z0], [x1, hAt(x1, z0), z0], [x1, hAt(x1, z1), z1]], [1, 0, 0]);
+  quad([[x0, 0, z0], [x0, 0, z1], [x0, hAt(x0, z1), z1], [x0, hAt(x0, z0), z0]], [-1, 0, 0]);
+  quad([[x0, 0, z1], [x1, 0, z1], [x1, hAt(x1, z1), z1], [x0, hAt(x0, z1), z1]], [0, 0, 1]);
+  quad([[x1, 0, z0], [x0, 0, z0], [x0, hAt(x0, z0), z0], [x1, hAt(x1, z0), z0]], [0, 0, -1]);
 }
 
 let barrierMat;
