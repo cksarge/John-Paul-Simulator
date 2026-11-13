@@ -282,7 +282,7 @@ export class Game {
     this.pings?.update(dt);
     // Lifts run on the shared round clock; spawn barriers hold until the round goes live.
     this.world.clock = -this.state.time;
-    this.world.setBarriers(this.state.phase === 'buy' || this.state.phase === 'warmup');
+    this.world.setBarriers(this.state.phase === 'buy' || (this.state.phase === 'warmup' && !RESPAWN_KINDS.has(this.mode.kind)));
     this.world.update(dt);
     if (this.isHost && RESPAWN_KINDS.has(this.mode.kind)) this.tickPropRespawn(dt);
     if (this.pendingLeave.size) this.tickPendingLeaves(dt);
@@ -938,6 +938,17 @@ export class Game {
       if (next.y < hNext) {
         const hCur = W.floorAt(n.pos.x, n.pos.z, n.pos.y);
         let bounced = false;
+        // On a ramp a grenade rolls: it rides the slope and gravity slows it going up (and rolls it back).
+        const rcx = Math.floor(next.x / CELL), rcz = Math.floor(next.z / CELL), onRamp = W.isRamp(rcx, rcz);
+        if (onRamp && n.pos.y >= hNext - 0.6) {
+          const gr = W.rampGrad(rcx, rcz);
+          n.vel.x -= gr[0] * 20 * h; n.vel.z -= gr[1] * 20 * h;
+          n.vel.x *= 0.995; n.vel.z *= 0.995;
+          if (n.vel.y < -3) { n.vel.y = -n.vel.y * 0.3; hit.floor = true; } else n.vel.y = 0;
+          next.y = hNext + 0.01;
+          n.pos.copy(next);
+          continue;
+        }
         if (n.pos.y >= hNext - 0.01 && hCur <= n.pos.y) {
           n.vel.y = -n.vel.y * 0.4; n.vel.x *= 0.7; n.vel.z *= 0.7; bounced = true; next.y = hNext + 0.01; hit.floor = true;
         } else {

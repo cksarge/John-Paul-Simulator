@@ -211,6 +211,11 @@ export class World {
     const [dx, dy] = DIR_VEC[this.RDir[cy * this.w + cx]];
     return this.rampAt(cx, cy, x + dx * r, z + dy * r);
   }
+  // Uphill slope of a ramp cell as [dy/dx, dy/dz].
+  rampGrad(cx, cy) {
+    const i = cy * this.w + cx, [dx, dy] = DIR_VEC[this.RDir[i]], k = (this.RHi[i] - this.RLo[i]) / CELL;
+    return [dx * k, dy * k];
+  }
   // Height of a cell along one of its edges (towards dx, dy), for paths: ramps are low at the foot, high at the top.
   edgeH(cx, cy, h, dx, dy) {
     if (!this.isRamp(cx, cy) || h > this.RHi[cy * this.w + cx] + 0.01) return h;
@@ -255,7 +260,8 @@ export class World {
     const p = this.prop(x, y, up);
     if (!p || p.broken || !'GBWkQg'.includes(p.ch)) return null;
     p.broken = true;
-    if (p.up) { this.setUpper(x, y, '.'); this.railsAround(x, y); } else this.setChar(x, y, '.');
+    // (Railings stay as built: a shot-out grate leaves a gap to fall through.)
+    if (p.up) this.setUpper(x, y, '.'); else this.setChar(x, y, '.');
     p.view?.setBroken(true);
     return p;
   }
@@ -264,12 +270,11 @@ export class World {
     if (p.ch === 'D' || p.ch === 'P') { p.open = false; this.setChar(p.x, p.y, p.ch); p.view?.setOpen?.(false); return; }
     if (!p.broken && !p.stage) return;
     p.broken = false; p.hp = WOOD_HP[p.ch] || 60; p.stage = 0;
-    if (p.up) { this.setUpper(p.x, p.y, p.ch); this.railsAround(p.x, p.y); } else this.setChar(p.x, p.y, p.ch);
+    if (p.up) this.setUpper(p.x, p.y, p.ch); else this.setChar(p.x, p.y, p.ch);
     p.view?.setBroken(false);
     p.view?.setStage?.(0);
   }
 
-  railsAround(x, y) { for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (this.up[y + dy]?.[x + dx]) this.updateRails(x + dx, y + dy); }
 
   resetProps() { for (const p of this.props.values()) this.restoreProp(p); }
 
@@ -754,7 +759,8 @@ export class World {
     const ctx = c.getContext('2d');
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
       const ch = this.chars[y][x];
-      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : 'Wk'.includes(ch) ? '#7a5a36' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' || ch === 'L' ? '#7c8591'
+      ctx.fillStyle = ch === '#' || ch === 'X' ? '#1b1f25' : 'hcCMBA'.includes(ch) ? '#4a515b' : 'Wk'.includes(ch) ? '#7a5a36' : ch === 'D' ? '#8a6a3a' : ch === 'G' ? '#5f8fb0' : ch === '.' || ch === 'L' || ch === 'Y' ? '#7c8591'
+        : ch === 'Q' ? '#3d434c' : ch === 'P' ? '#6f5a2a' : ch === 'J' ? '#c9a227' : ch === 'E' ? '#b5bcc6' : DIR_OF[ch] ? '#8f99a5'
         : isPlatform(ch) ? `rgb(${140 + platformH(ch) * 18},${150 + platformH(ch) * 16},${165 + platformH(ch) * 14})` : '#959eaa';
       ctx.fillRect(x * scale, y * scale, scale, scale);
       // Bridges and roofs drawn over the ground, see-through so what's under them still shows.
