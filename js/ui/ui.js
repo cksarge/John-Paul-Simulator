@@ -14,6 +14,7 @@ import { mountTurnstile } from './turnstile.js';
 import { cardImage, itemSwatch } from './cards.js';
 import { applyPadSettings, padHelp } from '../engine/gamepad.js';
 import { renderSeason } from './season.js';
+import { offlineSupported, enableOffline, disableOffline } from '../net/offline.js';
 import { AdminPanel } from './admin.js';
 import { commendDialog, reportDialog, showBanned, showWarnings, bannerHTML, COMMENDS } from './social.js';
 import { seasonById, fmtDate } from '../data/seasons.js';
@@ -1059,6 +1060,11 @@ export class UI {
         <span>Kill cam</span>${toggle('killcam')}
         <span>Master volume</span>${range('volume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')}
       </div>
+      <h2 class="m-h2">Offline play</h2>
+      <div class="settings-grid">
+        <span>Save the game for offline play</span>${toggle('offlineMode')}
+      </div>
+      <p class="m-sub small" id="offline-note">${offlineSupported() ? 'Downloads the game (about 3.5 MB) so bot matches and the Training Range work without internet. Online play, accounts and stats still need a connection. Off by default; turning it off removes the saved copy.' : 'Your browser doesn’t support offline play.'}</p>
       <h2 class="m-h2">Controller</h2>
       <div class="settings-grid">
         <span>Look sensitivity</span>${range('padSens', 0.2, 3, 0.05, (v) => (+v).toFixed(2))}
@@ -1114,11 +1120,38 @@ export class UI {
       r.onchange = () => apply({ [key]: +r.value }, GRAPHICS.has(key));
     });
     root.querySelectorAll('[data-toggle]').forEach((t) => { t.onchange = () => {
+      if (t.dataset.toggle === 'offlineMode') return this.setOfflineMode(t, apply);
       apply({ [t.dataset.toggle]: t.checked }, GRAPHICS.has(t.dataset.toggle));
       if (t.dataset.toggle === 'menuScene' && !app.game) { if (t.checked) this.stage(null, FOCUS[this.tab] || 'play'); else app.menuScene?.stop(); }
     }; });
     root.querySelectorAll('[data-ch]').forEach((sw) => { sw.onclick = () => { apply({ crosshairColor: sw.dataset.ch }); root.querySelectorAll('[data-ch]').forEach((x) => x.classList.toggle('sel', x === sw)); }; });
     root.querySelectorAll('[data-color]').forEach((c) => { c.oninput = () => apply({ [c.dataset.color]: c.value }); });
+  }
+
+  // Settings → Offline play: installs or removes the service worker and the saved copy of the game.
+  async setOfflineMode(box, apply) {
+    const on = box.checked, note = this.root.querySelector('#offline-note') || box.closest('.panel, .m-panel')?.querySelector('#offline-note');
+    box.disabled = true;
+    try {
+      if (on) {
+        const r = await enableOffline((done, total) => { if (note) note.textContent = `Saving the game for offline play… ${done} / ${total} files`; });
+        if (r.failed) throw new Error(`${r.failed} of ${r.saved + r.failed} files couldn’t be saved. Check your connection and try again.`);
+        apply({ offlineMode: true }, false);
+        if (note) note.textContent = `Saved ${r.saved} files. Bot matches and the Training Range now work without internet.`;
+        this.toast('Offline play is on', 'good');
+      } else {
+        await disableOffline();
+        apply({ offlineMode: false }, false);
+        if (note) note.textContent = 'Offline play is off and the saved copy was removed.';
+      }
+    } catch (e) {
+      if (on) await disableOffline().catch(() => null);
+      box.checked = false;
+      apply({ offlineMode: false }, false);
+      if (note) note.textContent = e.message;
+      this.toast(e.message, 'bad', null, 6000);
+    }
+    box.disabled = false;
   }
 
   rebindAfterPreset(root) {

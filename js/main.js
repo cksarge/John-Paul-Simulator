@@ -51,19 +51,42 @@ class App {
     this.padNav = new PadNav(this);
     if (isTouchOnly()) this.watchController();
     step(80, 'Checking session');
+    // No internet (offline play installed): straight into guest mode for bot matches and training.
+    if (!navigator.onLine) {
+      if (location.hash || location.search) history.replaceState(null, '', location.pathname);
+      this.offlineGuest();
+      step(100, 'Ready');
+      setTimeout(() => boot.classList.add('done'), 150);
+      return;
+    }
+    import('./net/offline.js').then((m) => m.syncOffline(this.settings.offlineMode)).catch(() => null);
     let session = null;
     try { session = this.api ? await this.api.session() : null; } catch { session = null; }
     if (location.hash || location.search) history.replaceState(null, '', location.pathname);
     if (recovery && session) { this.user = session.user; this.ui.showAuth('newpass', { text: 'Link verified — choose a new password.', good: true }); }
     else if (recovery && linkError) this.ui.showAuth('forgot', { text: linkError });
     else if (session) {
-      await this.onSignedIn().catch((e) => { console.warn(e); this.ui.showAuth(); this.ui.toast(e.message, 'bad'); });
+      await this.onSignedIn().catch((e) => {
+        console.warn(e);
+        // Connected to a network with no internet: play offline instead of showing a sign-in error.
+        if (/fetch|network|load failed/i.test(e.message)) return this.offlineGuest();
+        this.ui.showAuth(); this.ui.toast(e.message, 'bad');
+      });
       if (confirmed) this.ui.toast('Email confirmed — welcome to John-Paul Simulator!', 'good');
     } else if (linkError) this.ui.showAuth('login', { text: linkError });
     else if (confirmed) this.ui.showAuth('login', { text: 'Email confirmed. Sign in to continue.', good: true });
     else this.ui.showAuth();
     step(100, 'Ready');
     setTimeout(() => boot.classList.add('done'), 150);
+  }
+
+  // No internet: guest mode, where bot matches and the Training Range work (with offline play on,
+  // the whole game loads from the saved copy).
+  offlineGuest() {
+    this.user = null; this.profile = null;
+    this.loginGuest();
+    this.ui.toast('You’re offline. Bot matches and the Training Range work; online play comes back with your connection.', '', null, 8000);
+    addEventListener('online', () => this.ui.toast('You’re back online. Sign in from the top-right to play online.', 'good', null, 8000), { once: true });
   }
 
   // Phones and tablets can't play with touch, so a controller has to be connected first.

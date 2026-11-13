@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page not found · John-Paul Simulator</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <style>
+    :root { --bg: #0b0e12; --ink: #141912; --bone: #e9e4d4; --dim: #a8a796; --faint: rgba(233, 228, 212, 0.14); --amber: #f2a33a; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      min-height: 100vh; display: flex; padding: 24px 16px; overflow-x: hidden;
+      font-family: 'Barlow', 'Inter', system-ui, sans-serif; color: var(--bone);
+      background:
+        radial-gradient(ellipse at 50% 35%, rgba(242, 163, 58, 0.12), transparent 60%),
+        repeating-linear-gradient(0deg, transparent 0 39px, rgba(233, 228, 212, 0.035) 39px 40px),
+        repeating-linear-gradient(90deg, transparent 0 39px, rgba(233, 228, 212, 0.035) 39px 40px),
+        var(--bg);
+    }
+    main { margin: auto; width: min(520px, 100%); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .mark { width: 56px; height: 56px; display: grid; place-items: center; background: var(--amber); color: #17110a; font: 700 26px 'Big Shoulders Stencil Display', 'Rajdhani', sans-serif; }
+    .code { font: 700 clamp(96px, 28vw, 168px)/0.85 'Big Shoulders Stencil Display', 'Saira Stencil One', 'Rajdhani', sans-serif; letter-spacing: 0.02em; color: var(--amber); }
+    h1 { margin: 0; font: 700 clamp(26px, 7vw, 36px)/1.1 'Big Shoulders Stencil Display', 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 0.04em; }
+    p { margin: 0; color: var(--dim); line-height: 1.55; }
+    .radar { width: 120px; height: 120px; border-radius: 50%; border: 1px solid var(--faint); position: relative; overflow: hidden; margin: 4px 0; }
+    .radar::before, .radar::after { content: ''; position: absolute; inset: 22%; border-radius: 50%; border: 1px solid var(--faint); }
+    .radar::after { inset: 44%; }
+    .sweep { position: absolute; inset: 0; background: conic-gradient(from 0deg, rgba(242, 163, 58, 0.45), transparent 22%); animation: sweep 2.6s linear infinite; }
+    .blip { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); left: 70%; top: 30%; animation: blip 2.6s linear infinite; }
+    @keyframes sweep { to { transform: rotate(360deg); } }
+    @keyframes blip { 0%, 60% { opacity: 0; } 65% { opacity: 1; } 100% { opacity: 0.1; } }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 6px; }
+    a.btn { display: inline-flex; align-items: center; justify-content: center; padding: 12px 22px; text-decoration: none; font: 700 18px 'Big Shoulders Stencil Display', 'Rajdhani', sans-serif; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--faint); color: var(--bone); }
+    a.btn.primary { background: var(--amber); border-color: var(--amber); color: #17110a; }
+    a.btn:hover { border-color: var(--amber); }
+    a.btn:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+    .path { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; color: var(--dim); word-break: break-all; padding: 6px 10px; border: 1px dashed var(--faint); }
+    @media (prefers-reduced-motion: reduce) { .sweep, .blip { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">JP</div>
+    <div class="code" aria-hidden="true">404</div>
+    <h1>Off the map</h1>
+    <div class="radar" aria-hidden="true"><div class="sweep"></div><div class="blip"></div></div>
+    <p>There's nothing at this address. The link may be old, or there's a typo in it.</p>
+    <div class="path" id="path"></div>
+    <div class="actions">
+      <a class="btn primary" href="/">Back to the game</a>
+      <a class="btn" href="https://github.com/cksarge/John-Paul-Simulator">Project on GitHub</a>
+    </div>
+  </main>
+  <script>document.getElementById('path').textContent = location.pathname + location.search;</script>
+</body>
+</html>
