@@ -8,7 +8,8 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 - **Challenges:** three daily (300 XP) and three weekly (1,000 XP) challenges, the same for everyone, shown on the Season tab.
 - **Play of the match:** the best multi-kill replays at the end of every match before the results.
 - **Pings and inspect:** tap **Z** to mark a spot or an enemy for your team, hold it for a callout wheel; **V** inspects your weapon.
-- **Commend and report:** after an online match, commend or report the other players from the results screen. Reports are stored with the match and that player's chat.
+- **Commend and report:** after an online match, commend or report the other players from the results screen. Reports include the match and that player's chat.
+- **Admin panel** (Carter's account only): report queue, player search and profiles, bans, mutes, kicks, warnings, renames, stat edits and resets, giving or removing items, voiding ranked results, announcements, maintenance mode, XP events and an audit log of every admin action.
 - **Online:** quick-match queues, custom lobbies with join codes, a lobby browser, an online-players list and in-match chat
 - **Parties:** invite friends from the online list (the + slots at the top of the menu). The leader queues or opens a lobby and the whole party comes along on the same team.
 - **Spectating:** press Watch next to a friend in a non-ranked match to join as a spectator with third-person, first-person and free cameras.
@@ -84,7 +85,9 @@ The code lives at https://github.com/cksarge/John-Paul-Simulator. In the repo, g
 
 ## Database updates
 
-`supabase/schema.sql` is safe to re-run and always holds the full current schema. After pulling changes, paste the whole file into **Supabase Dashboard → SQL Editor** and run it. The November 2026 additions (seasons, challenges, commends and reports) need it; until then those features stay hidden and the rest of the game works normally.
+`supabase/schema.sql` is safe to re-run and always holds the full current schema. After pulling changes, paste the whole file into **Supabase Dashboard → SQL Editor** and run it. The November 2026 additions (seasons, challenges, commends, reports, moderation and the admin functions) need it; until then those features stay hidden and the rest of the game works normally.
+
+Admin access is the `public.admins` table, which holds one account id and can only be changed from the SQL editor. Every admin function checks it on the server, so nothing in the browser can grant admin rights. Bans are enforced by the database (no XP, ranked, reports or challenge claims) and by every other player's game (banned accounts are dropped from queues and lobbies); because matches run peer-to-peer, a modified client could still join a friend's lobby directly.
 
 ## Controls
 

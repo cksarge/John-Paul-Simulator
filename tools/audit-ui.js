@@ -41,6 +41,12 @@ export async function auditMenus() {
   for (const src of ['online', 'offline']) { ui.source = src; ui.showMenu('play'); await sleep(300); out.push(...audit('play-' + src)); }
   ui.source = 'online'; ui.allModes = true; ui.showMenu('play'); await sleep(300); out.push(...audit('play-all-modes')); ui.allModes = false;
   ui.showMenu('season'); await sleep(800); out.push(...audit('season'));
+  // The admin screen only exists for the admin account; audit it when signed in as admin.
+  if (app.isAdmin) for (const sec of ['overview', 'reports', 'players', 'moderated', 'live', 'announce', 'settings', 'audit']) {
+    ui.showMenu('admin'); ui.adminPanel.section = sec; ui.adminPanel.refresh(); await sleep(700); out.push(...audit('admin-' + sec));
+  }
+  ui.showMenu('operators'); await sleep(300); out.push(...audit('operators'));
+  for (const k of ['finish', 'outfit', 'card', 'effect', 'emote']) { ui.armoryKind = k; ui.showMenu('armory'); await sleep(300); out.push(...audit('armory-' + k)); }
   for (const t of ['stats', 'replays', 'leaderboard', 'settings']) { ui.showMenu(t); await sleep(t === 'leaderboard' ? 1500 : 700); out.push(...audit(t)); }
   const m = ui.modal('<h2 class="m-h2">Tall modal</h2>' + '<p class="m-sub">line</p>'.repeat(60) + '<button class="btn">Bottom</button>');
   await sleep(200); out.push(...audit('tall-modal')); m.remove();

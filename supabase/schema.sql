@@ -98,7 +98,7 @@ create policy "ranked results are public" on public.ranked_matches for select us
 drop function if exists public.record_match(text, text, text, boolean, boolean, text, int, int, int, text, int);
 
 
--- ═════════════════════════ seasons, challenges, commends, reports ═════════════════════════
+-- ═════════════════════════ seasons, challenges, commends, reports, admin ═════════════════════════
 -- Added November 2026. Safe to re-run.
 
 -- ───────────── seasons ─────────────
@@ -172,16 +172,134 @@ begin
 end;
 $$;
 
--- What the signed-in player's client needs to know about itself (polled every half minute).
--- Also moves the player into the current season the first time they come online in it.
+-- ───────────── moderation (private: each player sees only their own row) ─────────────
+create table if not exists public.admins (user_id uuid primary key references public.profiles(id) on delete cascade);
+alter table public.admins enable row level security;
+revoke all on public.admins from anon, authenticated;
+-- The only admin is Carter. Nothing in the app can add rows here.
+insert into public.admins (user_id) values ('161b8bab-6d36-4845-8179-3e72255f466b') on conflict do nothing;
+
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select auth.uid() is not null and exists (select 1 from admins where user_id = auth.uid());
+$$;
+
+create table if not exists public.moderation (
+  user_id      uuid primary key references public.profiles(id) on delete cascade,
+  banned_until timestamptz,
+  ban_reason   text,
+  muted_until  timestamptz,
+  mute_reason  text,
+  kick_at      timestamptz,
+  kick_reason  text,
+  updated_at   timestamptz not null default now()
+);
+alter table public.moderation enable row level security;
+revoke all on public.moderation from anon, authenticated;
+grant select on public.moderation to authenticated;
+drop policy if exists "own moderation" on public.moderation;
+create policy "own moderation" on public.moderation for select using (auth.uid() = user_id);
+
+create table if not exists public.warnings (
+  id         bigint generated always as identity primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  message    text not null,
+  seen       boolean not null default false,
+  created_at timestamptz not null default now()
+);
+alter table public.warnings enable row level security;
+revoke all on public.warnings from anon, authenticated;
+grant select on public.warnings to authenticated;
+drop policy if exists "own warnings" on public.warnings;
+create policy "own warnings" on public.warnings for select using (auth.uid() = user_id);
+
+-- Items an admin gives or takes away; the player's client applies them to its inventory.
+create table if not exists public.item_grants (
+  id         bigint generated always as identity primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  kind       text not null,
+  item       text not null,
+  revoke     boolean not null default false,
+  applied    boolean not null default false,
+  created_at timestamptz not null default now()
+);
+alter table public.item_grants enable row level security;
+revoke all on public.item_grants from anon, authenticated;
+grant select on public.item_grants to authenticated;
+drop policy if exists "own grants" on public.item_grants;
+create policy "own grants" on public.item_grants for select using (auth.uid() = user_id);
+
+create table if not exists public.announcements (
+  id         bigint generated always as identity primary key,
+  message    text not null check (char_length(message) between 1 and 300),
+  kind       text not null default 'info' check (kind in ('info', 'warn', 'event')),
+  starts_at  timestamptz not null default now(),
+  ends_at    timestamptz not null,
+  created_by uuid references public.profiles(id) on delete set null
+);
+alter table public.announcements enable row level security;
+revoke all on public.announcements from anon, authenticated;
+grant select on public.announcements to anon, authenticated;
+drop policy if exists "live announcements are public" on public.announcements;
+create policy "live announcements are public" on public.announcements for select using (now() >= starts_at and now() < ends_at);
+
+-- Global switches such as maintenance mode: {"maintenance": {"on": true, "message": "..."}}.
+create table if not exists public.app_settings (key text primary key, value jsonb not null, updated_at timestamptz not null default now());
+alter table public.app_settings enable row level security;
+revoke all on public.app_settings from anon, authenticated;
+grant select on public.app_settings to anon, authenticated;
+drop policy if exists "settings are public" on public.app_settings;
+create policy "settings are public" on public.app_settings for select using (true);
+
+create table if not exists public.admin_audit (
+  id         bigint generated always as identity primary key,
+  admin_id   uuid not null,
+  action     text not null,
+  target     text,
+  details    jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.admin_audit enable row level security;
+revoke all on public.admin_audit from anon, authenticated;
+
+create or replace function public.is_banned(p_user uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from moderation where user_id = p_user and banned_until is not null and banned_until > now());
+$$;
+
+-- Ban and mute flags for a list of players (ids only, no reasons), so clients can keep banned
+-- players out of queues and lobbies and hide chat from muted ones.
+create or replace function public.moderation_flags(p_ids uuid[])
+returns table (id uuid, banned boolean, muted boolean) language sql stable security definer set search_path = public as $$
+  select m.user_id, coalesce(m.banned_until > now(), false), coalesce(m.muted_until > now(), false)
+  from moderation m where m.user_id = any(p_ids[1:100])
+    and ((m.banned_until is not null and m.banned_until > now()) or (m.muted_until is not null and m.muted_until > now()));
+$$;
+
+-- Everything the signed-in player's client needs to know about itself, polled every half minute.
 create or replace function public.my_status()
 returns json language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare uid uuid := auth.uid(); m moderation%rowtype;
 begin
   if uid is null then return null; end if;
   perform ensure_season(uid);
-  return json_build_object('season', current_season());
+  select * into m from moderation where user_id = uid;
+  return json_build_object(
+    'banned_until', case when m.banned_until > now() then m.banned_until end, 'ban_reason', m.ban_reason,
+    'muted_until', case when m.muted_until > now() then m.muted_until end, 'mute_reason', m.mute_reason,
+    'kick_at', m.kick_at, 'kick_reason', m.kick_reason,
+    'warnings', (select coalesce(json_agg(json_build_object('id', w.id, 'message', w.message, 'at', w.created_at) order by w.id), '[]') from warnings w where w.user_id = uid and not w.seen),
+    'grants', (select coalesce(json_agg(json_build_object('id', g.id, 'kind', g.kind, 'item', g.item, 'revoke', g.revoke) order by g.id), '[]') from item_grants g where g.user_id = uid and not g.applied),
+    'season', current_season(),
+    'admin', is_admin()
+  );
 end;
+$$;
+
+create or replace function public.ack_status(p_warnings bigint[], p_grants bigint[])
+returns void language sql security definer set search_path = public as $$
+  update warnings set seen = true where user_id = auth.uid() and id = any(p_warnings);
+  update item_grants set applied = true where user_id = auth.uid() and id = any(p_grants);
 $$;
 
 -- ───────────── commends and reports ─────────────
@@ -201,6 +319,7 @@ returns void language plpgsql security definer set search_path = public as $$
 declare uid uuid := auth.uid();
 begin
   if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
   if p_to = uid then raise exception 'you cannot commend yourself'; end if;
   if not exists (select 1 from profiles where id = p_to) then raise exception 'player not found'; end if;
   if (select count(*) from commends where from_id = uid and created_at > now() - interval '1 day') >= 30 then raise exception 'daily commend limit reached'; end if;
@@ -238,6 +357,7 @@ returns void language plpgsql security definer set search_path = public as $$
 declare uid uuid := auth.uid();
 begin
   if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
   if p_target = uid then raise exception 'you cannot report yourself'; end if;
   if not exists (select 1 from profiles where id = p_target) then raise exception 'player not found'; end if;
   if (select count(*) from reports where reporter = uid and created_at > now() - interval '1 day') >= 20 then raise exception 'daily report limit reached'; end if;
@@ -266,6 +386,7 @@ returns int language plpgsql security definer set search_path = public as $$
 declare uid uuid := auth.uid(); amount int; parts text[] := string_to_array(p_key, ':');
 begin
   if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
   if array_length(parts, 1) <> 3 or parts[3] not in ('0', '1', '2') then raise exception 'invalid challenge'; end if;
   if parts[1] = 'd' and parts[2] = to_char(now() at time zone 'utc', 'YYYY-MM-DD') then amount := 300;
   elsif parts[1] = 'w' and parts[2] = to_char(now() at time zone 'utc', 'IYYY-"W"IW') then amount := 1000;
@@ -289,6 +410,7 @@ begin
     raise exception 'not a participant';
   end if;
   if p_winner = p_loser then raise exception 'invalid result'; end if;
+  if is_banned(auth.uid()) then raise exception 'account banned'; end if;
 
   select * into r from ranked_matches where match_id = p_match_id;
   if found then
@@ -331,6 +453,7 @@ declare
   det jsonb := case when p_details is not null and pg_column_size(p_details) <= 16000 then p_details end;
 begin
   if uid is null then raise exception 'not signed in'; end if;
+  if is_banned(uid) then raise exception 'account banned'; end if;
 
   insert into match_history (user_id, match_id, mode, map, ranked, online, result, kills, deaths, headshots, score, elo_change, details)
   values (uid, p_match_id, p_mode, p_map, p_ranked, p_online, p_result, k, dth, hs, p_score, coalesce(p_elo_change, 0), det)
@@ -339,7 +462,9 @@ begin
 
   perform ensure_season(uid);
   gained := k * 10 + case p_result when 'win' then 100 when 'draw' then 50 else 25 end;
-
+  -- Admin XP events: {"multiplier": 2, "until": "<timestamp>"} in app_settings.xp_boost.
+  gained := round(gained * coalesce((select least(greatest((value ->> 'multiplier')::numeric, 1), 3) from app_settings
+    where key = 'xp_boost' and (value ->> 'until')::timestamptz > now()), 1))::int;
 
   if p_online then
     update profiles set
@@ -355,12 +480,284 @@ begin
 end;
 $$;
 
+-- ───────────── admin functions (each one refuses anyone who isn't in public.admins) ─────────────
+create or replace function public.admin_guard()
+returns uuid language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'not authorized'; end if;
+  return auth.uid();
+end;
+$$;
+
+create or replace function public.admin_log(p_action text, p_target text, p_details jsonb)
+returns void language sql security definer set search_path = public as $$
+  insert into admin_audit (admin_id, action, target, details) values (auth.uid(), p_action, p_target, p_details);
+$$;
+
+create or replace function public.admin_overview()
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return json_build_object(
+    'players', (select count(*) from profiles),
+    'new_today', (select count(*) from profiles where created_at > now() - interval '1 day'),
+    'active_today', (select count(*) from profiles where last_seen > now() - interval '1 day'),
+    'matches_today', (select count(*) from match_history where created_at > now() - interval '1 day'),
+    'open_reports', (select count(*) from reports where status = 'open'),
+    'banned', (select count(*) from moderation where banned_until > now()),
+    'muted', (select count(*) from moderation where muted_until > now()),
+    'season', current_season(),
+    'settings', (select coalesce(json_object_agg(key, value), '{}') from app_settings)
+  );
+end;
+$$;
+
+create or replace function public.admin_reports(p_status text default 'open', p_limit int default 100)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return (select coalesce(json_agg(row_to_json(t)), '[]') from (
+    select r.*, rp.username as reporter_name, tp.username as target_name,
+      (select count(*) from reports x where x.target = r.target) as target_report_count
+    from reports r join profiles rp on rp.id = r.reporter join profiles tp on tp.id = r.target
+    where p_status = 'all' or r.status = p_status
+    order by r.created_at desc limit least(p_limit, 500)) t);
+end;
+$$;
+
+create or replace function public.admin_resolve_report(p_id bigint, p_status text, p_note text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  if p_status not in ('open', 'actioned', 'dismissed') then raise exception 'invalid status'; end if;
+  update reports set status = p_status, resolution = left(p_note, 500), resolved_by = auth.uid(),
+    resolved_at = case when p_status = 'open' then null else now() end where id = p_id;
+  perform admin_log('resolve_report', p_id::text, json_build_object('status', p_status, 'note', p_note)::jsonb);
+end;
+$$;
+
+-- Full picture of one player for the admin panel.
+create or replace function public.admin_player(p_id uuid)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return json_build_object(
+    'profile', (select row_to_json(p) from profiles p where p.id = p_id),
+    'moderation', (select row_to_json(m) from moderation m where m.user_id = p_id),
+    'is_admin', exists (select 1 from admins where user_id = p_id),
+    'warnings', (select coalesce(json_agg(w order by w.id desc), '[]') from warnings w where w.user_id = p_id),
+    'reports_against', (select coalesce(json_agg(row_to_json(t)), '[]') from (select r.*, rp.username as reporter_name from reports r join profiles rp on rp.id = r.reporter where r.target = p_id order by r.created_at desc limit 50) t),
+    'reports_filed', (select count(*) from reports where reporter = p_id),
+    'commends', player_commends(p_id),
+    'matches', (select coalesce(json_agg(row_to_json(t)), '[]') from (select id, match_id, mode, map, ranked, online, result, kills, deaths, headshots, score, elo_change, created_at from match_history where user_id = p_id order by created_at desc limit 30) t),
+    'seasons', (select coalesce(json_agg(s), '[]') from season_history s where s.user_id = p_id)
+  );
+end;
+$$;
+
+-- Admins can't be banned, muted or kicked, so the panel can't lock its own owner out.
+create or replace function public.admin_target(p_user uuid)
+returns void language plpgsql stable security definer set search_path = public as $$
+begin
+  if not exists (select 1 from profiles where id = p_user) then raise exception 'player not found'; end if;
+  if exists (select 1 from admins where user_id = p_user) then raise exception 'admins cannot be moderated'; end if;
+end;
+$$;
+
+create or replace function public.admin_ban(p_user uuid, p_minutes int, p_reason text)
+returns void language plpgsql security definer set search_path = public as $$
+declare until timestamptz := case when p_minutes is null or p_minutes <= 0 then 'infinity'::timestamptz else now() + make_interval(mins => p_minutes) end;
+begin
+  perform admin_guard(); perform admin_target(p_user);
+  insert into moderation (user_id, banned_until, ban_reason, kick_at, kick_reason, updated_at) values (p_user, until, left(p_reason, 300), now(), 'Banned', now())
+  on conflict (user_id) do update set banned_until = until, ban_reason = left(p_reason, 300), kick_at = now(), kick_reason = 'Banned', updated_at = now();
+  perform admin_log('ban', p_user::text, json_build_object('minutes', p_minutes, 'reason', p_reason)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_unban(p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  update moderation set banned_until = null, ban_reason = null, updated_at = now() where user_id = p_user;
+  perform admin_log('unban', p_user::text, null);
+end;
+$$;
+
+create or replace function public.admin_mute(p_user uuid, p_minutes int, p_reason text)
+returns void language plpgsql security definer set search_path = public as $$
+declare until timestamptz := case when p_minutes is null or p_minutes <= 0 then 'infinity'::timestamptz else now() + make_interval(mins => p_minutes) end;
+begin
+  perform admin_guard(); perform admin_target(p_user);
+  insert into moderation (user_id, muted_until, mute_reason, updated_at) values (p_user, until, left(p_reason, 300), now())
+  on conflict (user_id) do update set muted_until = until, mute_reason = left(p_reason, 300), updated_at = now();
+  perform admin_log('mute', p_user::text, json_build_object('minutes', p_minutes, 'reason', p_reason)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_unmute(p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  update moderation set muted_until = null, mute_reason = null, updated_at = now() where user_id = p_user;
+  perform admin_log('unmute', p_user::text, null);
+end;
+$$;
+
+create or replace function public.admin_kick(p_user uuid, p_reason text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard(); perform admin_target(p_user);
+  insert into moderation (user_id, kick_at, kick_reason, updated_at) values (p_user, now(), left(p_reason, 300), now())
+  on conflict (user_id) do update set kick_at = now(), kick_reason = left(p_reason, 300), updated_at = now();
+  perform admin_log('kick', p_user::text, json_build_object('reason', p_reason)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_warn(p_user uuid, p_message text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard(); perform admin_target(p_user);
+  if coalesce(trim(p_message), '') = '' then raise exception 'empty message'; end if;
+  insert into warnings (user_id, message) values (p_user, left(p_message, 500));
+  perform admin_log('warn', p_user::text, json_build_object('message', p_message)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_rename(p_user uuid, p_name text)
+returns void language plpgsql security definer set search_path = public as $$
+declare old text;
+begin
+  perform admin_guard();
+  if p_name !~ '^[A-Za-z0-9_]{3,16}$' then raise exception 'usernames are 3-16 letters, numbers or _'; end if;
+  if exists (select 1 from profiles where lower(username) = lower(p_name) and id <> p_user) then raise exception 'that username is taken'; end if;
+  select username into old from profiles where id = p_user;
+  update profiles set username = p_name where id = p_user;
+  perform admin_log('rename', p_user::text, json_build_object('from', old, 'to', p_name)::jsonb);
+end;
+$$;
+
+-- Sets any of the listed stat columns from a JSON object, e.g. {"elo": 1200, "xp": 5000}.
+create or replace function public.admin_set_stats(p_user uuid, p_patch jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare col text; allowed text[] := array['elo','peak_elo','ranked_wins','ranked_losses','wins','losses','matches','kills','deaths','headshots','xp','pass_xp','season_wins','season_losses','season_peak'];
+begin
+  perform admin_guard();
+  for col in select jsonb_object_keys(p_patch) loop
+    if not col = any(allowed) then raise exception 'cannot set %', col; end if;
+    execute format('update profiles set %I = greatest(0, $1) where id = $2', col) using (p_patch ->> col)::int, p_user;
+  end loop;
+  perform admin_log('set_stats', p_user::text, p_patch);
+end;
+$$;
+
+create or replace function public.admin_reset_stats(p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  update profiles set elo = 1000, peak_elo = 1000, ranked_wins = 0, ranked_losses = 0, wins = 0, losses = 0, matches = 0,
+    kills = 0, deaths = 0, headshots = 0, xp = 0, pass_xp = 0, season_wins = 0, season_losses = 0, season_peak = 1000 where id = p_user;
+  perform admin_log('reset_stats', p_user::text, null);
+end;
+$$;
+
+create or replace function public.admin_grant_item(p_user uuid, p_kind text, p_item text, p_revoke boolean default false)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  if p_kind not in ('finish', 'outfit', 'card', 'effect', 'emote') then raise exception 'invalid item kind'; end if;
+  insert into item_grants (user_id, kind, item, revoke) values (p_user, p_kind, left(p_item, 40), coalesce(p_revoke, false));
+  perform admin_log(case when p_revoke then 'revoke_item' else 'grant_item' end, p_user::text, json_build_object('kind', p_kind, 'item', p_item)::jsonb);
+end;
+$$;
+
+-- Undoes a ranked result: reverses both players' ELO change and win/loss counts.
+create or replace function public.admin_void_ranked(p_match_id text)
+returns void language plpgsql security definer set search_path = public as $$
+declare r ranked_matches%rowtype;
+begin
+  perform admin_guard();
+  select * into r from ranked_matches where match_id = p_match_id;
+  if not found then raise exception 'no ranked result for that match'; end if;
+  update profiles set elo = greatest(0, elo - r.winner_delta), ranked_wins = greatest(0, ranked_wins - 1), season_wins = greatest(0, season_wins - 1) where id = r.winner;
+  update profiles set elo = elo - r.loser_delta, ranked_losses = greatest(0, ranked_losses - 1), season_losses = greatest(0, season_losses - 1) where id = r.loser;
+  delete from ranked_matches where match_id = p_match_id;
+  update match_history set elo_change = 0, score = coalesce(score, '') || ' (voided)' where match_id = p_match_id and ranked;
+  perform admin_log('void_ranked', p_match_id, row_to_json(r)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_moderated(p_limit int default 200)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return (select coalesce(json_agg(row_to_json(t)), '[]') from (
+    select m.*, p.username from moderation m join profiles p on p.id = m.user_id
+    where m.banned_until > now() or m.muted_until > now() order by m.updated_at desc limit least(p_limit, 500)) t);
+end;
+$$;
+
+create or replace function public.admin_announce(p_message text, p_hours numeric, p_kind text default 'info')
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  insert into announcements (message, kind, ends_at, created_by) values (left(p_message, 300), p_kind, now() + make_interval(secs => (greatest(0.1, p_hours) * 3600)::double precision), auth.uid());
+  perform admin_log('announce', null, json_build_object('message', p_message, 'hours', p_hours, 'kind', p_kind)::jsonb);
+end;
+$$;
+
+create or replace function public.admin_end_announcement(p_id bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  update announcements set ends_at = now() where id = p_id;
+  perform admin_log('end_announcement', p_id::text, null);
+end;
+$$;
+
+create or replace function public.admin_announcements()
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return (select coalesce(json_agg(a order by a.id desc), '[]') from (select * from announcements order by id desc limit 50) a);
+end;
+$$;
+
+create or replace function public.admin_set_setting(p_key text, p_value jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  if p_key not in ('maintenance', 'motd', 'xp_boost') then raise exception 'unknown setting'; end if;
+  insert into app_settings (key, value, updated_at) values (p_key, p_value, now())
+  on conflict (key) do update set value = excluded.value, updated_at = now();
+  perform admin_log('set_setting', p_key, p_value);
+end;
+$$;
+
+create or replace function public.admin_audit_log(p_limit int default 100)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform admin_guard();
+  return (select coalesce(json_agg(row_to_json(t)), '[]') from (
+    select a.*, p.username as target_name from admin_audit a left join profiles p on p.id::text = a.target
+    order by a.id desc limit least(p_limit, 500)) t);
+end;
+$$;
+
 -- ───────────── function permissions ─────────────
 -- Internal helpers are not callable from the app at all.
 revoke all on function public.ensure_season(uuid) from public, anon, authenticated;
+revoke all on function public.admin_guard() from public, anon, authenticated;
+revoke all on function public.admin_log(text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.admin_target(uuid) from public, anon, authenticated;
+revoke all on function public.is_banned(uuid) from public, anon, authenticated;
 
 revoke all on function public.current_season() from public;
 grant execute on function public.current_season() to anon, authenticated;
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+revoke all on function public.moderation_flags(uuid[]) from public, anon;
+grant execute on function public.moderation_flags(uuid[]) to authenticated;
 revoke all on function public.player_commends(uuid) from public;
 grant execute on function public.player_commends(uuid) to anon, authenticated;
 
@@ -368,8 +765,14 @@ do $$
 declare f text;
 begin
   foreach f in array array[
-    'my_status()', 'commend_player(uuid, text, text)',
-    'report_player(uuid, text, text, text, text, jsonb)', 'claim_challenge(text)'
+    'my_status()', 'ack_status(bigint[], bigint[])', 'commend_player(uuid, text, text)',
+    'report_player(uuid, text, text, text, text, jsonb)', 'claim_challenge(text)',
+    'admin_overview()', 'admin_reports(text, int)', 'admin_resolve_report(bigint, text, text)', 'admin_player(uuid)',
+    'admin_ban(uuid, int, text)', 'admin_unban(uuid)', 'admin_mute(uuid, int, text)', 'admin_unmute(uuid)',
+    'admin_kick(uuid, text)', 'admin_warn(uuid, text)', 'admin_rename(uuid, text)', 'admin_set_stats(uuid, jsonb)',
+    'admin_reset_stats(uuid)', 'admin_grant_item(uuid, text, text, boolean)', 'admin_void_ranked(text)',
+    'admin_moderated(int)', 'admin_announce(text, numeric, text)', 'admin_end_announcement(bigint)',
+    'admin_announcements()', 'admin_set_setting(text, jsonb)', 'admin_audit_log(int)'
   ] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated', f);

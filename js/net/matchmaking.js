@@ -3,6 +3,19 @@ import { MODES, SOLO_KINDS } from '../data/modes.js';
 
 const FILL_AFTER = 20; // seconds before a non-ranked queue starts with bots filling gaps
 
+// Keeps banned accounts out of queues and lobbies. Flags come from the database (moderation_flags),
+// looked up once per new player id.
+class BanFilter {
+  constructor(app) { this.app = app; this.checked = new Set(); this.banned = new Set(); }
+  check(ids) {
+    const fresh = ids.filter((id) => id && !this.checked.has(id));
+    if (!fresh.length || !this.app.api) return;
+    fresh.forEach((id) => this.checked.add(id));
+    this.app.api.moderationFlags(fresh).then((rows) => { for (const r of rows) if (r.banned) this.banned.add(r.id); }).catch(() => null);
+  }
+  has(id) { return this.banned.has(id); }
+}
+const groupIds = (e) => (e.group?.length ? e.group : [e]).map((x) => x.id);
 
 function needFor(mode) {
   const m = MODES[mode];
@@ -16,6 +29,7 @@ export class Matchmaker {
     this.onUpdate = onUpdate; this.onMatch = onMatch;
     this.done = false;
     this.started = Date.now();
+    this.bans = new BanFilter(app);
   }
 
   async start() {
@@ -31,7 +45,9 @@ export class Matchmaker {
   }
 
   queue() {
-    return this.room.members().filter((m) => m.id).sort((a, b) => (a.t - b.t) || (a.id < b.id ? -1 : 1));
+    const all = this.room.members().filter((m) => m.id);
+    this.bans.check(all.flatMap(groupIds));
+    return all.filter((m) => !groupIds(m).some((id) => this.bans.has(id))).sort((a, b) => (a.t - b.t) || (a.id < b.id ? -1 : 1));
   }
 
   // Entries that fit in one match, oldest first. Team modes also need each group to fit on a team.
@@ -101,6 +117,7 @@ export class Lobby {
     this.app = app; this.code = code; this.isHost = isHost;
     this.onChange = onChange; this.onStart = onStart; this.onClosed = onClosed;
     this.cfg = { mode: 'bomb', map: 'dustline', botLevel: 'normal', fillBots: true, hostId: isHost ? app.me().id : null, name: '' };
+    this.bans = new BanFilter(app);
   }
 
   static newCode() { return newId(5).toUpperCase(); }
@@ -130,7 +147,12 @@ export class Lobby {
     return { code: this.code, name: this.cfg.name, mode: this.cfg.mode, map: this.cfg.map, count: this.members().length || 1 };
   }
 
-  members() { return this.room ? this.room.members().filter((m) => m.id) : []; }
+  members() {
+    if (!this.room) return [];
+    const all = this.room.members().filter((m) => m.id);
+    this.bans.check(all.map((m) => m.id));
+    return all.filter((m) => !this.bans.has(m.id));
+  }
 
   pushCfg() {
     if (!this.isHost) return;

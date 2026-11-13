@@ -125,7 +125,7 @@ export class Game {
     initAudio();
     setVolume(this.settings.volume);
 
-    if (this.online) this.bindNet();
+    if (this.online) { this.bindNet(); this.loadModerationFlags(); }
     if (this.mode.kind === 'training') { this.training = new Training(this); this.rec.unwrap(); }
     if (this.isHost) {
       this.rules = new Rules(this);
@@ -1509,6 +1509,7 @@ export class Game {
       case 'door': this.world.setDoor(d.cell, d.open); sfx.door(this.world.cellCenter(...d.cell)); break;
       case 'prop': this.applyPropBreak(d); break;
       case 'chat': {
+        if (this.mutedIds?.has(d.id)) break;
         (this.chatLog ||= []).push({ id: d.id, name: d.name, text: d.text, t: Math.round(this.rec?.t || 0) });
         if (this.chatLog.length > 200) this.chatLog.shift();
         this.hud.chatLine(d.name, d.text, d.team);
@@ -1869,9 +1870,17 @@ export class Game {
   chat(text) {
     const lp = this.local;
     if (!text.trim() || !lp) return;
+    const mute = this.app.muted;
+    if (mute) { this.hud.chatLine('', `You are muted${mute.until === 'infinity' ? '' : ' until ' + new Date(mute.until).toLocaleString()}${mute.reason ? ': ' + mute.reason : ''}`, -1); return; }
     this.broadcast('chat', { id: lp.id, name: lp.name, text: censor(text.slice(0, 120)), team: lp.team });
   }
 
+  // Ban/mute flags for the humans in this match: chat from muted players is hidden.
+  async loadModerationFlags() {
+    const ids = [...this.players.values()].filter((p) => !p.isBot).map((p) => p.id);
+    const flags = await this.app.api?.moderationFlags?.(ids).catch(() => []) || [];
+    this.mutedIds = new Set(flags.filter((f) => f.muted || f.banned).map((f) => f.id));
+  }
 
   // ───────────────────────── camera ─────────────────────────
   spectating() { const lp = this.local; return !lp || !lp.alive; }

@@ -1,4 +1,4 @@
-// Commend and report dialogs for the results screen.
+// Commends, reports, the ban screen, admin warnings and the announcement banner.
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const COMMENDS = [
@@ -16,6 +16,8 @@ export const REPORT_REASONS = [
   ['afk', 'AFK or not playing'],
   ['other', 'Something else'],
 ];
+
+const until = (iso) => (!iso || iso === 'infinity' ? 'permanently' : 'until ' + new Date(iso).toLocaleString());
 
 export function commendDialog(ui, player, matchId, onDone) {
   if (!player) return;
@@ -46,4 +48,40 @@ export function reportDialog(ui, player, ctx, onDone) {
     try { await ui.app.api.report(player.id, ctx.matchId, ctx.mode, reason, note, evidence); ui.toast('Report sent. Thanks for helping keep matches fair.', 'good'); onDone?.(); m.remove(); }
     catch (e) { ui.toast(e.missing ? 'Reports aren’t available yet' : e.message, 'bad'); }
   };
+}
+
+// Full-screen notice for a banned account. The only way out is signing out.
+export function showBanned(ui, ban) {
+  ui.hide?.();
+  ui.root.innerHTML = `<div class="ban-screen"><div class="ban-card">
+    <div class="ban-icon" aria-hidden="true">⛔</div>
+    <h1 class="m-h1">Account suspended</h1>
+    <p>This account is banned ${esc(until(ban.until))}.</p>
+    ${ban.reason ? `<p class="ban-reason">Reason: ${esc(ban.reason)}</p>` : ''}
+    <p class="m-sub">You can't play online, earn XP or take part in ranked while suspended.</p>
+    <div class="row" style="justify-content:center;gap:8px"><button class="btn primary" id="ban-out">Sign out</button></div>
+  </div></div>`;
+  ui.root.querySelector('#ban-out').onclick = () => ui.app.signOut();
+}
+
+export function showWarnings(ui, list) {
+  const m = ui.modal(`<h2 class="m-h2">⚠ Message from the moderator</h2>
+    ${list.map((w) => `<div class="warn-item"><p>${esc(w.message)}</p><span class="m-sub">${new Date(w.at).toLocaleString()}</span></div>`).join('')}
+    <p class="m-sub">Repeated problems can lead to a mute or ban.</p>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn primary small" data-x>I understand</button></div>`);
+  m.dataset.locked = '1';
+  m.querySelector('[data-x]').onclick = () => m.remove();
+}
+
+// Announcement and maintenance strip at the top of the menu.
+export function bannerHTML(app) {
+  const items = [];
+  const mt = app.maintenance;
+  if (mt) items.push({ kind: 'warn', message: mt.message || 'Online play is paused for maintenance. Training and bot matches still work.' });
+  const boost = app.appSettings?.xp_boost;
+  if (boost && Date.parse(boost.until) > Date.now() && boost.multiplier > 1) items.push({ kind: 'event', message: `${boost.multiplier}× XP event — ends ${new Date(boost.until).toLocaleString()}` });
+  for (const a of app.announcementsList || []) items.push(a);
+  const motd = app.appSettings?.motd;
+  if (motd?.text) items.push({ kind: 'info', message: motd.text });
+  return items.slice(0, 3).map((a) => `<div class="m-banner ${esc(a.kind || 'info')}"><b>${a.kind === 'warn' ? 'Notice' : a.kind === 'event' ? 'Event' : 'News'}</b><span>${esc(a.message)}</span></div>`).join('');
 }

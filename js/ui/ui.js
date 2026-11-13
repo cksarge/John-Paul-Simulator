@@ -14,7 +14,8 @@ import { mountTurnstile } from './turnstile.js';
 import { cardImage, itemSwatch } from './cards.js';
 import { applyPadSettings, padHelp } from '../engine/gamepad.js';
 import { renderSeason } from './season.js';
-import { commendDialog, reportDialog, COMMENDS } from './social.js';
+import { AdminPanel } from './admin.js';
+import { commendDialog, reportDialog, showBanned, showWarnings, bannerHTML, COMMENDS } from './social.js';
 import { seasonById, fmtDate } from '../data/seasons.js';
 import { censor } from '../data/profanity.js';
 
@@ -38,8 +39,9 @@ const NAV = [
   ['leaderboard', 'Leaderboard', 'Top players'],
   ['settings', 'Settings', 'Graphics, controls and audio'],
 ];
-const FOCUS = { play: 'play', season: 'operator', operators: 'operator', armory: 'weapon', stats: 'stats', replays: 'stats', leaderboard: 'play', settings: 'play' };
-const WIDE = new Set(['season', 'stats', 'replays', 'leaderboard', 'settings']);
+const FOCUS = { play: 'play', season: 'operator', operators: 'operator', armory: 'weapon', stats: 'stats', replays: 'stats', leaderboard: 'play', settings: 'play', admin: 'stats' };
+const WIDE = new Set(['season', 'stats', 'replays', 'leaderboard', 'settings', 'admin']);
+const ADMIN_NAV = ['admin', 'Admin', 'Reports, players and game switches'];
 const ARMORY_KINDS = [['finish', 'Finishes'], ['outfit', 'Outfits'], ['card', 'Calling cards'], ['effect', 'Kill effects'], ['emote', 'Emotes']];
 const WHEEL = ['Up', 'Right', 'Down', 'Left'];
 const SIZE_LABEL = (m) => (SOLO_KINDS.has(m.kind) ? `${m.maxPlayers} players` : `${m.teamSize}v${m.teamSize}`);
@@ -326,6 +328,8 @@ export class UI {
 
   // ───────────────────────── shell ─────────────────────────
   showMenu(tab = this.tab) {
+    // A banned account only ever sees the ban screen (e.g. after being removed from a match).
+    if (this.app.banned) { this.showBanned(this.app.banned); return; }
     if (tab === 'profile') tab = 'stats';
     this.cleanup();
     if (this.lobby && !this.lobby.started) { this.lobby.leave(); this.lobby = null; }
@@ -341,7 +345,8 @@ export class UI {
           <span class="m-me-sub">${app.profile ? `${rankFor(app.profile.elo).name} ${app.profile.elo} · level ${levelFor(app.profile.xp).level}` : 'Guest, offline only'}</span>
         </button>
       </header>
-      <nav class="m-nav">${NAV.map(([k, label, hint]) => `<button data-t="${k}" class="${k === tab ? 'on' : ''}"><b>${label}</b><span>${hint}</span></button>`).join('')}</nav>
+      <nav class="m-nav">${this.navHTML(tab)}</nav>
+      <div class="m-banners" id="banners">${bannerHTML(app)}</div>
       <div class="m-stage" id="stage" title="Drag to turn your operator, click to wave"></div>
       <section class="m-panel" id="tab"></section>
       <footer class="m-foot"><span id="foot-hint">Drag the stage to turn your operator · click it to wave</span><span class="spacer"></span><span id="foot-map"></span></footer>
@@ -364,13 +369,41 @@ export class UI {
     }
     const el = this.root.querySelector('#tab');
     ({
-      play: () => this.renderPlay(el), season: () => renderSeason(this, el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el),
+      play: () => this.renderPlay(el), season: () => renderSeason(this, el), admin: () => (this.adminPanel ||= new AdminPanel(this)).render(el), operators: () => this.renderOperators(el), armory: () => this.renderArmory(el),
       stats: () => this.renderStats(el), replays: () => this.renderReplays(el), leaderboard: () => this.renderLeaderboard(el), settings: () => this.renderSettings(el),
     })[tab]();
   }
 
+  navHTML(tab) {
+    const items = this.app.isAdmin ? [...NAV, ADMIN_NAV] : NAV;
+    return items.map(([k, label, hint]) => `<button data-t="${k}" class="${k === tab ? 'on' : ''} ${k === 'admin' ? 'nav-admin' : ''}"><b>${label}</b><span>${hint}</span></button>`).join('');
+  }
+
+  // The admin tab appears only after the database confirms admin rights (see App.pollStatus).
+  adminChanged() {
+    const nav = this.root.querySelector('.m-nav');
+    if (!nav) return;
+    const has = !!nav.querySelector('[data-t=admin]');
+    if (has !== !!this.app.isAdmin) {
+      nav.innerHTML = this.navHTML(this.tab);
+      nav.querySelectorAll('button').forEach((b) => { b.onclick = () => this.showMenu(b.dataset.t); });
+      if (!this.app.isAdmin && this.tab === 'admin') this.showMenu('play');
+    }
+  }
+
+  renderBanner() { const b = this.root.querySelector('#banners'); if (b) b.innerHTML = bannerHTML(this.app); }
+  showBanned(ban) { showBanned(this, ban); }
+  showWarnings(list) { showWarnings(this, list); }
   commendDialog(player, matchId, done) { commendDialog(this, player, matchId, done); }
   reportDialog(player, ctx, done) { reportDialog(this, player, ctx, done); }
+
+  // Online play is paused in maintenance mode (except for the admin).
+  blockedByMaintenance() {
+    const mt = this.app.maintenance;
+    if (!mt || this.app.isAdmin) return false;
+    this.toast(mt.message || 'Online play is paused for maintenance. Try training or a bot match.', 'bad', null, 6000);
+    return true;
+  }
 
   footMap() {
     const f = this.root.querySelector('#foot-map');
@@ -520,7 +553,8 @@ export class UI {
         $('#browse-btn').onclick = () => this.browseLobbies($('#lobby-list'));
       }
       const custom = this.onlineMode === 'custom', m = MODES[this.onlineMode];
-      info.innerHTML = (custom ? '<b>Custom lobby</b><span>Pick the mode and map, share the code, start when ready.</span>'
+      const mt = app.maintenance && !app.isAdmin ? `<span class="m-party-line">${esc(app.maintenance.message || 'Online play is paused for maintenance.')}</span>` : '';
+      info.innerHTML = mt + (custom ? '<b>Custom lobby</b><span>Pick the mode and map, share the code, start when ready.</span>'
         : `<b>${esc(m.name)}</b><span>${esc(m.desc)}</span>${inParty ? `<span class="m-party-line">${isLeader ? `Your party of ${party.size} queues together${party.size > partyLimit(m.id) ? ' — too many players for this mode' : ''}.` : 'Only your party leader can start a search.'}</span>` : ''}`);
       btn.textContent = custom ? 'Create lobby' : 'Find match';
       btn.onclick = () => (custom ? this.createLobby() : this.startQueue(this.onlineMode));
@@ -542,6 +576,7 @@ export class UI {
 
   // ───────────────────────── queue ─────────────────────────
   async startQueue(mode) {
+    if (this.blockedByMaintenance()) return;
     const m = MODES[mode], party = this.app.party;
     if (party?.inParty) {
       if (!party.isLeader) return this.toast('Only your party leader can start a search', 'bad');
@@ -571,6 +606,7 @@ export class UI {
   async joinLobby(code) { await this.openLobby(code, false); }
 
   async openLobby(code, isHost) {
+    if (this.blockedByMaintenance()) return;
     if (this.tab === null || !this.root.querySelector('.m-shell')) this.showMenu('play');
     const lobby = new Lobby(this.app, code, isHost, {
       onChange: () => this.renderLobby(lobby),

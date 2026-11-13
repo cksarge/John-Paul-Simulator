@@ -167,17 +167,20 @@ class App {
     else this.api.saveCharacter(this.user.id, this.char).catch(() => null);
     localStorage.setItem('jps_char', JSON.stringify(this.char));
     this.challenges = normalizeProgress(profile.challenges);
-    this.joinPresence();
+    // Check for a ban before appearing in the online list.
     await this.pollStatus();
+    if (this.banned) return;
+    this.joinPresence();
     this.grantSeasonRewards();
     this.claimPending();
     this.ui.showMenu('play');
   }
 
   loginGuest() {
-    this.user = null; this.profile = null;
+    this.user = null; this.profile = null; this.isAdmin = false; this.muted = null;
     this.inventory = this.loadLocalInventory();
     this.challenges = this.loadLocalChallenges();
+    this.pollStatus();
     this.ui.showMenu('play');
   }
 
@@ -186,7 +189,7 @@ class App {
     this.presence?.leave(); this.presence = null;
     await this.api?.signOut();
     clearInterval(this.statusTimer);
-    this.user = null; this.profile = null;
+    this.user = null; this.profile = null; this.isAdmin = false; this.muted = null; this.banned = null;
     this.inventory = this.loadLocalInventory();
     this.ui.showAuth();
   }
@@ -198,18 +201,62 @@ class App {
     this.grantSeasonRewards();
   }
 
-  // ───────────── account status ─────────────
-  // Polled every 30 s while signed in: moves you into the current season and loads its dates.
+  // ───────────── account status: moderation, admin gifts, announcements ─────────────
+  // Polled every 30 s while signed in. Bans, kicks and warnings come from the database, never from
+  // other players' messages, so nobody can fake them.
   async pollStatus() {
-    if (!this.api || !this.user) return;
+    if (!this.api) return;
     clearInterval(this.statusTimer);
     this.statusTimer = setInterval(() => this.pollStatus(), 30000);
+    const [ann, settings] = await Promise.all([this.api.announcements(), this.api.appSettings()]);
+    this.announcementsList = ann; this.appSettings = settings;
+    this.ui.renderBanner?.();
+    if (!this.user) return;
     let st;
     try { st = await this.api.myStatus(); } catch (e) { if (!e.missing) console.warn('Status check failed', e); return; }
-    if (st?.season && !this.seasonsLoaded) {
+    if (!st) return;
+    if (st.season && !this.seasonsLoaded) {
       this.seasonsLoaded = true;
       applySeasonRows(await this.api.seasons());
     }
+    this.isAdmin = st.admin === true;
+    this.muted = st.muted_until ? { until: st.muted_until, reason: st.mute_reason } : null;
+    const banned = st.banned_until ? { until: st.banned_until, reason: st.ban_reason } : null;
+    const kickKey = 'jps_kick_' + this.user.id, lastKick = Number(localStorage.getItem(kickKey) || 0), kickAt = st.kick_at ? Date.parse(st.kick_at) : 0;
+    if (kickAt > lastKick) {
+      try { localStorage.setItem(kickKey, String(kickAt)); } catch { /* ignore */ }
+      // Only kicks issued after this session started count; older ones were already handled.
+      if (this.game && kickAt > (this.sessionStart || 0) - 5000) {
+        this.game.leave();
+        this.ui.toast(`An admin removed you from the match${st.kick_reason && st.kick_reason !== 'Banned' ? ': ' + st.kick_reason : ''}`, 'bad', null, 9000);
+      }
+    }
+    this.banned = banned;
+    if (banned) { this.game?.leave(); this.replay?.exit(); this.ui.showBanned(banned); return; }
+    const acks = { w: [], g: [] };
+    if (st.grants?.length) {
+      for (const g of st.grants) {
+        const key = KINDS[g.kind]?.key;
+        if (key && KINDS[g.kind].defs[g.item]) {
+          if (g.revoke) this.inventory[key] = (this.inventory[key] || []).filter((x) => x !== g.item);
+          else addToInventory(this.inventory, { kind: g.kind, id: g.item });
+          if (!g.revoke) this.ui.toast(`An admin gave you ${KINDS[g.kind].defs[g.item].name}`, 'good');
+        }
+        acks.g.push(g.id);
+      }
+      await this.saveInventory().catch(() => null);
+    }
+    if (st.warnings?.length) {
+      for (const w of st.warnings) acks.w.push(w.id);
+      this.ui.showWarnings(st.warnings);
+    }
+    if (acks.w.length || acks.g.length) this.api.ackStatus(acks.w, acks.g).catch(() => null);
+    this.ui.adminChanged?.();
+  }
+
+  get maintenance() {
+    const m = this.appSettings?.maintenance;
+    return m?.on ? m : null;
   }
 
   // Grants season reward-track items you've reached, plus rewards from finished seasons.

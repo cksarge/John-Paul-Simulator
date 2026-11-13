@@ -163,7 +163,7 @@ export class Api {
     if (error) throw friendly(error);
   }
 
-  // ───────────── seasons, challenges, commends and reports ─────────────
+  // ───────────── seasons, challenges, social, moderation ─────────────
   // These need the November 2026 additions to supabase/schema.sql. Before that runs, the calls fail
   // with a "missing" error and the features stay hidden instead of breaking the menu.
   static missing(error) { return /PGRST202|PGRST205|schema cache|does not exist|42883|42P01/i.test(error?.code + ' ' + error?.message); }
@@ -186,6 +186,7 @@ export class Api {
   }
 
   myStatus() { return this.rpc('my_status'); }
+  ackStatus(warnings, grants) { return this.rpc('ack_status', { p_warnings: warnings, p_grants: grants }); }
   claimChallenge(key) { return this.rpc('claim_challenge', { p_key: key }); }
 
   async saveChallenges(id, challenges) {
@@ -197,12 +198,32 @@ export class Api {
   report(target, matchId, mode, reason, note, evidence) { return this.rpc('report_player', { p_target: target, p_match: matchId, p_mode: mode, p_reason: reason, p_note: note, p_evidence: evidence }); }
   playerCommends(id) { return this.rpc('player_commends', { p_id: id }); }
 
+  async moderationFlags(ids) {
+    const real = ids.filter((id) => /^[0-9a-f-]{36}$/.test(id));
+    if (!real.length) return [];
+    try { return (await this.rpc('moderation_flags', { p_ids: real })) || []; } catch { return []; }
+  }
+
+  async announcements() {
+    const { data, error } = await this.sb.from('announcements').select('id,message,kind,ends_at').order('id', { ascending: false }).limit(3);
+    return error ? [] : data;
+  }
+
+  async appSettings() {
+    const { data, error } = await this.sb.from('app_settings').select('key,value');
+    return error ? {} : Object.fromEntries(data.map((r) => [r.key, r.value]));
+  }
+
   async seasonLeaderboard(seasonId, limit = 100) {
     const { data, error } = await this.sb.from('profiles').select('id,username,elo,season_peak,season_wins,season_losses,pass_xp')
       .eq('season_id', seasonId).order('elo', { ascending: false }).limit(limit);
     if (error) throw friendly(error);
     return data;
   }
+
+  // Admin calls. The database refuses every one of these unless the caller is in public.admins.
+  async isAdmin() { try { return (await this.rpc('is_admin')) === true; } catch { return false; } }
+  admin(fn, args = {}) { return this.rpc('admin_' + fn, args); }
 
   // Recent history with details for the stats page.
   async statsHistory(userId, limit = 100) {

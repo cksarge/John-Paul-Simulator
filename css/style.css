@@ -450,4 +450,4 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px s
 .tbl td.rate .btn + .btn { margin-left: 4px; }
 
 /* Anything wider than its container scrolls sideways instead of being cut off. */
-.modal, .overlay .panel, .buy-menu, .scoreboard, .m-panel { overflow-x: auto; }
+.modal, .overlay .panel, .buy-menu, .scoreboard, .adm-player, .m-panel { overflow-x: auto; }
