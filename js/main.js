@@ -4,6 +4,8 @@ import { Game } from './game/game.js';
 import { OPERATORS, sanitizeChar } from './data/characters.js';
 import { Room, buildMatch } from './net/realtime.js';
 import { MODES } from './data/modes.js';
+import { MenuScene } from './ui/menuscene.js';
+import { PartyManager } from './net/party.js';
 import { initAudio } from './engine/audio.js';
 import { normalizeInventory, rollDrop, addToInventory, KINDS } from './data/skins.js';
 
@@ -20,6 +22,7 @@ class App {
     this.gameEl = document.getElementById('game');
     this.engine = new Engine(this.gameEl, this.settings);
     this.gameEl.classList.add('hidden');
+    this.menuScene = new MenuScene(this);
     step(55, 'Connecting to services');
     // Read email-link results before the auth client consumes the URL.
     const hash = new URLSearchParams(location.hash.slice(1));
@@ -124,6 +127,7 @@ class App {
   }
 
   async signOut() {
+    this.party?.leave(true); this.party = null;
     this.presence?.leave(); this.presence = null;
     await this.api?.signOut();
     this.user = null; this.profile = null;
@@ -150,6 +154,11 @@ class App {
     const me = this.me();
     this.presence = new Room(this.api.sb, 'jps-online', me, { name: me.name, elo: me.elo, status: 'menu' });
     try { await this.presence.connect(); } catch (e) { console.warn('Presence unavailable', e); this.presence = null; }
+    if (this.presence) {
+      this.party = new PartyManager(this);
+      this.party.attach(this.presence);
+      this.ui.renderParty?.();
+    }
   }
 
   onlinePlayers() {

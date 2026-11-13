@@ -72,6 +72,8 @@ create table if not exists public.match_history (
   unique (user_id, match_id)
 );
 create index if not exists match_history_user_idx on public.match_history (user_id, created_at desc);
+-- Per-match details for the stats page (weapon kills, accuracy, head-to-head, death spots).
+alter table public.match_history add column if not exists details jsonb;
 
 alter table public.match_history enable row level security;
 drop policy if exists "history is public" on public.match_history;
@@ -128,9 +130,12 @@ end;
 $$;
 
 -- Records the caller's own result. Online matches update stats; offline matches only grant XP.
+-- The older 11-argument version is dropped so the RPC isn't ambiguous.
+drop function if exists public.record_match(text, text, text, boolean, boolean, text, int, int, int, text, int);
 create or replace function public.record_match(
   p_match_id text, p_mode text, p_map text, p_ranked boolean, p_online boolean,
-  p_result text, p_kills int, p_deaths int, p_headshots int, p_score text, p_elo_change int
+  p_result text, p_kills int, p_deaths int, p_headshots int, p_score text, p_elo_change int,
+  p_details jsonb default null
 ) returns void language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
@@ -138,11 +143,12 @@ declare
   dth int := least(greatest(p_deaths, 0), 150);
   hs int := least(greatest(p_headshots, 0), k);
   gained int;
+  det jsonb := case when p_details is not null and pg_column_size(p_details) <= 16000 then p_details end;
 begin
   if uid is null then raise exception 'not signed in'; end if;
 
-  insert into match_history (user_id, match_id, mode, map, ranked, online, result, kills, deaths, headshots, score, elo_change)
-  values (uid, p_match_id, p_mode, p_map, p_ranked, p_online, p_result, k, dth, hs, p_score, coalesce(p_elo_change, 0))
+  insert into match_history (user_id, match_id, mode, map, ranked, online, result, kills, deaths, headshots, score, elo_change, details)
+  values (uid, p_match_id, p_mode, p_map, p_ranked, p_online, p_result, k, dth, hs, p_score, coalesce(p_elo_change, 0), det)
   on conflict (user_id, match_id) do nothing;
   if not found then return; end if;
 
@@ -163,6 +169,6 @@ end;
 $$;
 
 revoke all on function public.report_ranked(text, uuid, uuid) from public, anon;
-revoke all on function public.record_match(text, text, text, boolean, boolean, text, int, int, int, text, int) from public, anon;
+revoke all on function public.record_match(text, text, text, boolean, boolean, text, int, int, int, text, int, jsonb) from public, anon;
 grant execute on function public.report_ranked(text, uuid, uuid) to authenticated;
-grant execute on function public.record_match(text, text, text, boolean, boolean, text, int, int, int, text, int) to authenticated;
+grant execute on function public.record_match(text, text, text, boolean, boolean, text, int, int, int, text, int, jsonb) to authenticated;
