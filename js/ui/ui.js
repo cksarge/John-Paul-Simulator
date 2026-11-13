@@ -18,7 +18,7 @@ import { buildCrosshair, layoutCrosshair } from './crosshair.js';
 import { offlineSupported, enableOffline, disableOffline } from '../net/offline.js';
 import { AdminPanel } from './admin.js';
 import { Workshop } from './workshop.js';
-import { commendDialog, reportDialog, showBanned, showWarnings, bannerHTML, COMMENDS } from './social.js';
+import { commendDialog, reportDialog, showBanned, showMaintenance, showWarnings, bannerHTML, COMMENDS } from './social.js';
 import { seasonById, fmtDate } from '../data/seasons.js';
 import { censor } from '../data/profanity.js';
 import { PALETTES, applyAccess } from './access.js';
@@ -337,6 +337,7 @@ export class UI {
   showMenu(tab = this.tab) {
     // A banned account only ever sees the ban screen (e.g. after being removed from a match).
     if (this.app.banned) { this.showBanned(this.app.banned); return; }
+    if (this.app.maintenanceShown) { this.showMaintenance(this.app.maintenance); return; }
     if (tab === 'profile') tab = 'stats';
     this.cleanup();
     if (this.lobby && !this.lobby.started) { this.lobby.leave(); this.lobby = null; }
@@ -400,6 +401,7 @@ export class UI {
 
   renderBanner() { const b = this.root.querySelector('#banners'); if (b) b.innerHTML = bannerHTML(this.app); }
   showBanned(ban) { showBanned(this, ban); }
+  showMaintenance(mt) { showMaintenance(this, mt); }
   showWarnings(list) { showWarnings(this, list); }
   commendDialog(player, matchId, done) { commendDialog(this, player, matchId, done); }
   reportDialog(player, ctx, done) { reportDialog(this, player, ctx, done); }

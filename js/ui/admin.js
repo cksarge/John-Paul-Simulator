@@ -315,7 +315,7 @@ export class AdminPanel {
     const o = await this.call('overview');
     const s = o.settings || {}, mt = s.maintenance || {}, boost = s.xp_boost || {}, motd = s.motd || {};
     const boostOn = boost.until && new Date(boost.until) > new Date() && boost.multiplier > 1;
-    this.body.innerHTML = `<div class="adm-switch"><div><b>Maintenance mode</b><p class="m-sub">Stops everyone except you from queueing, joining lobbies or starting online matches. Bot matches and training still work.</p>
+    this.body.innerHTML = `<div class="adm-switch"><div><b>Maintenance mode</b><p class="m-sub">Removes everyone except you from the game within 30 seconds, matches included, and shows them a full-screen notice with your message until you turn it off. Then they're let back in automatically.</p>
         <input type="text" id="mt-msg" maxlength="200" placeholder="Message to players" value="${esc(mt.message || '')}"></div>
         <button class="btn small ${mt.on ? 'danger' : ''}" id="mt-toggle">${mt.on ? 'Turn off' : 'Turn on'}</button></div>
       <div class="adm-switch"><div><b>XP event</b><p class="m-sub">${boostOn ? `${boost.multiplier}× XP until ${when(boost.until)}.` : 'Multiply match XP (and season track XP) for everyone.'}</p>

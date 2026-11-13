@@ -485,3 +485,6 @@
 @media (max-width: 900px) { .ed { grid-template-columns: 1fr; grid-template-rows: auto auto 60vh auto; } .ed-side, .ed-props { border: 0; } }
 .ed-side > *, .ed-props > * { flex-shrink: 0; }
 .ed input[type=number] { width: 100%; }
+.maint-screen { background: radial-gradient(ellipse at 50% 30%, rgba(242, 163, 58, .16), transparent 60%), #0b0e12; z-index: 120; }
+.maint-screen .maint-msg { font-size: 18px; margin: 0; }
+.maint-screen .queue-pulse { margin: 8px auto 0; }

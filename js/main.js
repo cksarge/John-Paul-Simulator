@@ -248,11 +248,12 @@ class App {
   async pollStatus() {
     if (!this.api) return;
     clearInterval(this.statusTimer);
-    this.statusTimer = setInterval(() => this.pollStatus(), 30000);
+    // Checked more often while the maintenance screen is up, so players get back in quickly.
+    this.statusTimer = setInterval(() => this.pollStatus(), this.maintenanceShown ? 10000 : 30000);
     const [ann, settings] = await Promise.all([this.api.announcements(), this.api.appSettings()]);
     this.announcementsList = ann; this.appSettings = settings;
     this.ui.renderBanner?.();
-    if (!this.user) return;
+    if (!this.user) { this.applyMaintenance(); return; }
     let st;
     try { st = await this.api.myStatus(); } catch (e) { if (!e.missing) console.warn('Status check failed', e); return; }
     if (!st) return;
@@ -280,6 +281,7 @@ class App {
     if (banned) { if (!wasBanned) this.goOffline(); this.ui.showBanned(banned); return; }
     // Ban expired or lifted while the ban screen was up: back to the menu.
     if (wasBanned) { this.joinPresence(); this.ui.showMenu('play'); }
+    if (this.applyMaintenance()) return;
     const acks = { w: [], g: [] };
     if (st.grants?.length) {
       for (const g of st.grants) {
@@ -312,6 +314,21 @@ class App {
     this.ui.lobby?.leave(); this.ui.lobby = null;
     this.party?.leave(true); this.party = null;
     this.presence?.leave(); this.presence = null;
+  }
+
+  // Maintenance removes everyone except admins from everything (matches included) and keeps a
+  // full-screen notice up until it's turned off. Returns true while it's in effect.
+  applyMaintenance() {
+    const mt = this.maintenance && !this.isAdmin ? this.maintenance : null;
+    const was = !!this.maintenanceShown;
+    this.maintenanceShown = !!mt;
+    if (mt) {
+      if (!was) { this.goOffline(); this.pollStatus(); }
+      this.ui.showMaintenance(mt);
+      return true;
+    }
+    if (was) { this.pollStatus(); this.joinPresence(); this.ui.showMenu('play'); this.ui.toast('Maintenance is over. Welcome back!', 'good'); }
+    return false;
   }
 
   get maintenance() {
@@ -517,6 +534,7 @@ class App {
   }
 
   startOffline(o) {
+    if (this.maintenanceShown) return;
     const me = this.me();
     const payload = buildMatch({ mode: o.mode, map: o.map, variant: o.variant || 'day', humans: [{ id: me.id, name: me.name, elo: me.elo, char: me.char }], hostId: me.id, fillBots: true, botLevel: o.botLevel });
     this.runGame(payload, null);

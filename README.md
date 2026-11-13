@@ -9,7 +9,7 @@ A browser-based 3D tactical FPS. There is no build step: it is plain ES modules 
 - **Play of the match:** the best multi-kill replays at the end of every match before the results.
 - **Pings and inspect:** tap **Z** to mark a spot or an enemy for your team, hold it for a callout wheel; **V** inspects your weapon.
 - **Commend and report:** after an online match, commend or report the other players from the results screen. Reports include the match and that player's chat.
-- **Admin panel** (Carter's account only): report queue, player search and profiles, bans, mutes, kicks, warnings, renames, stat edits and resets, giving or removing items, voiding ranked results, announcements, maintenance mode, XP events and an audit log of every admin action.
+- **Admin panel** (Carter's account only): report queue, player search and profiles, bans, mutes, kicks, warnings, renames, stat edits and resets, giving or removing items, voiding ranked results, announcements, maintenance mode (kicks everyone but the admin to a full-screen notice until it's turned off), XP events and an audit log of every admin action.
 - **Online:** quick-match queues, custom lobbies with join codes, a lobby browser, an online-players list and in-match chat
 - **Parties:** invite friends from the online list (the + slots at the top of the menu). The leader queues or opens a lobby and the whole party comes along on the same team.
 - **Spectating:** press Watch next to a friend in a non-ranked match to join as a spectator with third-person, first-person and free cameras.

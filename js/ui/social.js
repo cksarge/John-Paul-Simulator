@@ -71,6 +71,22 @@ export function showBanned(ui, ban) {
   ui.root.querySelector('#ban-out').onclick = () => ui.app.signOut();
 }
 
+// Full-screen maintenance notice for everyone but admins. It goes away by itself when maintenance ends.
+export function showMaintenance(ui, mt) {
+  const msg = mt?.message || 'The game is down for maintenance.';
+  const card = ui.root.querySelector('.maint-screen');
+  if (card) { card.querySelector('.maint-msg').textContent = msg; return; }
+  ui.hide?.();
+  document.querySelectorAll('.modal-backdrop, .ed').forEach((e) => e.remove());
+  ui.root.innerHTML = `<div class="ban-screen maint-screen"><div class="ban-card">
+    <div class="ban-icon" aria-hidden="true">🛠️</div>
+    <h1 class="m-h1">Down for maintenance</h1>
+    <p class="maint-msg">${esc(msg)}</p>
+    <p class="m-sub">You'll be let back in automatically as soon as it's over. Keep this page open.</p>
+    <div class="queue-pulse" aria-hidden="true"></div>
+  </div></div>`;
+}
+
 export function showWarnings(ui, list) {
   const m = ui.modal(`<h2 class="m-h2">⚠ Message from the moderator</h2>
     ${list.map((w) => `<div class="warn-item"><p>${esc(w.message)}</p><span class="m-sub">${new Date(w.at).toLocaleString()}</span></div>`).join('')}
